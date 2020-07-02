@@ -1,0 +1,18 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+use lazy_static::lazy_static;
+
+lazy_static! {
+    pub static ref HELLO: String = "Hello, world".into();
+}
+
+pub fn complex() {
+    println!("I'm complex because I have a dependency: {}", *HELLO);
+
+    simple::simple();
+}

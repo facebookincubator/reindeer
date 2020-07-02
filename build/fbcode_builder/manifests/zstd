@@ -1,0 +1,25 @@
+[manifest]
+name = zstd
+
+[rpms]
+libzstd-devel
+libzstd
+
+[debs]
+libzstd1-dev
+
+[download]
+url = https://github.com/facebook/zstd/releases/download/v1.4.4/zstd-1.4.4.tar.gz
+sha256 = 59ef70ebb757ffe74a7b3fe9c305e2ba3350021a918d168a046c6300aeea9315
+
+[build]
+builder = cmake
+subdir = zstd-1.4.4/build/cmake
+
+# The zstd cmake build explicitly sets the install name
+# for the shared library in such a way that cmake discards
+# the path to the library from the install_name, rendering
+# the library non-resolvable during the build.  The short
+# term solution for this is just to link static on macos.
+[cmake.defines.os=darwin]
+ZSTD_BUILD_SHARED = OFF

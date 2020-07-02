@@ -1,0 +1,18 @@
+# Fixup config
+#
+# Top-level is generic to all versions. It can include a map of fixups for
+# specific versions - those fixups override the base ones where they conflict.
+
+# Extra deps to be added to the dependency list. These are always absolute
+# buck rules.
+
+extra_deps = ["fbsource//third-party/rust:lazy_static"]
+
+# Rust dependencies to be filtered. They are the local alias being used for
+# the dependency, without any versioning information.
+filter_deps = ["simple"]
+
+# Additional command line options
+cfgs = ["foo", "bar"]
+rustc_flags = ["-g", "--verbose"]
+features = ["fooble", "blop"]

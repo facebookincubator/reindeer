@@ -1,0 +1,21 @@
+buildscript = []
+
+[[platform_fixup.'cfg(target_arch = "x86_64")'.buildscript]]
+[platform_fixup.'cfg(target_arch = "x86_64")'.buildscript.cxx_library]
+name = "blake3_avx512"
+srcs = ["c/blake3_avx512.c"]
+compiler_flags = ["-mavx512f", "-mavx512vl"]
+headers = ["c/*.h"]
+
+[[platform_fixup.'cfg(target_arch = "arm")'.buildscript]]
+[platform_fixup.'cfg(target_arch = "arm")'.buildscript.cxx_library]
+name = "blake3_neon-armv7"
+srcs = ["c/blake3_neon.c"]
+compiler_flags = ["-mfpu=neon-vfpv4", "-mfloat-abi=hard"]
+headers = ["c/*.h"]
+
+[[platform_fixup.'cfg(target_arch = "aarch64")'.buildscript]]
+[platform_fixup.'cfg(target_arch = "aarch64")'.buildscript.cxx_library]
+name = "blake3_neon-aarch64"
+srcs = ["c/blake3_neon.c"]
+headers = ["c/*.h"]

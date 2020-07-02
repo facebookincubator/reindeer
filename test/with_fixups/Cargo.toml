@@ -1,0 +1,27 @@
+# Rust third-party dependencies sources from crates.io
+#
+# To update:
+# 1. checkout `upstream` branch
+# 2. update dependencies below (if adding/removing crates)
+# 3. run `update.sh` in this directory
+#
+# `update.sh` will update the `Cargo.lock` with current versions,
+# download them into the `vendor` directory, and commit them to git.
+
+[package]
+# Pseudo-package whose dependencies are exported to fbcode
+name = "rust-third-party"
+version = "0.0.0"
+
+[lib]
+path = "/dev/null"
+
+# Crates exported to fbcode. Use '*' as the version constraint unless
+# there's a good reason not to. Keep them sorted in alphabetical order.
+# If a crate has transitive dependencies on other tp2 packages, update
+# ../external_deps.py.
+[dependencies]
+with_buildscript = { path = "../common/with_buildscript/" }
+
+[package.metadata.third-party]
+with_buildscript = { oncall = "rust_foundation" }

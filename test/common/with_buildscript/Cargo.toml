@@ -1,0 +1,9 @@
+[package]
+name = "with_buildscript"
+version = "0.0.0"
+build = "build.rs"
+
+[lib]
+
+[dependencies]
+simple = { path = "../simple" }

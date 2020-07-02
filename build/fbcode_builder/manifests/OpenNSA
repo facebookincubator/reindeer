@@ -1,0 +1,17 @@
+[manifest]
+name = OpenNSA
+
+[download]
+url = https://docs.broadcom.com/docs-and-downloads/csg/opennsa-6.5.19.tgz
+sha256 = 80c3a26f688dd7fc08880fdbbad9ac3424b435697b0ccb889487f55f2bc425c4
+
+[build]
+builder = nop
+subdir = opennsa-6.5.19
+
+[install.files]
+lib/x86-64 = lib
+include = include
+src/gpl-modules/systems/bde/linux/include = include/systems/bde/linux
+src/gpl-modules/include/ibde.h = include/ibde.h
+src/gpl-modules = src/gpl-modules
