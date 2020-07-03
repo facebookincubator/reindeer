@@ -12,7 +12,7 @@
 //! JSON output.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fmt::{self, Display},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
@@ -170,7 +170,6 @@ impl Display for PkgId {
 
 /// Top-level structure from `cargo metadata`
 #[derive(Debug, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct Metadata {
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub packages: BTreeSet<Manifest>,
@@ -191,7 +190,6 @@ pub enum VecStringOrBool {
 
 /// Package manifest
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Manifest {
     /// Package name
     pub name: String,
@@ -283,7 +281,6 @@ impl Display for Manifest {
 
 /// Package dependency (unresolved)
 #[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash)]
-#[serde(deny_unknown_fields)]
 pub struct ManifestDep {
     /// Dependency name
     pub name: String,
@@ -329,7 +326,6 @@ impl Default for DepKind {
 
 /// Package build target
 #[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
-#[serde(deny_unknown_fields)]
 pub struct ManifestTarget {
     /// Name of target (crate name)
     pub name: String,
@@ -430,7 +426,6 @@ impl ManifestTarget {
 
 /// Resolved dependencies
 #[derive(Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct Resolve {
     /// Root package of the workspace
     pub root: Option<PkgId>,
@@ -439,7 +434,6 @@ pub struct Resolve {
 
 /// Resolved dependencies for a particular package
 #[derive(Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct Node {
     /// Package
     pub id: PkgId,
@@ -453,7 +447,6 @@ pub struct Node {
 
 /// Resolved dependencies with rename information
 #[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
-#[serde(deny_unknown_fields)]
 pub struct NodeDep {
     /// Package id for dependency
     pub pkg: PkgId,
@@ -464,7 +457,6 @@ pub struct NodeDep {
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
-#[serde(deny_unknown_fields)]
 pub struct NodeDepKind {
     #[serde(deserialize_with = "deserialize_default_from_null")]
     kind: DepKind,
@@ -538,28 +530,4 @@ impl Display for Edition {
         };
         fmt.write_str(edition)
     }
-}
-
-#[derive(Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct BuildStep {
-    pub package_name: String,
-    pub package_version: String,
-    pub target_kind: BTreeSet<TargetKind>,
-    pub kind: BuildKind,
-    pub compile_mode: CompileMode,
-    pub deps: Vec<usize>,
-    pub outputs: Vec<PathBuf>,
-    pub links: HashMap<String, String>,
-    pub program: PathBuf,
-    pub args: Vec<String>,
-    pub env: HashMap<String, String>,
-    pub cwd: PathBuf,
-}
-
-#[derive(Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct BuildPlan {
-    pub invocations: Vec<BuildStep>,
-    pub inputs: Vec<PathBuf>,
 }
