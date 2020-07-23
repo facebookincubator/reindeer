@@ -19,8 +19,8 @@ Reindeer builds with Cargo in the normal way. It has no unusual build-time depen
 
 ## Contributing
 
-We welcome contributions! See CONTRIBUTING.md for details on how to get started.
+We welcome contributions! See [CONTRIBUTING](CONTRIBUTING.md) for details on how to get started, and our [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-Reindeer is MIT licensed, as found in the LICENSE file.
+Reindeer is MIT licensed, as found in the [LICENSE](LICENSE) file.
