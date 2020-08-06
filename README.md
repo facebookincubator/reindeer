@@ -10,7 +10,7 @@ the problem of managing third-party dependencies in a monorepo built with
 
 ## Getting started
 
-There's a complete (but small) [example](example) tp get started with. More complete
+There's a complete (but small) [example](example) to get started with. More complete
 documentation is in [docs](docs/MANUAL.md).
 
 ## Building
