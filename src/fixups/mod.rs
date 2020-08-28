@@ -223,9 +223,6 @@ impl<'meta> Fixups<'meta> {
                             cfgs: vec![],
                             env: env.clone(),
                         },
-                        // Just keep --cfg options - we don't want linker args
-                        // or anything else
-                        filter: r#"sed -n -e 's,^cargo:rustc-cfg=\(.*\),--cfg=\1,p'"#.to_string(),
                         outfile: "args.txt".to_string(),
                     }))
                 }

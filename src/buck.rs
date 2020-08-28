@@ -238,7 +238,6 @@ pub struct BuildscriptGenruleFilter {
     #[serde(flatten)]
     pub base: BuildscriptGenrule,
     pub outfile: String,
-    pub filter: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
