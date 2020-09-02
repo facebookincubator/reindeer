@@ -282,7 +282,13 @@ impl<'meta> Fixups<'meta> {
                     let rule = buck::CxxLibrary {
                         common: Common {
                             name: if *public {
-                                format!("{}-{}", self.package.name, name)
+                                format!(
+                                    "{}-{}",
+                                    self.index
+                                        .public_alias(&self.package)
+                                        .unwrap_or(self.package.name.as_str()),
+                                    name
+                                )
                             } else {
                                 format!("{}-{}", self.package, name)
                             },

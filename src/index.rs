@@ -178,7 +178,12 @@ impl<'meta> Index<'meta> {
         self.public_set.contains_key(&pkg.id)
     }
 
-    /// Return all public packages with their aliases
+    /// Return a package's local alias, if it has one.
+    pub fn public_alias(&self, pkg: &Manifest) -> Option<&str> {
+        self.public_set.get(&pkg.id).and_then(|x| *x)
+    }
+
+    /// Return all public packages
     pub fn public_packages(&'meta self) -> impl Iterator<Item = &'meta Manifest> {
         let pkgid_to_pkg = Arc::clone(&self.pkgid_to_pkg);
         self.public_set
