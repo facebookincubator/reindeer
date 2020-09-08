@@ -194,7 +194,7 @@ pub fn read_config(dir: &Path) -> Result<Config> {
             return Ok(Config {
                 config_path: dir.to_path_buf(),
                 ..Config::default()
-            })
+            });
         }
         Err(err) => return Err(err).context(format!("Failed to read config {}", path.display())),
     };
