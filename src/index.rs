@@ -262,11 +262,14 @@ impl<'meta> Index<'meta> {
     ) -> impl Iterator<Item = (&'meta str, &'meta Manifest)> {
         let pkgid_to_pkg = Arc::clone(&self.pkgid_to_pkg);
 
-        self.pkgid_to_node.get(&pkg.id).unwrap().deps.iter().map(
-            move |NodeDep { name, pkg, .. }| {
+        self.pkgid_to_node
+            .get(&pkg.id)
+            .unwrap()
+            .deps
+            .iter()
+            .map(move |NodeDep { name, pkg, .. }| {
                 (name.as_str(), pkgid_to_pkg.get(pkg).cloned().unwrap())
-            },
-        )
+            })
     }
 
     /// Return the set of (unresolved) dependencies for a particular target.
@@ -278,12 +281,14 @@ impl<'meta> Index<'meta> {
     ) -> impl Iterator<Item = &'meta ManifestDep> {
         assert!(pkg.targets.contains(tgt));
 
-        pkg.dependencies.iter().filter(move |dep| match dep.kind {
-            DepKind::Normal => {
-                tgt.kind_lib() || tgt.kind_proc_macro() || tgt.kind_bin() || tgt.kind_cdylib()
+        pkg.dependencies.iter().filter(move |dep| {
+            match dep.kind {
+                DepKind::Normal => {
+                    tgt.kind_lib() || tgt.kind_proc_macro() || tgt.kind_bin() || tgt.kind_cdylib()
+                }
+                DepKind::Dev => tgt.kind_bench() || tgt.kind_test() || tgt.kind_example(),
+                DepKind::Build => tgt.kind_custom_build(),
             }
-            DepKind::Dev => tgt.kind_bench() || tgt.kind_test() || tgt.kind_example(),
-            DepKind::Build => tgt.kind_custom_build(),
         })
     }
 
