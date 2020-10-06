@@ -63,6 +63,8 @@ pub enum BuildscriptFixup {
     GenSrcs(GenSrcs),
     /// Generate a C++ library rule
     CxxLibrary(CxxLibraryFixup),
+    /// Generate a prebuilt C++ library rule
+    PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -117,6 +119,17 @@ pub struct CxxLibraryFixup {
     pub deps: Vec<String>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrebuiltCxxLibraryFixup {
+    pub name: String,             // rule basename
+    pub static_libs: Vec<String>, // static lib globs
+    #[serde(default = "set_true")]
+    pub add_dep: bool, // add to dependencies
+    #[serde(default)]
+    pub public: bool, // make public
+}
+
 #[derive(Deserialize, Serialize)]
 struct Empty {}
 
@@ -135,6 +148,9 @@ impl Serialize for BuildscriptFixup {
             }
             BuildscriptFixup::GenSrcs(gen_srcs) => map.serialize_entry("gen_srcs", gen_srcs)?,
             BuildscriptFixup::CxxLibrary(cxxlib) => map.serialize_entry("cxx_library", cxxlib)?,
+            BuildscriptFixup::PrebuiltCxxLibrary(prebuilt_lib) => {
+                map.serialize_entry("prebuilt_prebcxx_library", prebuilt_lib)?
+            }
         }
         map.end()
     }
@@ -171,6 +187,9 @@ impl<'de> Visitor<'de> for BuildscriptFixupVisitor<'de> {
                 "rustc_flags" => BuildscriptFixup::RustcFlags(access.next_value()?),
                 "gen_srcs" => BuildscriptFixup::GenSrcs(access.next_value()?),
                 "cxx_library" => BuildscriptFixup::CxxLibrary(access.next_value()?),
+                "prebuilt_cxx_library" => {
+                    BuildscriptFixup::PrebuiltCxxLibrary(access.next_value()?)
+                }
                 other => {
                     // other keys are unit, which map to an empty map
                     let _ = access.next_value::<Empty>()?;

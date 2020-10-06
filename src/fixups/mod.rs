@@ -35,7 +35,9 @@ use crate::{
 mod buildscript;
 mod config;
 
-use buildscript::{BuildscriptFixup, CxxLibraryFixup, GenSrcs, RustcFlags};
+use buildscript::{
+    BuildscriptFixup, CxxLibraryFixup, GenSrcs, PrebuiltCxxLibraryFixup, RustcFlags,
+};
 use config::FixupConfigFile;
 
 /// Fixups for a specific package & target
@@ -343,6 +345,43 @@ impl<'meta> Fixups<'meta> {
                     res.push(Rule::CxxLibrary(rule));
                 }
 
+                // Emit a prebuilt C++ library rule for each static library (elsewhere - add dependencies to them)
+                BuildscriptFixup::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup {
+                    name,
+                    static_libs,
+                    public,
+                    add_dep: _,
+                }) => {
+                    let libs = self.manifestwalk(static_libs, Vec::<String>::new())?;
+                    for static_lib in libs {
+                        let rule = buck::PrebuiltCxxLibrary {
+                            common: Common {
+                                name: if *public {
+                                    format!(
+                                        "{}-{}-{}",
+                                        self.index
+                                            .public_alias(&self.package)
+                                            .unwrap_or_else(|| self.package.name.as_str()),
+                                        name,
+                                        static_lib.file_name().unwrap().to_string_lossy()
+                                    )
+                                } else {
+                                    format!(
+                                        "{}-{}-{}",
+                                        self.package,
+                                        name,
+                                        static_lib.file_name().unwrap().to_string_lossy()
+                                    )
+                                },
+                                public: *public,
+                                licenses: Default::default(),
+                            },
+                            static_lib: static_lib.clone(),
+                        };
+                        res.push(Rule::PrebuiltCxxLibrary(rule));
+                    }
+                }
+
                 // Complain and omit
                 BuildscriptFixup::Unresolved(msg) => {
                     log::warn!(
@@ -516,6 +555,37 @@ impl<'meta> Fixups<'meta> {
                         format!("{}-{}", self.package, name)
                     };
                     ret.push((None, RuleRef::local(dep_name).with_platform(platform), None))
+                }
+                if let BuildscriptFixup::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup {
+                    add_dep: true,
+                    name,
+                    static_libs,
+                    public,
+                }) = buildscript
+                {
+                    let libs = self
+                        .manifestwalk(static_libs, Vec::<String>::new())
+                        .unwrap();
+                    for static_lib in libs {
+                        let dep_name = if *public {
+                            format!(
+                                "{}-{}-{}",
+                                self.index
+                                    .public_alias(&self.package)
+                                    .unwrap_or_else(|| self.package.name.as_str()),
+                                name,
+                                static_lib.file_name().unwrap().to_string_lossy()
+                            )
+                        } else {
+                            format!(
+                                "{}-{}-{}",
+                                self.package,
+                                name,
+                                static_lib.file_name().unwrap().to_string_lossy()
+                            )
+                        };
+                        ret.push((None, RuleRef::local(dep_name).with_platform(platform), None))
+                    }
                 }
             }
         }

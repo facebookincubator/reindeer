@@ -142,3 +142,6 @@ def third_party_rust_binary(name, platform = {}, **kwargs):
 
 def third_party_rust_cxx_library(name, **kwargs):
     cxx_library(name, **kwargs)
+
+def third_party_rust_prebuilt_cxx_library(name, **kwargs):
+    prebuilt_cxx_library(name, **kwargs)

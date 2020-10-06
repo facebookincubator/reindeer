@@ -147,6 +147,7 @@ file_name = "BUCK" # default
 rust_library = "third_party_rust_library"       # A plain Rust library
 rust_binary = "third_party_rust_binary"         # A Rust executable
 cxx_library = "third_party_rust_cxx_library"    # A C++ library (mostly for Rust -> C dependencies)
+prebuilt_cxx_library = "third_party_rust_prebuilt_cxx_library"    # A prebuilt library (mostly for Rust -> C dependencies)
 buildscript_genrule_args = "rust_buildscript_genrule_filter"    # A genrule for rustc args from a build script
 buildscript_genrule_srcs = "rust_buildscript_genrule_srcs"      # A genrule for generated sources from a build script
 
@@ -167,6 +168,7 @@ load(
     "third_party_rust_library",
     "third_party_rust_binary",
     "third_party_rust_cxx_library",
+    "third_party_rust_prebuilt_cxx_library",
 )
 
 """

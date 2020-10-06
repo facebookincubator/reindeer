@@ -270,12 +270,20 @@ pub struct CxxLibrary {
     pub preferred_linkage: Option<String>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct PrebuiltCxxLibrary {
+    #[serde(flatten)]
+    pub common: Common,
+    pub static_lib: PathBuf,
+}
+
 pub enum Rule {
     Binary(RustBinary),
     Library(RustLibrary),
     BuildscriptGenruleSrcs(BuildscriptGenruleSrcs),
     BuildscriptGenruleFilter(BuildscriptGenruleFilter),
     CxxLibrary(CxxLibrary),
+    PrebuiltCxxLibrary(PrebuiltCxxLibrary),
 }
 
 impl Eq for Rule {}
@@ -315,6 +323,10 @@ impl Rule {
                 common: Common { name, .. },
                 ..
             }) => name,
+            Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
+                common: Common { name, .. },
+                ..
+            }) => name,
         }
         .as_str()
     }
@@ -325,6 +337,10 @@ impl Rule {
             Rule::Library(rule) => rule.as_ref().public,
             Rule::BuildscriptGenruleSrcs(_) | Rule::BuildscriptGenruleFilter(_) => false,
             Rule::CxxLibrary(CxxLibrary {
+                common: Common { public, .. },
+                ..
+            }) => *public,
+            Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
                 common: Common { public, .. },
                 ..
             }) => *public,
@@ -358,6 +374,11 @@ impl Rule {
             Rule::CxxLibrary(lib) => {
                 out.write_all(
                     serde_starlark::function_call(&config.cxx_library, &lib)?.as_bytes(),
+                )?;
+            }
+            Rule::PrebuiltCxxLibrary(lib) => {
+                out.write_all(
+                    serde_starlark::function_call(&config.prebuilt_cxx_library, &lib)?.as_bytes(),
                 )?;
             }
         };
