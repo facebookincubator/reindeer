@@ -668,12 +668,7 @@ impl<'meta> Fixups<'meta> {
                     .iter()
                     .chain(srcs.iter())
                     .map(String::as_str),
-                self.fixup_config
-                    .base()
-                    .exclude_srcs
-                    .iter()
-                    .map(|s| s.as_str())
-                    .chain(iter::once("target/**")),
+                None::<&str>,
             )?
             .collect();
 
@@ -693,16 +688,9 @@ impl<'meta> Fixups<'meta> {
         for (platform, config) in self.fixup_config.platform_configs() {
             let mut set = BTreeSet::new();
 
-            // Platform-specific files and excludes
+            // Platform-specific sources
             let mut files: HashSet<_> = self
-                .manifestwalk(
-                    config.extra_srcs.iter().map(String::as_str),
-                    config
-                        .exclude_srcs
-                        .iter()
-                        .map(|s| s.as_str())
-                        .chain(iter::once("target/**")),
-                )?
+                .manifestwalk(config.extra_srcs.iter().map(String::as_str), None::<&str>)?
                 .collect();
 
             let mut overlay_files = config.overlay_files(&self.fixup_dir)?;

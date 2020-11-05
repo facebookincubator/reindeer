@@ -102,9 +102,6 @@ pub struct FixupConfig {
     /// Extra src globs, rooted in manifest dir for package
     #[serde(default)]
     pub extra_srcs: Vec<String>,
-    /// Sources to exclude (globs)
-    #[serde(default)]
-    pub exclude_srcs: Vec<String>,
     /// Extra flags for rustc
     #[serde(default)]
     pub rustc_flags: Vec<String>,
