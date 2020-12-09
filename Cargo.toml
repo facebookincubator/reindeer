@@ -21,7 +21,7 @@ rayon = "1.2"
 rustsec = { version = "0.19", features = ["fix"] }
 semver = "0.9"
 serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 srcfiles = { git = "https://github.com/Areredify/srcfiles.git", rev = "349a321a132e025e13efe09c3515fe2e56c70ff6" }
 structopt = "0.3.7"
 termcolor = "1.0"
