@@ -401,19 +401,33 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_features(&self) -> Vec<(Option<PlatformExpr>, BTreeSet<String>)> {
         let mut ret = vec![];
 
-        // All omit_features from all configs remove from the
-        // base (platform-independent) features.
-        let mut omits = HashSet::new();
-        for (_plat, fixup) in self.fixup_config.configs() {
-            omits.extend(fixup.omit_features.iter().map(String::as_str));
+        let mut omits = HashMap::new();
+        let mut all_omits = HashSet::new();
+        // Pre-compute the list of all filtered features. If a platform filters a feature
+        // added by the base, we need to filter it from the base and add it to all other platforms.
+        for (platform, fixup) in self.fixup_config.configs() {
+            let platform_omits = omits.entry(platform).or_insert_with(HashSet::new);
+            platform_omits.extend(fixup.omit_features.iter().map(String::as_str));
+            all_omits.extend(fixup.omit_features.iter().map(String::as_str));
         }
 
+        let resolved_features: Vec<_> = self.index.resolved_features(self.package).collect();
         for (platform, config) in self.fixup_config.configs() {
             let mut set = BTreeSet::new();
 
-            if platform.is_none() {
-                for feature in self.index.resolved_features(self.package) {
-                    if !omits.contains(feature) {
+            for feature in resolved_features.iter() {
+                if platform.is_none() {
+                    if !all_omits.contains(feature) {
+                        set.insert(feature.to_string());
+                    }
+                } else {
+                    // If something omits this, check if this platform omits it.
+                    if all_omits.contains(feature) {
+                        if let Some(platform_omits) = omits.get(&platform) {
+                            if platform_omits.contains(feature) {
+                                continue;
+                            }
+                        }
                         set.insert(feature.to_string());
                     }
                 }
