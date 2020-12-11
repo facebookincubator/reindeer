@@ -8,7 +8,7 @@
 //! Per-package configuration information
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt, fs, iter,
     path::{Path, PathBuf},
 };
@@ -28,7 +28,7 @@ use crate::{
     collection::SetOrMap,
     config::Config,
     index::{Index, ResolvedDep},
-    platform::{platform_names_for_expr, PlatformExpr},
+    platform::{platform_names_for_expr, PlatformExpr, PlatformPredicate},
     Paths,
 };
 
@@ -479,8 +479,18 @@ impl<'meta> Fixups<'meta> {
     /// depenedencies, or it could add/remove them. This returns the Buck rule reference
     /// and the corresponding package if there is one (so the caller can limit its enumeration
     /// to only targets which were actually used).
-    pub fn compute_deps(&self) -> Vec<(Option<&'meta Manifest>, RuleRef, Option<String>)> {
+    pub fn compute_deps(&self) -> Result<Vec<(Option<&'meta Manifest>, RuleRef, Option<String>)>> {
         let mut ret = vec![];
+
+        let mut omits = HashMap::new();
+        let mut all_omits = HashSet::new();
+        // Pre-compute the list of all filtered dependencies. If a platform filters a dependency
+        // added by the base, we need to filter it from the base and add it to all other platforms.
+        for (platform, fixup) in self.fixup_config.configs() {
+            let platform_omits = omits.entry(platform).or_insert_with(HashSet::new);
+            platform_omits.extend(fixup.filter_deps.iter().map(String::as_str));
+            all_omits.extend(fixup.filter_deps.iter().map(String::as_str));
+        }
 
         for ResolvedDep {
             alias,
@@ -490,16 +500,6 @@ impl<'meta> Fixups<'meta> {
             .index
             .resolved_deps_for_target(self.package, self.target)
         {
-            // XXX this is strange. I guess it should make the dependency conditional on all the
-            // platforms which don't exclude it.
-            if self
-                .fixup_config
-                .configs()
-                .any(|(_platform, config)| config.filter_deps.contains(alias))
-            {
-                continue;
-            }
-
             log::debug!(
                 "Resolved deps for {}/{} ({:?}) - {} as {} ({:?})",
                 self.package,
@@ -515,11 +515,52 @@ impl<'meta> Fixups<'meta> {
                 .dependency_target()
                 .map(|tgt| tgt.name.replace("-", "_"));
 
+            let original_alias = alias;
+
             let alias = match tgtname {
                 Some(ref tgtname) if tgtname == alias => None,
                 Some(_) | None => Some(alias.to_string()),
             };
 
+            if all_omits.contains(original_alias) {
+                // If the dependency is for a particular platform and that has it excluded,
+                // skip it.
+                if let Some(platform_omits) = omits.get(&platform.as_ref()) {
+                    if platform_omits.contains(original_alias) {
+                        continue;
+                    }
+                }
+
+                // If it's a default dependency, but certain specific platforms filter it,
+                // produce a new rule that excludes those platforms.
+                if platform.is_none() {
+                    // Create a new predicate that excludes all filtered platforms.
+                    let mut excludes = vec![];
+                    for (platform_expr, platform_omits) in &omits {
+                        if let Some(platform_expr) = platform_expr {
+                            if platform_omits.contains(original_alias) {
+                                let platform_pred = PlatformPredicate::parse(platform_expr)?;
+                                excludes.push(PlatformPredicate::Not(Box::new(platform_pred)));
+                            }
+                        }
+                    }
+
+                    let platform_pred = PlatformPredicate::All(excludes);
+                    let platform_expr: PlatformExpr = format!("cfg({})", platform_pred).into();
+                    ret.push((
+                        Some(package),
+                        RuleRef::local(self.index.rule_name(package))
+                            .with_platform(Some(&platform_expr)),
+                        alias.clone(),
+                    ));
+
+                    // Since we've already added the platform-excluding rule, skip the generic rule
+                    // adding below.
+                    continue;
+                }
+            }
+
+            // No filtering involved? Just insert it like normal.
             ret.push((
                 Some(package),
                 RuleRef::local(self.index.rule_name(package)).with_platform(platform.as_ref()),
@@ -590,7 +631,7 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        ret
+        Ok(ret)
     }
 
     /// Additional environment

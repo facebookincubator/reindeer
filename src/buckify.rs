@@ -330,7 +330,7 @@ fn generate_target_rules<'scope>(
     // Compute set of dependencies any rule we generate here will need. They will only
     // be emitted if we actually emit some rules below.
     let mut dep_pkgs = Vec::new();
-    for (deppkg, dep, alias) in fixups.compute_deps() {
+    for (deppkg, dep, alias) in fixups.compute_deps()? {
         if dep.has_platform() {
             // If this is a platform-specific dependency, find the
             // matching supported platform(s) and insert it into the appropriate
