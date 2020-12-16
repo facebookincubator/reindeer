@@ -199,7 +199,7 @@ impl<'meta> Fixups<'meta> {
         // that fixups are already per-platform if necessary so there's no need for platform-specific
         // rule attributes.
         let mut features = BTreeSet::new();
-        for (plat, _fixup) in self.fixup_config.configs() {
+        for (plat, _fixup) in self.fixup_config.configs(&self.package.version) {
             match plat {
                 None => features.extend(buildscript.common.base.features.iter().cloned()),
                 Some(expr) => {
@@ -216,7 +216,7 @@ impl<'meta> Fixups<'meta> {
         // Flat list of buildscript fixups.
         let fixes = self
             .fixup_config
-            .configs()
+            .configs(&self.package.version)
             .flat_map(|(_platform, fixup)| fixup.buildscript.iter());
 
         for fix in fixes {
@@ -423,14 +423,14 @@ impl<'meta> Fixups<'meta> {
         let mut all_omits = HashSet::new();
         // Pre-compute the list of all filtered features. If a platform filters a feature
         // added by the base, we need to filter it from the base and add it to all other platforms.
-        for (platform, fixup) in self.fixup_config.configs() {
+        for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
             let platform_omits = omits.entry(platform).or_insert_with(HashSet::new);
             platform_omits.extend(fixup.omit_features.iter().map(String::as_str));
             all_omits.extend(fixup.omit_features.iter().map(String::as_str));
         }
 
         let resolved_features: Vec<_> = self.index.resolved_features(self.package).collect();
-        for (platform, config) in self.fixup_config.configs() {
+        for (platform, config) in self.fixup_config.configs(&self.package.version) {
             let mut set = BTreeSet::new();
 
             for feature in resolved_features.iter() {
@@ -467,7 +467,7 @@ impl<'meta> Fixups<'meta> {
             return ret; // no buildscript
         }
 
-        for (platform, config) in self.fixup_config.configs() {
+        for (platform, config) in self.fixup_config.configs(&self.package.version) {
             let mut flags = vec![];
 
             for buildscript in &config.buildscript {
@@ -494,7 +494,7 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_cmdline(&self) -> Vec<(Option<PlatformExpr>, Vec<String>)> {
         let mut ret = vec![];
 
-        for (platform, config) in self.fixup_config.configs() {
+        for (platform, config) in self.fixup_config.configs(&self.package.version) {
             let mut flags = vec![];
 
             flags.extend(config.rustc_flags.clone());
@@ -521,7 +521,7 @@ impl<'meta> Fixups<'meta> {
         let mut all_omits = HashSet::new();
         // Pre-compute the list of all filtered dependencies. If a platform filters a dependency
         // added by the base, we need to filter it from the base and add it to all other platforms.
-        for (platform, fixup) in self.fixup_config.configs() {
+        for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
             let platform_omits = omits.entry(platform).or_insert_with(HashSet::new);
             platform_omits.extend(fixup.filter_deps.iter().map(String::as_str));
             all_omits.extend(fixup.filter_deps.iter().map(String::as_str));
@@ -603,7 +603,7 @@ impl<'meta> Fixups<'meta> {
             ))
         }
 
-        for (platform, config) in self.fixup_config.configs() {
+        for (platform, config) in self.fixup_config.configs(&self.package.version) {
             ret.extend(config.extra_deps.iter().map(|dep| {
                 (
                     None,
@@ -677,7 +677,7 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_env(&self) -> Vec<(Option<PlatformExpr>, BTreeMap<String, String>)> {
         let mut ret = vec![];
 
-        for (platform, config) in self.fixup_config.configs() {
+        for (platform, config) in self.fixup_config.configs(&self.package.version) {
             let mut map = config.env.clone();
 
             if config.cargo_env {
@@ -736,23 +736,29 @@ impl<'meta> Fixups<'meta> {
         // Do any platforms have an overlay? If so, the srcs are per-platform
         let has_platform_overlay = self
             .fixup_config
-            .configs()
+            .configs(&self.package.version)
             .filter(|(platform, _)| platform.is_some())
             .any(|(_, config)| config.overlay.is_some());
 
         let common_files: HashSet<_> = self
             .manifestwalk(
                 self.fixup_config
-                    .base()
-                    .extra_srcs
-                    .iter()
-                    .chain(srcs.iter())
-                    .map(String::as_str),
+                    .base(&self.package.version)
+                    .into_iter()
+                    .flat_map(|base| {
+                        base.extra_srcs
+                            .iter()
+                            .chain(srcs.iter())
+                            .map(String::as_str)
+                    }),
                 None::<&str>,
             )?
             .collect();
 
-        let common_overlay_files = self.fixup_config.base().overlay_files(&self.fixup_dir)?;
+        let common_overlay_files = match self.fixup_config.base(&self.package.version) {
+            Some(base) => base.overlay_files(&self.fixup_dir)?,
+            None => HashSet::default(),
+        };
         if !has_platform_overlay {
             let mut set = BTreeSet::new();
 
@@ -765,7 +771,7 @@ impl<'meta> Fixups<'meta> {
             ret.push((None, set));
         }
 
-        for (platform, config) in self.fixup_config.platform_configs() {
+        for (platform, config) in self.fixup_config.platform_configs(&self.package.version) {
             let mut set = BTreeSet::new();
 
             // Platform-specific sources
@@ -809,7 +815,7 @@ impl<'meta> Fixups<'meta> {
     ) -> Result<Vec<(Option<PlatformExpr>, BTreeMap<PathBuf, PathBuf>)>> {
         let mut ret = vec![];
 
-        for (platform, config) in self.fixup_config.configs() {
+        for (platform, config) in self.fixup_config.configs(&self.package.version) {
             let mut map = BTreeMap::new();
 
             for (k, v) in &config.extra_mapped_srcs {
@@ -860,7 +866,7 @@ impl<'meta> Fixups<'meta> {
 
         let srcdir = relative_path(&self.third_party_dir, &self.manifest_dir.join(srcdir));
 
-        for (platform, config) in self.fixup_config.configs() {
+        for (platform, config) in self.fixup_config.configs(&self.package.version) {
             let mut map = BTreeMap::new();
 
             for fix in &config.buildscript {

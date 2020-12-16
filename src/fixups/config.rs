@@ -7,7 +7,6 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
-    iter,
     path::{Path, PathBuf},
 };
 
@@ -79,26 +78,42 @@ impl FixupConfigFile {
         }
     }
 
-    pub fn base(&self) -> &FixupConfig {
-        &self.base
+    pub fn base(&self, version: &semver::Version) -> Option<&FixupConfig> {
+        if self.base.version_applies(version) {
+            Some(&self.base)
+        } else {
+            None
+        }
     }
 
-    pub fn platform_configs(&self) -> impl Iterator<Item = (&PlatformExpr, &FixupConfig)> {
-        self.platform_fixup.iter()
+    pub fn platform_configs<'a>(
+        &'a self,
+        version: &'a semver::Version,
+    ) -> impl Iterator<Item = (&PlatformExpr, &FixupConfig)> + 'a {
+        self.platform_fixup
+            .iter()
+            .filter(move |(_, cfg)| cfg.version_applies(version))
     }
 
-    pub fn configs(&self) -> impl Iterator<Item = (Option<&PlatformExpr>, &FixupConfig)> {
-        iter::once((None, &self.base)).chain(
-            self.platform_fixup
-                .iter()
-                .map(|(platform, config)| (Some(platform), config)),
-        )
+    pub fn configs<'a>(
+        &'a self,
+        version: &'a semver::Version,
+    ) -> impl Iterator<Item = (Option<&PlatformExpr>, &FixupConfig)> + 'a {
+        self.base(version)
+            .into_iter()
+            .map(|base| (None, base))
+            .chain(
+                self.platform_configs(version)
+                    .map(|(plat, cfg)| (Some(plat), cfg)),
+            )
     }
 }
 
 #[derive(Debug, Deserialize, Default, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixupConfig {
+    /// Versions this fixup applies to,
+    pub version: Option<semver::VersionReq>,
     /// Extra src globs, rooted in manifest dir for package
     #[serde(default)]
     pub extra_srcs: Vec<String>,
@@ -160,5 +175,10 @@ impl FixupConfig {
         };
 
         Ok(files)
+    }
+
+    /// Return true if config applies to given version
+    pub fn version_applies(&self, ver: &semver::Version) -> bool {
+        self.version.as_ref().map_or(true, |req| req.matches(ver))
     }
 }
