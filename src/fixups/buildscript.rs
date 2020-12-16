@@ -21,7 +21,7 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 
-use crate::collection::SetOrMap;
+use crate::{cargo::TargetKind, collection::SetOrMap};
 
 #[derive(Deserialize, Debug, Serialize)]
 pub struct BuildscriptFixups(pub Vec<BuildscriptFixup>);
@@ -67,9 +67,29 @@ pub enum BuildscriptFixup {
     PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup),
 }
 
+impl BuildscriptFixup {
+    pub fn targets(&self) -> Option<&[(TargetKind, Option<String>)]> {
+        let targets = match self {
+            BuildscriptFixup::RustcFlags(RustcFlags { targets, .. }) => targets,
+            BuildscriptFixup::GenSrcs(GenSrcs { targets, .. }) => targets,
+            BuildscriptFixup::CxxLibrary(CxxLibraryFixup { targets, .. }) => targets,
+            BuildscriptFixup::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup { targets, .. }) => {
+                targets
+            }
+            BuildscriptFixup::Unresolved(_) | BuildscriptFixup::Build => return None,
+        };
+
+        Some(&targets[..])
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RustcFlags {
+    // Which targets are we generating flags for. List in the form
+    // of kind and name (eg `["bin","cargo"]`). Empty means apply to main lib target.
+    #[serde(default)]
+    pub targets: Vec<(TargetKind, Option<String>)>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
 }
@@ -77,6 +97,10 @@ pub struct RustcFlags {
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GenSrcs {
+    // Which targets are we generating source for. List in the form
+    // of kind and name (eg `["bin","cargo"]`). Empty means apply to main lib target.
+    #[serde(default)]
+    pub targets: Vec<(TargetKind, Option<String>)>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
@@ -96,6 +120,10 @@ fn set_true() -> bool {
 pub struct CxxLibraryFixup {
     pub name: String,      // rule basename
     pub srcs: Vec<String>, // src globs
+    // Which targets are we a dependency for. List in the form
+    // of kind and name (eg `["bin","cargo"]`). Empty means apply to main lib target.
+    #[serde(default)]
+    pub targets: Vec<(TargetKind, Option<String>)>,
     #[serde(default)]
     pub headers: Vec<String>, // header globs
     #[serde(default)]
@@ -126,6 +154,10 @@ pub struct PrebuiltCxxLibraryFixup {
     pub static_libs: Vec<String>, // static lib globs
     #[serde(default = "set_true")]
     pub add_dep: bool, // add to dependencies
+    // Which targets are we a dependency for. List in the form
+    // of kind and name (eg `["bin","cargo"]`). Empty means apply to main lib target.
+    #[serde(default)]
+    pub targets: Vec<(TargetKind, Option<String>)>,
     #[serde(default)]
     pub public: bool, // make public
 }

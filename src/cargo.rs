@@ -484,7 +484,17 @@ pub enum CrateType {
     Cdylib,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum TargetKind {
     Bench,

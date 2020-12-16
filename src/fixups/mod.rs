@@ -116,6 +116,23 @@ impl<'meta> Fixups<'meta> {
         })
     }
 
+    // Return true if the script applies to this target.
+    // There's a few cases:
+    // - if the script doesn't specify a target, then it applies to the main "lib" target of the package
+    // - otherwise it applies to the matching kind and (optionally) name (all names if not specified)
+    fn target_match(&self, script: &BuildscriptFixup) -> bool {
+        let default = self.package.dependency_target();
+
+        match (script.targets(), default) {
+            (Some([]), Some(default)) | (None, Some(default)) => self.target == default,
+            (Some([]), None) | (None, None) => false,
+            (Some(tgts), _) => tgts.iter().any(|(kind, name)| {
+                self.target.kind.contains(kind)
+                    && name.as_ref().map_or(true, |name| &self.target.name == name)
+            }),
+        }
+    }
+
     pub fn python_ext(&self) -> Option<&str> {
         self.fixup_config.python_ext.as_deref()
     }
@@ -209,7 +226,7 @@ impl<'meta> Fixups<'meta> {
 
                 // Build and run it, and filter the output for --cfg options
                 // for the main target's rustc command line
-                BuildscriptFixup::RustcFlags(RustcFlags { env }) => {
+                BuildscriptFixup::RustcFlags(RustcFlags { env, .. }) => {
                     // Emit the build script itself
                     res.push(Rule::Binary(buildscript.clone()));
 
@@ -236,6 +253,7 @@ impl<'meta> Fixups<'meta> {
                     files,      // output files
                     mapped,     // outputs mapped to a different path
                     env,        // env set while running
+                    ..
                 }) => {
                     // Emit the build script itself
                     res.push(Rule::Binary(buildscript.clone()));
@@ -279,7 +297,7 @@ impl<'meta> Fixups<'meta> {
                     preprocessor_flags,
                     header_namespace,
                     deps,
-                    add_dep: _,
+                    ..
                 }) => {
                     let rule = buck::CxxLibrary {
                         common: Common {
@@ -350,7 +368,7 @@ impl<'meta> Fixups<'meta> {
                     name,
                     static_libs,
                     public,
-                    add_dep: _,
+                    ..
                 }) => {
                     let libs = self.manifestwalk(static_libs, Vec::<String>::new())?;
                     for static_lib in libs {
@@ -453,6 +471,9 @@ impl<'meta> Fixups<'meta> {
             let mut flags = vec![];
 
             for buildscript in &config.buildscript {
+                if !self.target_match(buildscript) {
+                    continue;
+                }
                 if let BuildscriptFixup::RustcFlags(_) = buildscript {
                     flags.push(format!(
                         "@$(location :{})",
@@ -591,6 +612,9 @@ impl<'meta> Fixups<'meta> {
                 )
             }));
             for buildscript in &config.buildscript {
+                if !self.target_match(buildscript) {
+                    continue;
+                }
                 if let BuildscriptFixup::CxxLibrary(CxxLibraryFixup {
                     add_dep: true,
                     name,
@@ -616,6 +640,7 @@ impl<'meta> Fixups<'meta> {
                     name,
                     static_libs,
                     public,
+                    ..
                 }) = buildscript
                 {
                     let libs = self
@@ -828,9 +853,7 @@ impl<'meta> Fixups<'meta> {
     ) -> Vec<(Option<PlatformExpr>, BTreeMap<RuleRef, PathBuf>)> {
         let mut ret = vec![];
 
-        if self.package.dependency_target() != Some(&self.target)
-            || self.buildscript_rule_name().is_none()
-        {
+        if self.buildscript_rule_name().is_none() {
             // No generated sources
             return ret;
         }
@@ -841,6 +864,9 @@ impl<'meta> Fixups<'meta> {
             let mut map = BTreeMap::new();
 
             for fix in &config.buildscript {
+                if !self.target_match(fix) {
+                    continue;
+                }
                 if let BuildscriptFixup::GenSrcs(GenSrcs { files, mapped, .. }) = fix {
                     for file in files {
                         map.insert(
