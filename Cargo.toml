@@ -19,11 +19,11 @@ maplit = "1.0"
 nom = "5.1"
 rayon = "1.2"
 rustsec = { version = "0.19", features = ["fix"] }
-semver = "0.9"
+semver = { version = "0.11", features = ["serde"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 srcfiles = { git = "https://github.com/Areredify/srcfiles.git", rev = "349a321a132e025e13efe09c3515fe2e56c70ff6" }
 structopt = "0.3.7"
 termcolor = "1.0"
-toml = "=0.5.6"
+toml = "=0.5.7"
 walkdir = "2.2.9"
