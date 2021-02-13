@@ -4,7 +4,6 @@ edition = "2018"
 version = "0.0.0"
 authors = ['Facebook']
 license = "MIT"
-include = ["src/**/*.rs"]
 
 [dependencies]
 serde_starlark = { git = "https://github.com/facebookexperimental/rust-shed.git", branch = "master", version = "0.1.0" }
