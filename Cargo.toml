@@ -1,17 +1,16 @@
 [package]
 name = "reindeer"
-edition = "2018"
 version = "0.0.0"
-authors = ['Facebook']
+authors = ["Facebook"]
+edition = "2018"
 license = "MIT"
 
 [dependencies]
-serde_starlark = { git = "https://github.com/facebookexperimental/rust-shed.git", branch = "master", version = "0.1.0" }
 anyhow = "1.0"
 env_logger = "0.7"
 globset = "0.4"
 ignore = "0.4"
-indexmap = { version = "1.3", features = ["serde-1", "rayon"] }
+indexmap = { version = "1.6", features = ["rayon", "serde-1"] }
 itertools = "0.8"
 log = { version = "0.4.8", features = ["kv_unstable"] }
 maplit = "1.0"
@@ -21,6 +20,7 @@ rustsec = { version = "0.19", features = ["fix"] }
 semver = { version = "0.11", features = ["serde"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
+serde_starlark = { git = "https://github.com/facebookexperimental/rust-shed.git", branch = "master", version = "0.1.0" }
 srcfiles = { git = "https://github.com/Areredify/srcfiles.git", rev = "349a321a132e025e13efe09c3515fe2e56c70ff6" }
 structopt = "0.3.21"
 termcolor = "1.0"
