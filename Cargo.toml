@@ -20,7 +20,7 @@ rustsec = { version = "0.19", features = ["fix"] }
 semver = { version = "0.11", features = ["serde"] }
 serde = { version = "=1.0.118", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
-serde_starlark = { git = "https://github.com/facebookexperimental/rust-shed.git", branch = "master", version = "0.1.0" }
+serde_starlark = { version = "0.1.0", git = "https://github.com/facebookexperimental/rust-shed.git", branch = "master" }
 srcfiles = { git = "https://github.com/Areredify/srcfiles.git", rev = "349a321a132e025e13efe09c3515fe2e56c70ff6" }
 structopt = "0.3.21"
 termcolor = "1.0"
