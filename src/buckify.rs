@@ -18,7 +18,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fs::File,
     io::Write,
     iter,
@@ -88,7 +88,6 @@ fn unzip_platform<T: Clone>(
 struct RuleContext<'meta> {
     config: &'meta Config,
     paths: &'meta Paths,
-    extra_meta: Option<HashMap<&'meta str, index::ExtraMetadata>>,
     index: index::Index<'meta>,
     done: Mutex<HashSet<&'meta PkgId>>,
 }
@@ -155,7 +154,6 @@ fn generate_target_rules<'scope>(
     let RuleContext {
         config,
         paths,
-        extra_meta,
         index,
         ..
     } = context;
@@ -171,11 +169,6 @@ fn generate_target_rules<'scope>(
     log::debug!("pkg {} target {} fixups {:#?}", pkg, tgt.name, fixups);
 
     let rootmod = relative_path(&paths.third_party_dir, &tgt.src_path);
-    let labels = if let Some(extra_meta) = extra_meta.as_ref() {
-        tp_metadata::gen_metadata(pkg, extra_meta)
-    } else {
-        vec![]
-    };
     let edition = tgt.edition.unwrap_or(pkg.edition);
     let licenses: BTreeSet<_> = fixups
         .manifestwalk(&config.license_patterns, iter::empty::<&str>())?
@@ -402,7 +395,6 @@ fn generate_target_rules<'scope>(
                 krate: tgt.name.replace('-', "_"),
                 rootmod,
                 edition,
-                labels,
                 base,
                 platform: perplat,
             },
@@ -422,7 +414,6 @@ fn generate_target_rules<'scope>(
                 krate: tgt.name.replace('-', "_"),
                 rootmod,
                 edition,
-                labels,
                 base: PlatformRustCommon {
                     // don't use fixed ones because it will be a cyclic dependency
                     rustc_flags: global_rustc_flags,
@@ -453,7 +444,6 @@ fn generate_target_rules<'scope>(
                 krate: tgt.name.replace('-', "_"),
                 rootmod,
                 edition,
-                labels,
                 base,
                 platform: perplat,
             },
@@ -476,16 +466,10 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths) -> Result<()>
     }
 
     let index = index::Index::new(config.include_top_level, config.extra_top_levels, &metadata);
-    let extra_meta = if config.emit_metadata {
-        Some(index.get_extra_meta()?)
-    } else {
-        None
-    };
 
     let context = &RuleContext {
         config,
         paths,
-        extra_meta,
         index,
         done: Mutex::new(HashSet::new()),
     };
@@ -506,6 +490,18 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths) -> Result<()>
     {
         let mut out = File::create(&buckpath).context("creating target file")?;
         buck::write_buckfile(&config.buck, rules.iter(), &mut out).context("writing buck file")?;
+    }
+
+    // Emit METADATA.bzl for each vendored dependency.
+    if config.emit_metadata {
+        let extra_meta = context.index.get_extra_meta()?;
+        for pkg in context.index.all_packages() {
+            let metadata_path = pkg.manifest_dir().join("METADATA.bzl");
+            let mut out = File::create(&metadata_path).context("creating METADATA.bzl file")?;
+            tp_metadata::write(&config.buck, pkg, &extra_meta, &mut out).with_context(|| {
+                format!("writing METADATA.bzl file for {} {}", pkg.name, pkg.version)
+            })?;
+        }
     }
 
     // Emit RUST_TARGETS.bzl

@@ -104,9 +104,12 @@ pub struct BuckConfig {
     /// Rust targets filename (.bzl with set of all target names - not generated if omitted)
     #[serde(default)]
     pub targets_name: Option<String>,
-    /// Prefix for the generated BUCK file
+    /// Banner for the top of all generated bzl files, namely BUCK and METADATA.bzl
     #[serde(default)]
-    pub file_header: String,
+    pub generated_file_header: String,
+    /// Front matter for the generated BUCK file
+    #[serde(default)]
+    pub buckfile_imports: String,
 
     /// Rule name for rust_library
     #[serde(default = "default_rust_library")]
@@ -181,7 +184,8 @@ impl Default for BuckConfig {
         BuckConfig {
             file_name: "BUCK".to_string(),
             targets_name: None,
-            file_header: String::new(),
+            generated_file_header: String::new(),
+            buckfile_imports: String::new(),
 
             rust_library: "rust_library".to_string(),
             rust_binary: "rust_binary".to_string(),

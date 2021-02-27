@@ -7,142 +7,215 @@
 
 //! Generate third-party metadata corresponding to METADATA.bzl
 
-use maplit::btreemap;
-use serde::ser::{Serialize, Serializer};
+use anyhow::Result;
+use serde::{Serialize, Serializer};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     fmt::{self, Display},
-    iter::FromIterator,
+    io::{BufWriter, Write},
 };
 
-use crate::{cargo::Manifest, index::ExtraMetadata};
+use crate::{cargo::Manifest, config::BuckConfig, index::ExtraMetadata};
 
-const METADATA_KV_DELIM: &str = "#";
-const METADATA_KEY_PREFIX: &str = "tp_";
-
-/*
-"metadata_spec": [
-  {"name": "licenses", "type": "list"},
-  {"name": "maintainers", "type": "list"},
-  {"name": "name", "type": "str"},
-  {"name": "upstream_address", "type": "str"},
-  {"name": "upstream_hash", "type": "str"},
-  {"name": "upstream_type", "type": "str"},
-  {"name": "version", "type": "str"}
-],
-*/
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-enum Type<'a> {
-    Missing,
-    Str(&'a str),
-    String(String),
-    List(Vec<&'a str>),
+#[derive(Serialize)]
+struct TpMetadata<'a> {
+    name: &'a str,
+    version: &'a semver::Version,
+    licenses: Vec<License>,
+    maintainers: Vec<&'a str>,
+    upstream_address: &'a str,
+    upstream_hash: &'a str,
+    upstream_type: &'a str,
 }
 
-impl<'a> Serialize for Type<'a> {
-    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Type::Missing => ser.serialize_none(),
-            Type::Str(s) => ser.serialize_str(s),
-            Type::String(ref s) => ser.serialize_str(s),
-            Type::List(v) => v.serialize(ser),
+pub fn write(
+    config: &BuckConfig,
+    pkg: &Manifest,
+    extra: &HashMap<&str, ExtraMetadata>,
+    out: &mut impl Write,
+) -> Result<()> {
+    let name = &pkg.name;
+    let version = &pkg.version;
+
+    let licenses = pkg
+        .license
+        .as_deref()
+        .map_or_else(Vec::new, split_spdx_license_list);
+
+    let maintainers = extra
+        .get(pkg.name.as_str())
+        .map(|m| m.oncall.as_str())
+        .into_iter()
+        .collect();
+
+    let mut is_cratesio = false;
+    let upstream_type = match &pkg.source {
+        Some(source) if source == "registry+https://github.com/rust-lang/crates.io-index" => {
+            is_cratesio = true;
+            "crates.io"
         }
-    }
-}
-
-impl Type<'_> {
-    fn is_missing(&self) -> bool {
-        self == &Type::Missing
-    }
-}
-
-impl<'a> Default for Type<'a> {
-    fn default() -> Self {
-        Type::Missing
-    }
-}
-
-impl<'a, T> From<Option<&'a T>> for Type<'a>
-where
-    Type<'a>: From<&'a T>,
-{
-    fn from(v: Option<&'a T>) -> Self {
-        match v {
-            None => Type::Missing,
-            Some(v) => Type::from(v),
-        }
-    }
-}
-
-impl<'a> From<&'a str> for Type<'a> {
-    fn from(s: &'a str) -> Self {
-        Type::Str(s)
-    }
-}
-
-impl<'a> From<&'a String> for Type<'a> {
-    fn from(s: &'a String) -> Self {
-        Type::Str(s.as_str())
-    }
-}
-
-impl<'a> From<&'a semver::Version> for Type<'a> {
-    fn from(s: &'a semver::Version) -> Self {
-        Type::String(s.to_string())
-    }
-}
-
-impl<'a> FromIterator<&'a str> for Type<'a> {
-    fn from_iter<T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
-        Type::List(iter.into_iter().collect())
-    }
-}
-
-impl<'a> FromIterator<&'a String> for Type<'a> {
-    fn from_iter<T: IntoIterator<Item = &'a String>>(iter: T) -> Self {
-        Type::List(iter.into_iter().map(|s| s.as_str()).collect())
-    }
-}
-
-impl Display for Type<'_> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Type::Missing => Ok(()),
-            Type::Str(s) => fmt.write_str(s),
-            Type::String(ref s) => fmt.write_str(s),
-            Type::List(l) => write!(fmt, "[{}]", l.join(",")),
-        }
-    }
-}
-
-pub fn gen_metadata<'a>(
-    pkg: &'a Manifest,
-    extra: &'a HashMap<&'a str, ExtraMetadata>,
-) -> Vec<String> {
-    let map: BTreeMap<&'static str, Type<'a>> = btreemap! {
-        "licenses" => pkg.license.iter().collect(),
-        "maintainers" => Type::from(
-            extra
-                .get(pkg.name.as_str())
-                .map(|m| m.oncall.as_str())
-                .unwrap_or("<dependency>")),
-        "name" => Type::from(&pkg.name),
-        "version" => Type::from(&pkg.version),
-        "upstream_address" => Type::from(pkg.repository.as_ref()),
-        "upstream_type" => Type::from(pkg.source.as_ref()),
+        Some(source) => source,
+        None => "",
     };
 
-    map.into_iter()
-        .filter(|(_, v)| !v.is_missing())
-        .map(|(k, v)| {
-            format!(
-                "{}{}{}{}",
-                METADATA_KEY_PREFIX,
-                k,
-                METADATA_KV_DELIM,
-                serde_starlark::to_string(&v).unwrap()
-            )
-        })
-        .collect()
+    let cratesio_url;
+    let upstream_address = match &pkg.repository {
+        Some(repository) => repository.as_str(),
+        None if is_cratesio => {
+            cratesio_url = format!("https://crates.io/crates/{}/{}", name, version);
+            &cratesio_url
+        }
+        None => "",
+    };
+
+    let metadata = TpMetadata {
+        name,
+        version,
+        licenses,
+        maintainers,
+        upstream_address,
+        upstream_hash: "",
+        upstream_type,
+    };
+
+    let mut out = BufWriter::new(out);
+
+    out.write_all(config.generated_file_header.as_bytes())?;
+    if !config.generated_file_header.is_empty() {
+        out.write_all(b"\n")?;
+    }
+
+    out.write_all(b"METADATA = ")?;
+    let json_formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+    let mut serializer = serde_json::Serializer::with_formatter(&mut out, json_formatter);
+    metadata.serialize(&mut serializer)?;
+    out.write_all(b"\n")?;
+
+    out.flush()?;
+    Ok(())
+}
+
+enum License {
+    Single(spdx::LicenseReq),
+    Associative {
+        op: spdx::expression::Operator,
+        nodes: Vec<License>,
+    },
+    Verbatim(String),
+}
+
+impl Display for License {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            License::Single(req) => Display::fmt(req, formatter),
+            License::Associative { op, nodes } => {
+                for (i, node) in nodes.iter().enumerate() {
+                    if i > 0 {
+                        formatter.write_str(match op {
+                            spdx::expression::Operator::And => " AND ",
+                            spdx::expression::Operator::Or => " OR ",
+                        })?;
+                    }
+                    let needs_paren = match node {
+                        License::Single(_) => false,
+                        License::Associative { .. } | License::Verbatim(_) => true,
+                    };
+                    if needs_paren {
+                        formatter.write_str("(")?;
+                    }
+                    Display::fmt(node, formatter)?;
+                    if needs_paren {
+                        formatter.write_str(")")?;
+                    }
+                }
+                Ok(())
+            }
+            License::Verbatim(s) => formatter.write_str(s),
+        }
+    }
+}
+
+impl Serialize for License {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_str(self)
+    }
+}
+
+// https://spdx.github.io/spdx-spec/appendix-IV-SPDX-license-expressions/
+fn split_spdx_license_list(spdx: &str) -> Vec<License> {
+    let mode = spdx::ParseMode::Lax; // designed for crates.io compatibility
+    let expr = match spdx::Expression::parse_mode(spdx, mode) {
+        Ok(expr) => expr,
+        Err(_) => return vec![License::Verbatim(spdx.to_owned())],
+    };
+
+    // Postorder traversal of license expression.
+    let mut stack = Vec::new();
+    for node in expr.iter() {
+        match *node {
+            spdx::expression::ExprNode::Req(ref expr) => {
+                stack.push(License::Single(expr.req.clone()));
+            }
+            spdx::expression::ExprNode::Op(op) => {
+                let rhs = stack.pop().unwrap();
+                let lhs = stack.pop().unwrap();
+                match (lhs, rhs) {
+                    (
+                        License::Associative {
+                            op: lhs_op,
+                            nodes: lhs_nodes,
+                        },
+                        License::Associative {
+                            op: rhs_op,
+                            nodes: rhs_nodes,
+                        },
+                    ) if lhs_op == op && rhs_op == op => {
+                        let mut nodes = lhs_nodes;
+                        nodes.extend(rhs_nodes);
+                        stack.push(License::Associative { op, nodes });
+                    }
+                    (
+                        License::Associative {
+                            op: lhs_op,
+                            mut nodes,
+                        },
+                        rhs,
+                    ) if lhs_op == op => {
+                        nodes.push(rhs);
+                        stack.push(License::Associative { op, nodes });
+                    }
+                    (
+                        lhs,
+                        License::Associative {
+                            op: rhs_op,
+                            mut nodes,
+                        },
+                    ) if rhs_op == op => {
+                        nodes.insert(0, lhs);
+                        stack.push(License::Associative { op, nodes });
+                    }
+                    (lhs, rhs) => {
+                        let nodes = vec![lhs, rhs];
+                        stack.push(License::Associative { op, nodes });
+                    }
+                }
+            }
+        }
+    }
+
+    let license = stack.pop().unwrap();
+    assert!(stack.is_empty());
+
+    if let License::Associative {
+        op: spdx::expression::Operator::Or,
+        nodes,
+    } = license
+    {
+        nodes
+    } else {
+        vec![license]
+    }
 }

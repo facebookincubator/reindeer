@@ -170,8 +170,6 @@ pub struct RustCommon {
     #[serde(rename = "crate_root")]
     pub rootmod: PathBuf,
     pub edition: crate::cargo::Edition,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub labels: Vec<String>,
     // Platform-dependent
     #[serde(flatten)]
     pub base: PlatformRustCommon,
@@ -391,7 +389,16 @@ pub fn write_buckfile<'a>(
     rules: impl Iterator<Item = &'a Rule>,
     out: &mut impl Write,
 ) -> Result<(), Error> {
-    out.write_all(config.file_header.as_bytes())?;
+    out.write_all(config.generated_file_header.as_bytes())?;
+    if !config.generated_file_header.is_empty() {
+        out.write_all(b"\n")?;
+    }
+
+    out.write_all(config.buckfile_imports.as_bytes())?;
+    if !config.buckfile_imports.is_empty() {
+        out.write_all(b"\n")?;
+    }
+
     for r in rules {
         r.render(&config, out)?
     }

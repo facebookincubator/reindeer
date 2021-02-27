@@ -46,27 +46,21 @@ pub struct ExtraMetadata {
 #[derive(Debug, Clone)]
 struct PackageMetaError {
     extra: BTreeSet<String>,
-    missing: BTreeSet<String>,
 }
 
 impl PackageMetaError {
     fn new() -> Self {
         PackageMetaError {
             extra: BTreeSet::new(),
-            missing: BTreeSet::new(),
         }
     }
 
     fn all_ok(&self) -> bool {
-        self.extra.is_empty() && self.missing.is_empty()
+        self.extra.is_empty()
     }
 
     fn add_extra(&mut self, s: impl ToString) {
         self.extra.insert(s.to_string());
-    }
-
-    fn add_missing(&mut self, s: impl ToString) {
-        self.missing.insert(s.to_string());
     }
 }
 
@@ -74,23 +68,12 @@ impl error::Error for PackageMetaError {}
 
 impl fmt::Display for PackageMetaError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        if self.all_ok() {
+        if self.extra.is_empty() {
             write!(fmt, "Package Metadata: all OK")?;
         } else {
-            if !self.extra.is_empty() {
-                write!(fmt, "Extra metadata for package(s):")?;
-                for p in &self.extra {
-                    write!(fmt, " {}", p)?;
-                }
-                if !self.missing.is_empty() {
-                    write!(fmt, "\n")?;
-                }
-            }
-            if !self.missing.is_empty() {
-                write!(fmt, "Missing metadata for package(s):")?;
-                for p in &self.missing {
-                    write!(fmt, " {}", p)?;
-                }
+            write!(fmt, "Extra metadata for package(s):")?;
+            for p in &self.extra {
+                write!(fmt, " {}", p)?;
             }
         }
         Ok(())
@@ -191,6 +174,11 @@ impl<'meta> Index<'meta> {
             .map(move |id| *pkgid_to_pkg.get(id).expect("missing pkgid"))
     }
 
+    /// Returns the transitive closure of dependencies of public packages.
+    pub fn all_packages(&'meta self) -> impl Iterator<Item = &'meta Manifest> {
+        self.pkgid_to_pkg.values().copied()
+    }
+
     /// Return the public package rule name
     pub fn rule_name(&self, pkg: &Manifest) -> String {
         match self.public_set.get(&pkg.id) {
@@ -228,12 +216,6 @@ impl<'meta> Index<'meta> {
                 Some(pkg) => {
                     ret.insert(pkg, val);
                 }
-            }
-        }
-
-        for p in pubpkgs {
-            if !ret.contains_key(p) {
-                pkgerrs.add_missing(p);
             }
         }
 
