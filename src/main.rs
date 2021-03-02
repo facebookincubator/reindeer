@@ -89,20 +89,27 @@ enum SubCommand {
 pub struct Paths {
     third_party_dir: PathBuf,
     manifest_path: PathBuf,
+    /// Path of the Buck cell root
+    cell_dir: PathBuf,
 }
 
 fn try_main() -> Result<()> {
     let args = Args::from_args();
 
+    let third_party_dir = args.third_party_dir.canonicalize()?;
+    let config = config::read_config(&third_party_dir)?;
+
     let paths = {
-        let tpd = args.third_party_dir.canonicalize()?;
+        let mut cell_dir = third_party_dir.clone();
+        if let Some(x) = &config.buck_cell_root {
+            cell_dir = cell_dir.join(x).canonicalize()?;
+        }
         Paths {
-            manifest_path: tpd.join("Cargo.toml"),
-            third_party_dir: tpd,
+            manifest_path: third_party_dir.join("Cargo.toml"),
+            third_party_dir,
+            cell_dir,
         }
     };
-
-    let config = config::read_config(&paths.third_party_dir)?;
 
     log::debug!("Args = {:#?}, paths {:#?}", args, paths);
 

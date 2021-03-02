@@ -50,6 +50,10 @@ pub struct Config {
     #[serde(default)]
     pub buildifier_path: Option<PathBuf>,
 
+    /// Path to buck cell root (if relative, relative to here)
+    #[serde(default)]
+    pub buck_cell_root: Option<PathBuf>,
+
     /// Include root package as top-level public target in Buck file
     #[serde(default)]
     pub include_top_level: bool,
