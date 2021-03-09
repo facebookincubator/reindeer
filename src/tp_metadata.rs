@@ -49,24 +49,41 @@ pub fn write(
         .collect();
 
     let mut is_cratesio = false;
+    let mut upstream_address = "";
+    let mut upstream_hash = "";
     let upstream_type = match &pkg.source {
         Some(source) if source == "registry+https://github.com/rust-lang/crates.io-index" => {
             is_cratesio = true;
             "crates.io"
+        }
+        Some(source) if source.starts_with("git+https://github.com/") => {
+            upstream_address = address_from_cargo_git_source(source);
+            upstream_hash = rev_from_cargo_git_source(source);
+            "github"
+        }
+        Some(source) if source.starts_with("git+https://gitlab.com/") => {
+            upstream_address = address_from_cargo_git_source(source);
+            upstream_hash = rev_from_cargo_git_source(source);
+            "gitlab"
+        }
+        Some(source) if source.starts_with("git+https://gitlab.redox-os.org/") => {
+            upstream_address = address_from_cargo_git_source(source);
+            upstream_hash = rev_from_cargo_git_source(source);
+            "gitlab.redox-os.org"
         }
         Some(source) => source,
         None => "",
     };
 
     let cratesio_url;
-    let upstream_address = match &pkg.repository {
-        Some(repository) => repository.as_str(),
-        None if is_cratesio => {
+    if upstream_address.is_empty() {
+        if let Some(repository) = &pkg.repository {
+            upstream_address = repository.as_str();
+        } else if is_cratesio {
             cratesio_url = format!("https://crates.io/crates/{}/{}", name, version);
-            &cratesio_url
+            upstream_address = &cratesio_url;
         }
-        None => "",
-    };
+    }
 
     let metadata = TpMetadata {
         name,
@@ -74,7 +91,7 @@ pub fn write(
         licenses,
         maintainers,
         upstream_address,
-        upstream_hash: "",
+        upstream_hash,
         upstream_type,
     };
 
@@ -93,6 +110,25 @@ pub fn write(
 
     out.flush()?;
     Ok(())
+}
+
+// git+https://github.com/owner/repo.git?branch=patchv1#9f8e7d6c5b4a3210
+fn address_from_cargo_git_source(source: &str) -> &str {
+    if source.starts_with("git+https://") {
+        if let Some(path_end) = source.find('?') {
+            let upstream_address = &source["git+".len()..path_end];
+            return upstream_address
+                .strip_suffix(".git")
+                .unwrap_or(upstream_address);
+        }
+    }
+    ""
+}
+fn rev_from_cargo_git_source(source: &str) -> &str {
+    if let Some(hash_begin) = source.find('#') {
+        return &source[hash_begin + 1..];
+    }
+    ""
 }
 
 enum License {
