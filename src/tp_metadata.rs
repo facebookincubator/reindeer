@@ -48,12 +48,13 @@ pub fn write(
         .into_iter()
         .collect();
 
-    let mut is_cratesio = false;
+    let cratesio_url;
     let mut upstream_address = "";
     let mut upstream_hash = "";
     let upstream_type = match &pkg.source {
         Some(source) if source == "registry+https://github.com/rust-lang/crates.io-index" => {
-            is_cratesio = true;
+            cratesio_url = format!("https://crates.io/crates/{}/{}", name, version);
+            upstream_address = &cratesio_url;
             "crates.io"
         }
         Some(source) if source.starts_with("git+https://github.com/") => {
@@ -74,16 +75,6 @@ pub fn write(
         Some(source) => source,
         None => "",
     };
-
-    let cratesio_url;
-    if upstream_address.is_empty() {
-        if let Some(repository) = &pkg.repository {
-            upstream_address = repository.as_str();
-        } else if is_cratesio {
-            cratesio_url = format!("https://crates.io/crates/{}/{}", name, version);
-            upstream_address = &cratesio_url;
-        }
-    }
 
     let metadata = TpMetadata {
         name,
