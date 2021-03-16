@@ -36,8 +36,7 @@ pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) 
     let lockfile = Lockfile::load(&cargo_lock)
         .with_context(|| format!("loading lockfile {}", cargo_lock.display()))?;
     let db = if no_fetch {
-        Database::load(&Repository::open(Repository::default_path()).context("opening repository")?)
-            .context("loading repository")?
+        Database::open(&Repository::default_path()).context("opening repository")?
     } else {
         Database::fetch().context("fetching database")?
     };
@@ -85,11 +84,11 @@ pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) 
         let _ = writeln!(stdout, "\n");
     }
 
-    for warning in report.warnings.warnings.values().flatten() {
+    for warning in report.warnings.values().flatten() {
         let pkg = &warning.package;
         let adv = match &warning {
             Warning {
-                kind: Kind::Informational,
+                kind: Kind::Notice,
                 advisory: Some(advisory),
                 ..
             } => Some((advisory, "WARNING")),
@@ -132,7 +131,7 @@ pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) 
             stdout,
             "{} vulnerabilities, {} warnings in {} packages",
             report.vulnerabilities.list.len(),
-            report.warnings.warnings.len(),
+            report.warnings.len(),
             lockfile.packages.len()
         )?;
         stdout.set_color(&default)?;
