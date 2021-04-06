@@ -422,7 +422,7 @@ fn generate_target_rules<'scope>(
                 platform: perplat,
             },
         };
-        fixups.emit_buildscript_rules(buildscript)?
+        fixups.emit_buildscript_rules(buildscript, &config)?
     } else if tgt.kind_bin() && tgt.crate_bin() && index.is_public(pkg) {
         // Standalone binary
         // Binary for a package always takes the package's library as a dependency
@@ -483,7 +483,13 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths) -> Result<()>
     });
 
     // Collect rules from channel
-    let rules: BTreeSet<_> = rx.iter().collect::<Result<_>>()?;
+    let rules: BTreeSet<_> = match rx.iter().collect::<Result<_>>() {
+        Ok(rules) => rules,
+        Err(err) => {
+            log::error!("Unresolved fix up errors, please fix them and rerun buckify.");
+            return Err(err);
+        }
+    };
 
     // Emit buckfile
     let buckpath = paths.third_party_dir.join(&config.buck.file_name);

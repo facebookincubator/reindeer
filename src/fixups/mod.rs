@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use globset::{GlobBuilder, GlobSetBuilder};
 
 use walkdir::WalkDir;
@@ -180,7 +180,11 @@ impl<'meta> Fixups<'meta> {
     /// Return buildscript-related rules
     /// The rules may be platform specific, but they're emitted unconditionally. (The
     /// dependencies referencing them are conditional).
-    pub fn emit_buildscript_rules(&self, buildscript: RustBinary) -> Result<Vec<Rule>> {
+    pub fn emit_buildscript_rules(
+        &self,
+        buildscript: RustBinary,
+        config: &'meta Config,
+    ) -> Result<Vec<Rule>> {
         let mut res = Vec::new();
 
         let rel_manifest = relative_path(&self.third_party_dir, self.manifest_dir);
@@ -404,11 +408,15 @@ impl<'meta> Fixups<'meta> {
 
                 // Complain and omit
                 BuildscriptFixup::Unresolved(msg) => {
-                    log::warn!(
+                    let unresolved_package_msg = format!(
                         "{} has a build script, but I don't know what to do with it: {}",
-                        self.package,
-                        msg
+                        self.package, msg
                     );
+                    if config.unresolved_fixup_error {
+                        return Err(anyhow!("{}", unresolved_package_msg));
+                    } else {
+                        log::warn!("{}", unresolved_package_msg);
+                    }
                 }
             }
         }

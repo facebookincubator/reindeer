@@ -46,6 +46,10 @@ pub struct Config {
     #[serde(default)]
     pub fixup_templates: bool,
 
+    /// Fail buckify if there are unresolved fixups
+    #[serde(default)]
+    pub unresolved_fixup_error: bool,
+
     /// Path to buildifier (if relative, relative to here)
     #[serde(default)]
     pub buildifier_path: Option<PathBuf>,
