@@ -139,6 +139,10 @@ impl<'meta> Fixups<'meta> {
         self.fixup_config.python_ext.as_deref()
     }
 
+    pub fn link_style(&self) -> Option<&str> {
+        self.fixup_config.link_style.as_deref()
+    }
+
     pub fn omit_target(&self) -> bool {
         self.fixup_config.omit_targets.contains(&self.target.name)
     }

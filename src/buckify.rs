@@ -421,6 +421,7 @@ fn generate_target_rules<'scope>(
                 },
                 platform: perplat,
             },
+            link_style: None,
         };
         fixups.emit_buildscript_rules(buildscript, &config)?
     } else if tgt.kind_bin() && tgt.crate_bin() && index.is_public(pkg) {
@@ -447,6 +448,7 @@ fn generate_target_rules<'scope>(
                 base,
                 platform: perplat,
             },
+            link_style: fixups.link_style().map(str::to_string),
         })]
     } else {
         // Ignore everything else for now.

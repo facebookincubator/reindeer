@@ -211,6 +211,8 @@ impl AsRef<Common> for RustLibrary {
 pub struct RustBinary {
     #[serde(flatten)]
     pub common: RustCommon,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_style: Option<String>,
 }
 
 impl AsRef<Common> for RustBinary {

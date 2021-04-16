@@ -36,6 +36,9 @@ pub struct FixupConfigFile {
     /// rule so it can be mapped to the right underlying rule.
     pub python_ext: Option<String>,
 
+    /// Rust binary link style.
+    pub link_style: Option<String>,
+
     /// Common config
     #[serde(flatten)]
     base: FixupConfig,
