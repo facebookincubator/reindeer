@@ -417,7 +417,10 @@ impl<'meta> Fixups<'meta> {
                         self.package, msg
                     );
                     if config.unresolved_fixup_error {
-                        return Err(anyhow!("{}", unresolved_package_msg));
+                        log::error!("{}", unresolved_package_msg);
+                        return Err(anyhow!(
+                            "Unresolved fix up errors, please fix them and rerun buckify."
+                        ));
                     } else {
                         log::warn!("{}", unresolved_package_msg);
                     }

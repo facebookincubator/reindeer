@@ -488,7 +488,12 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths) -> Result<()>
     let rules: BTreeSet<_> = match rx.iter().collect::<Result<_>>() {
         Ok(rules) => rules,
         Err(err) => {
-            log::error!("Unresolved fix up errors, please fix them and rerun buckify.");
+            if let Some(custom_err_msg) = config.unresolved_fixup_error_message.as_ref() {
+                log::warn!(
+                    "Additional info on how to fix unresolved fixup errors: {}",
+                    custom_err_msg
+                );
+            }
             return Err(err);
         }
     };

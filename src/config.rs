@@ -50,6 +50,10 @@ pub struct Config {
     #[serde(default)]
     pub unresolved_fixup_error: bool,
 
+    ///Provide additional information to resolve unresolved fixup errors
+    #[serde(default)]
+    pub unresolved_fixup_error_message: Option<String>,
+
     /// Path to buildifier (if relative, relative to here)
     #[serde(default)]
     pub buildifier_path: Option<PathBuf>,
