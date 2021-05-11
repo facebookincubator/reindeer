@@ -156,6 +156,10 @@ pub struct PlatformRustCommon {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
 
+    // This isn't really "common" (Binaries only), but does need to be platform
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_style: Option<String>,
+
     // Dummy map to make serde treat this struct as a map
     #[serde(skip_serializing_if = "always", flatten)]
     pub _dummy: BTreeMap<(), ()>,
@@ -211,8 +215,6 @@ impl AsRef<Common> for RustLibrary {
 pub struct RustBinary {
     #[serde(flatten)]
     pub common: RustCommon,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub link_style: Option<String>,
 }
 
 impl AsRef<Common> for RustBinary {

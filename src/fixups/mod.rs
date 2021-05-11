@@ -139,10 +139,6 @@ impl<'meta> Fixups<'meta> {
         self.fixup_config.python_ext.as_deref()
     }
 
-    pub fn link_style(&self) -> Option<&str> {
-        self.fixup_config.link_style.as_deref()
-    }
-
     pub fn omit_target(&self) -> bool {
         self.fixup_config.omit_targets.contains(&self.target.name)
     }
@@ -906,6 +902,18 @@ impl<'meta> Fixups<'meta> {
             }
             if !map.is_empty() {
                 ret.push((platform.cloned(), map));
+            }
+        }
+
+        ret
+    }
+
+    /// Compute linkage
+    pub fn compute_link_style(&self) -> Vec<(Option<PlatformExpr>, String)> {
+        let mut ret = Vec::new();
+        for (platform, config) in self.fixup_config.configs(&self.package.version) {
+            if let Some(link_style) = config.link_style.as_ref() {
+                ret.push((platform.cloned(), link_style.clone()));
             }
         }
 

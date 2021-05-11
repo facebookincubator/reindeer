@@ -379,6 +379,27 @@ fn generate_target_rules<'scope>(
         }
     }
 
+    // "link_style" only really applies to binaries, so maintain separate binary base & perplat
+    let mut bin_base = base.clone();
+    let mut bin_perplat = perplat.clone();
+
+    unzip_platform(
+        &config,
+        &mut bin_base,
+        &mut bin_perplat,
+        |rule, link_style| {
+            log::debug!("pkg {} target {}: link_style {}", pkg, tgt.name, link_style);
+            rule.link_style = Some(link_style);
+        },
+        fixups.compute_link_style(),
+    )
+    .context("link_style")?;
+    // Standalone binary - binary for a package always takes the package's library as a dependency
+    // if there is one
+    if let Some(true) = pkg.dependency_target().map(ManifestTarget::kind_lib) {
+        bin_base.deps.insert(RuleRef::local(index.rule_name(pkg)));
+    }
+
     // Generate rules appropriate to each kind of crate we want to support
     let rules: Vec<Rule> = if (tgt.kind_lib() && tgt.crate_lib())
         || (tgt.kind_proc_macro() && tgt.crate_proc_macro())
@@ -421,20 +442,9 @@ fn generate_target_rules<'scope>(
                 },
                 platform: perplat,
             },
-            link_style: None,
         };
         fixups.emit_buildscript_rules(buildscript, &config)?
     } else if tgt.kind_bin() && tgt.crate_bin() && index.is_public(pkg) {
-        // Standalone binary
-        // Binary for a package always takes the package's library as a dependency
-        // if there is one
-        if pkg
-            .dependency_target()
-            .map(|dep| dep.kind_lib())
-            .unwrap_or(false)
-        {
-            base.deps.insert(RuleRef::local(index.rule_name(pkg)));
-        }
         vec![Rule::Binary(RustBinary {
             common: RustCommon {
                 common: Common {
@@ -445,10 +455,9 @@ fn generate_target_rules<'scope>(
                 krate: tgt.name.replace('-', "_"),
                 rootmod,
                 edition,
-                base,
-                platform: perplat,
+                base: bin_base,
+                platform: bin_perplat,
             },
-            link_style: fixups.link_style().map(str::to_string),
         })]
     } else {
         // Ignore everything else for now.

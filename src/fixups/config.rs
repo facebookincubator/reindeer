@@ -36,9 +36,6 @@ pub struct FixupConfigFile {
     /// rule so it can be mapped to the right underlying rule.
     pub python_ext: Option<String>,
 
-    /// Rust binary link style.
-    pub link_style: Option<String>,
-
     /// Common config
     #[serde(flatten)]
     base: FixupConfig,
@@ -147,6 +144,8 @@ pub struct FixupConfig {
     /// manifest dir, and therefore have the same directory
     /// structure.
     pub overlay: Option<PathBuf>,
+    /// Rust binary link style.
+    pub link_style: Option<String>,
 
     // Table/map-like values must come after everything else
     /// Additional env variables
