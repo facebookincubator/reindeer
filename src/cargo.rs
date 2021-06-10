@@ -13,6 +13,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    env,
     fmt::{self, Display},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
@@ -80,12 +81,27 @@ pub(crate) fn run_cargo(
         })
         .unwrap_or_else(|| PathBuf::from("cargo"));
 
-    let mut child = Command::new(&cargo_path)
+    let mut cargo_command = Command::new(&cargo_path);
+    cargo_command
         .env("CARGO_HOME", cargo_home.join(".cargo"))
         .current_dir(cargo_home) // make sure it doesn't see any stray .cargo/config files
         .args(&cmdline)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    // Any relative RUSTC path in Reindeer's env is meant to be interpreted
+    // relative to the directory Reindeer is running in, which is different from
+    // the one we are about to invoke Cargo in. Patch up the RUSTC in the env.
+    if let Some(rustc_path) = env::var_os("RUSTC") {
+        if rustc_path.to_string_lossy().contains('/') {
+            if let Ok(current_dir) = env::current_dir() {
+                let rustc_path = current_dir.join(rustc_path);
+                cargo_command.env("RUSTC", rustc_path);
+            }
+        }
+    }
+
+    let mut child = cargo_command
         .spawn()
         .with_context(|| format!("Failed to execute {}", cargo_path.display()))?;
 
