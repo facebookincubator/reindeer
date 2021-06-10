@@ -72,7 +72,13 @@ enum SubCommand {
         no_fetch: bool,
     },
     /// Generate Buck build rules for Cargo packages
-    Buckify {},
+    Buckify {
+        /// Emit generated build rules to stdout, not overwriting existing file.
+        ///
+        /// Suppresses generation of other output files.
+        #[structopt(long)]
+        stdout: bool,
+    },
     /// Show security report for vendored crates
     Auditsec {
         /// Use cached version of the advisory repo
@@ -139,7 +145,7 @@ fn try_main() -> Result<()> {
             )?;
         }
 
-        SubCommand::Buckify {} => buckify::buckify(&config, &args, &paths)?,
+        SubCommand::Buckify { stdout } => buckify::buckify(&config, &args, &paths, *stdout)?,
     }
 
     Ok(())

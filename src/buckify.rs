@@ -16,14 +16,14 @@ use crate::{
     platform::{platform_names_for_expr, PlatformExpr, PlatformName},
     tp_metadata, Args, Paths,
 };
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     fs::File,
-    io::Write,
+    io::{self, Write},
     iter,
     path::{Component, Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::{mpsc, Mutex},
 };
 
@@ -469,7 +469,7 @@ fn generate_target_rules<'scope>(
     Ok((rules, dep_pkgs))
 }
 
-pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths) -> Result<()> {
+pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool) -> Result<()> {
     let metadata = cargo_get_metadata(config, args, paths)?;
 
     if args.debug {
@@ -507,7 +507,15 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths) -> Result<()>
         }
     };
 
-    // Emit buckfile
+    // Emit build rules to stdout
+    if stdout {
+        let mut out = Vec::new();
+        buck::write_buckfile(&config.buck, rules.iter(), &mut out).context("writing buck file")?;
+        print_build_rules(config, paths, &out)?;
+        return Ok(());
+    }
+
+    // Write build rules to file
     let buckpath = paths.third_party_dir.join(&config.buck.file_name);
     {
         let mut out = File::create(&buckpath).context("creating target file")?;
@@ -581,4 +589,41 @@ fn run_buildifier(buildifier: &Path, path: &Path) -> Result<()> {
         .with_context(|| format!("executing buildifier {}", buildifier.display()))?;
 
     Ok(())
+}
+
+fn print_build_rules(config: &Config, paths: &Paths, content: &[u8]) -> Result<()> {
+    let buildifier = match config.buildifier_path.as_ref() {
+        Some(buildifier) => buildifier,
+        None => {
+            // Ignore error, for example pipe closed resulting from `reindeer
+            // buckify --stdout | head`.
+            let _ = io::stdout().write_all(content);
+            return Ok(());
+        }
+    };
+
+    let buildifier = paths.third_party_dir.join(buildifier);
+    let mut child = Command::new(&buildifier)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("executing buildifier {}", buildifier.display()))?;
+
+    let mut buildifier_stdin = child.stdin.take().unwrap();
+    // Ignore error -- buildifier may stop reading past a syntax error, but
+    // that would already be reported by it to its inherited stderr and does
+    // not need to be handled here.
+    let _ = buildifier_stdin.write_all(content);
+    // Closes the pipe.
+    drop(buildifier_stdin);
+
+    let status = child.wait().context("executing buildifier")?;
+    if status.success() {
+        Ok(())
+    } else if let Some(code) = status.code() {
+        bail!("buildifier failed with code {}", code);
+    } else {
+        bail!("buildifier failed");
+    }
 }
