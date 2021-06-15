@@ -16,7 +16,7 @@ page should help with getting it installed.
 The `.buckconfig` file both configures Buck and tells it where the top of the "cell" is (current working tree).
 This only contains some very minimal Rust configuration; most notable is overriding the default to Rust 2018.
 
-(`.buckversion` won't generally be needed.)
+(`.buck-java11` won't generally be needed.)
 
 ## Reindeer configuration
 
