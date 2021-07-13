@@ -135,7 +135,7 @@ impl<'a> PlatformPredicate<'a> {
             Ok((rest, _)) => Err(PredicateParseError::TrailingJunk(rest.to_string())),
             Err(nom::Err::Incomplete(_)) => Err(PredicateParseError::Incomplete),
             Err(nom::Err::Error(err)) | Err(nom::Err::Failure(err)) => Err(
-                PredicateParseError::ParseError(convert_error(&input.0, err)),
+                PredicateParseError::ParseError(convert_error(input.0.as_str(), err)),
             ),
         }
     }
@@ -186,8 +186,8 @@ mod parser {
         bytes::complete::{escaped, tag, take_while1},
         character::complete::{char, multispace0, one_of},
         combinator::{cut, map, opt},
-        error::{context, ParseError},
-        multi::separated_list,
+        error::{context, ContextError, ParseError},
+        multi::separated_list0,
         sequence::{delimited, preceded, separated_pair, terminated},
         AsChar, IResult,
     };
@@ -206,7 +206,9 @@ mod parser {
         escaped(graphic, '\\', one_of(r#"n"\"#))(i)
     }
 
-    fn string<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
+    fn string<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+        i: &'a str,
+    ) -> IResult<&'a str, &'a str, E> {
         context(
             "string",
             preceded(
@@ -219,13 +221,15 @@ mod parser {
         )(i)
     }
 
-    fn sep<'a, E: ParseError<&'a str>>(sep: char) -> impl Fn(&'a str) -> IResult<&'a str, (), E> {
+    fn sep<'a, E: ParseError<&'a str>>(
+        sep: char,
+    ) -> impl FnMut(&'a str) -> IResult<&'a str, (), E> {
         map(preceded(sp, char(sep)), |_| ())
     }
 
     fn keyword<'a, E: ParseError<&'a str>>(
         kw: &'static str,
-    ) -> impl Fn(&'a str) -> IResult<&'a str, (), E> {
+    ) -> impl FnMut(&'a str) -> IResult<&'a str, (), E> {
         map(preceded(sp, tag(kw)), |_| ())
     }
 
@@ -238,17 +242,17 @@ mod parser {
     }
 
     // Parses: `keyword` '(' inner ')'
-    fn operator<'a, T, E: ParseError<&'a str>>(
+    fn operator<'a, T, E: ParseError<&'a str> + ContextError<&'a str>>(
         kw: &'static str,
-        inner: impl Fn(&'a str) -> IResult<&'a str, T, E>,
-    ) -> impl Fn(&'a str) -> IResult<&'a str, T, E> {
+        inner: impl FnMut(&'a str) -> IResult<&'a str, T, E>,
+    ) -> impl FnMut(&'a str) -> IResult<&'a str, T, E> {
         context(
             kw,
             preceded(keyword(kw), cut(delimited(sep('('), inner, sep(')')))),
         )
     }
 
-    fn parse_predicate<'a, E: ParseError<&'a str>>(
+    fn parse_predicate<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
         i: &'a str,
     ) -> IResult<&'a str, PlatformPredicate<'a>, E> {
         use PlatformPredicate::*;
@@ -257,11 +261,11 @@ mod parser {
             "predicate",
             alt((
                 map(
-                    operator("all", separated_list(sep(','), parse_predicate)),
+                    operator("all", separated_list0(sep(','), parse_predicate)),
                     All,
                 ),
                 map(
-                    operator("any", separated_list(sep(','), parse_predicate)),
+                    operator("any", separated_list0(sep(','), parse_predicate)),
                     Any,
                 ),
                 map(operator("not", parse_predicate), |pred| Not(Box::new(pred))),
@@ -276,7 +280,7 @@ mod parser {
         )(i)
     }
 
-    pub fn parse_cfg<'a, E: ParseError<&'a str>>(
+    pub fn parse_cfg<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
         i: &'a str,
     ) -> IResult<&'a str, PlatformPredicate<'a>, E> {
         context(

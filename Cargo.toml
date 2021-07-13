@@ -13,7 +13,7 @@ ignore = "0.4"
 indexmap = { version = "1.6", features = ["rayon", "serde-1"] }
 itertools = "0.10.1"
 log = { version = "0.4.8", features = ["kv_unstable"] }
-nom = "5.1"
+nom = "6.1"
 rayon = "1.2"
 rustsec = { version = "0.23.3", features = ["fix"] }
 semver = { version = "1.0", features = ["serde"] }
