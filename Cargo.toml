@@ -10,7 +10,7 @@ anyhow = "1.0"
 env_logger = "0.7"
 globset = "0.4.7"
 ignore = "0.4"
-indexmap = { version = "1.6", features = ["rayon", "serde-1"] }
+indexmap = { version = "1.7.0", features = ["rayon", "serde-1"] }
 itertools = "0.10.1"
 log = { version = "0.4.8", features = ["kv_unstable"] }
 nom = "6.1"
