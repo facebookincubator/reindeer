@@ -331,9 +331,18 @@ impl<'meta> Fixups<'meta> {
                             headers
                                 .iter()
                                 .map(|path| format!("{}/{}", rel_manifest.display(), path))
-                                .chain(fixup_include_paths.iter().map(|path| {
-                                    format!("{}/**/*.h", rel_fixup.join(path).display())
-                                })),
+                                .chain(itertools::concat(fixup_include_paths.iter().map(|path| {
+                                    vec!["asm", "h"]
+                                        .iter()
+                                        .map(|ext| {
+                                            format!(
+                                                "{}/**/*.{}",
+                                                rel_fixup.join(path).display(),
+                                                ext
+                                            )
+                                        })
+                                        .collect::<Vec<_>>()
+                                }))),
                             exclude
                                 .iter()
                                 .map(|path| format!("{}/{}", rel_manifest.display(), path)),
