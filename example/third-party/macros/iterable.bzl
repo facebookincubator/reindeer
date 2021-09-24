@@ -88,7 +88,7 @@ def _to_list(iterable):
     Convert the iterable to a list, or return the original object if already a list
 
     This is generally useful for things like `.keys()` which might return a dict_keys
-    view in python3, but a list in python2 (and skylark)
+    view in python3, but a list in python2 (and starlark)
     """
     if is_list(iterable):
         return iterable

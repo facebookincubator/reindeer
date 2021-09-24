@@ -2,7 +2,6 @@ load(":iterable.bzl", "iterable")
 load(":new_sets.bzl", "sets")
 load(":type_defs.bzl", "is_dict")
 
-
 # Get current target platform - hard-coded for example, matches one of the platforms
 # defined in reindeer.toml.
 def _get_plat():
@@ -11,7 +10,6 @@ def _get_plat():
 # Matching host triple
 def _get_native_host_triple():
     return "x86_64-unknown-linux-gnu"
-
 
 def extend(orig, new):
     if orig == None:
@@ -25,15 +23,14 @@ def extend(orig, new):
         ret = orig + new
     return ret
 
-
 # Invoke something with a default cargo-like environment. This is used to invoke buildscripts
 # from within a Buck rule to get it to do whatever it does (typically, either emit command-line
 # options for rustc, or generate some source).
 def _make_preamble(out_dir, package_name, version, features, cfgs, env, target_override):
     # Work out what rustc to pass to the script
     rustc = native.read_config("rust", "compiler", "rustc")
-    if '//' in rustc:
-        rustc = '(exe %s)' % rustc
+    if "//" in rustc:
+        rustc = "(exe %s)" % rustc
 
     # CWD of a genrule script is the source directory but use $SRCDIR to make it an absolute path
     return """
@@ -138,7 +135,6 @@ def third_party_rust_binary(name, platform = {}, **kwargs):
     if "srcs" not in kwargs:
         kwargs["srcs"] = []
     rust_binary(name, **platform_attrs(_get_plat(), platform, kwargs))
-
 
 def third_party_rust_cxx_library(name, **kwargs):
     cxx_library(name, **kwargs)
