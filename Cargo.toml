@@ -27,4 +27,4 @@ srcfiles = { git = "https://github.com/Areredify/srcfiles.git", rev = "349a321a1
 structopt = "0.3.23"
 termcolor = "1.0"
 toml = "=0.5.7"
-walkdir = "2.2.9"
+walkdir = "2.3"
