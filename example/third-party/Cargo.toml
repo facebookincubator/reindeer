@@ -3,7 +3,7 @@
 name = "rust-third-party"
 version = "0.0.0"
 publish = false
-edition = "2018"
+edition = "2021"
 
 # Dummy target to keep Cargo happy
 [[bin]]
