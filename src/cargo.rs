@@ -517,6 +517,7 @@ pub enum TargetKind {
     Bin,
     CustomBuild,
     Example,
+    Dylib,
     Lib,
     Rlib,
     ProcMacro,
