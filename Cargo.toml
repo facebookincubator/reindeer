@@ -21,7 +21,7 @@ rustsec = { version = "0.23.3", features = ["fix"] }
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.126", features = ["derive", "rc"] }
 serde_json = { version = "1.0.64", features = ["float_roundtrip", "unbounded_depth"] }
-serde_starlark = { version = "0.1.0", git = "https://github.com/facebookexperimental/rust-shed.git", branch = "master" }
+serde_starlark = { version = "0.1.0", git = "https://github.com/facebookexperimental/rust-shed.git", branch = "main" }
 spdx = "0.3"
 srcfiles = "0.1"
 structopt = "0.3.23"
