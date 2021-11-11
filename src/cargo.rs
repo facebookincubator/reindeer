@@ -547,6 +547,8 @@ pub enum Edition {
     Rust2015,
     #[serde(rename = "2018")]
     Rust2018,
+    #[serde(rename = "2021")]
+    Rust2021,
 }
 
 impl Display for Edition {
@@ -554,6 +556,7 @@ impl Display for Edition {
         let edition = match self {
             Edition::Rust2015 => "2015",
             Edition::Rust2018 => "2018",
+            Edition::Rust2021 => "2021",
         };
         fmt.write_str(edition)
     }
