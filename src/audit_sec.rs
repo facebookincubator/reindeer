@@ -9,12 +9,11 @@ use anyhow::{Context, Result};
 
 use crate::{config::Config, Paths};
 use rustsec::{
-    advisory::informational::Informational,
-    fixer::Fixer,
+    advisory::Informational,
     lockfile::Lockfile,
     report::{Report, Settings},
     warning::{Kind, Warning},
-    Database, Repository,
+    Database, Fixer, Repository,
 };
 use std::io::Write;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
