@@ -711,6 +711,10 @@ impl<'meta> Fixups<'meta> {
                             .to_string(),
                     ),
                     (
+                        "CARGO_PKG_DESCRIPTION".to_string(),
+                        self.package.description.clone().unwrap_or_default(),
+                    ),
+                    (
                         "CARGO_PKG_VERSION".to_string(),
                         self.package.version.to_string(),
                     ),
