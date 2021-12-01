@@ -187,9 +187,9 @@ fn generate_target_rules<'scope>(
 
     // Get a list of the most obvious sources for the crate. This is either a list of
     // filename, or a list of globs.
-    // If we're configured to get precise sources and we're using 2018 edition source, then
+    // If we're configured to get precise sources and we're using 2018+ edition source, then
     // parse the crate to see what files are actually used.
-    let mut srcs = if config.precise_srcs && edition == Edition::Rust2018 {
+    let mut srcs = if config.precise_srcs && edition >= Edition::Rust2018 {
         match srcfiles::crate_srcfiles(&tgt.src_path) {
             Ok(srcs) => {
                 let srcs = srcs
