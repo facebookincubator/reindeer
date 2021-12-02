@@ -80,6 +80,10 @@ pub struct Config {
     #[serde(default)]
     pub emit_metadata: bool,
 
+    /// Use strict glob matching
+    #[serde(default)]
+    pub strict_globs: bool,
+
     #[serde(default)]
     pub cargo: CargoConfig,
 

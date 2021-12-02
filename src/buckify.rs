@@ -133,7 +133,7 @@ fn generate_rules<'scope>(
             }
             Err(err) => {
                 log::error!(
-                    "pkg {} target {}: rule generation failed: {}",
+                    "pkg {} target {}: rule generation failed: {:?}",
                     pkg,
                     tgt.name,
                     err
@@ -171,7 +171,7 @@ fn generate_target_rules<'scope>(
     let rootmod = relative_path(&paths.third_party_dir, &tgt.src_path);
     let edition = tgt.edition.unwrap_or(pkg.edition);
     let licenses: BTreeSet<_> = fixups
-        .manifestwalk(&config.license_patterns, iter::empty::<&str>())?
+        .manifestwalk(&config.license_patterns, iter::empty::<&str>(), false)?
         .chain(
             pkg.license_file
                 .as_ref()

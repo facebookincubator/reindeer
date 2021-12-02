@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use globset::{GlobBuilder, GlobSetBuilder};
 
 use walkdir::WalkDir;
@@ -265,7 +265,12 @@ impl<'meta> Fixups<'meta> {
                     res.push(Rule::Binary(buildscript.clone()));
 
                     let srcs = self
-                        .manifestwalk(input_srcs.iter().map(String::as_str), iter::empty::<&str>())?
+                        .manifestwalk(
+                            input_srcs.iter().map(String::as_str),
+                            iter::empty::<&str>(),
+                            self.config.strict_globs,
+                        )
+                        .context("generated file inputs")?
                         .collect();
 
                     // Emit rules to extract generated sources
@@ -322,7 +327,10 @@ impl<'meta> Fixups<'meta> {
                             licenses: Default::default(),
                         },
                         // Just collect the sources, excluding things in the exclude list
-                        srcs: self.manifestwalk(srcs, exclude)?.collect(),
+                        srcs: self
+                            .manifestwalk(srcs, exclude, self.config.strict_globs)
+                            .context("C++ sources")?
+                            .collect(),
                         // Collect the nominated headers, plus everything in the fixup include
                         // path(s).
                         headers: self::globwalk(
@@ -346,11 +354,19 @@ impl<'meta> Fixups<'meta> {
                             exclude
                                 .iter()
                                 .map(|path| format!("{}/{}", rel_manifest.display(), path)),
-                        )?
+                            false,
+                        )
+                        .context("C++ headers")?
                         .collect(),
                         exported_headers: match exported_headers {
                             SetOrMap::Set(exported_headers) => SetOrMap::Set(
-                                self.manifestwalk(exported_headers, exclude)?.collect(),
+                                self.manifestwalk(
+                                    exported_headers,
+                                    exclude,
+                                    self.config.strict_globs,
+                                )
+                                .context("C++ exported headers")?
+                                .collect(),
                             ),
                             SetOrMap::Map(exported_headers) => {
                                 let rel_manifest =
@@ -385,7 +401,9 @@ impl<'meta> Fixups<'meta> {
                     public,
                     ..
                 }) => {
-                    let libs = self.manifestwalk(static_libs, Vec::<String>::new())?;
+                    let libs = self
+                        .manifestwalk(static_libs, Vec::<String>::new(), self.config.strict_globs)
+                        .context("Static libraries")?;
                     for static_lib in libs {
                         let rule = buck::PrebuiltCxxLibrary {
                             common: Common {
@@ -666,8 +684,8 @@ impl<'meta> Fixups<'meta> {
                 }) = buildscript
                 {
                     let libs = self
-                        .manifestwalk(static_libs, Vec::<String>::new())
-                        .unwrap();
+                        .manifestwalk(static_libs, Vec::<String>::new(), self.config.strict_globs)
+                        .context("Prebuilt C++ libraries")?;
                     for static_lib in libs {
                         let dep_name = if *public {
                             format!(
@@ -765,20 +783,25 @@ impl<'meta> Fixups<'meta> {
             .filter(|(platform, _)| platform.is_some())
             .any(|(_, config)| config.overlay.is_some());
 
-        let common_files: HashSet<_> = self
-            .manifestwalk(
+        let mut common_files = HashSet::new();
+        // Base sources are not required because they're either computed
+        // precisely or a random guess of globs.
+        common_files.extend(
+            self.manifestwalk(&srcs, None::<&str>, false)
+                .context("Srcs")?,
+        );
+        // Fixup-specified extra srcs are required (to avoid errors)
+        common_files.extend(
+            self.manifestwalk(
                 self.fixup_config
                     .base(&self.package.version)
                     .into_iter()
-                    .flat_map(|base| {
-                        base.extra_srcs
-                            .iter()
-                            .chain(srcs.iter())
-                            .map(String::as_str)
-                    }),
+                    .flat_map(|base| base.extra_srcs.iter().map(String::as_str)),
                 None::<&str>,
-            )?
-            .collect();
+                self.config.strict_globs,
+            )
+            .context("Extra srcs")?,
+        );
 
         let common_overlay_files = match self.fixup_config.base(&self.package.version) {
             Some(base) => base.overlay_files(&self.fixup_dir)?,
@@ -801,7 +824,12 @@ impl<'meta> Fixups<'meta> {
 
             // Platform-specific sources
             let mut files: HashSet<_> = self
-                .manifestwalk(config.extra_srcs.iter().map(String::as_str), None::<&str>)?
+                .manifestwalk(
+                    config.extra_srcs.iter().map(String::as_str),
+                    None::<&str>,
+                    self.config.strict_globs,
+                )
+                .context("Platform-specific extra srcs")?
                 .collect();
 
             let mut overlay_files = config.overlay_files(&self.fixup_dir)?;
@@ -939,6 +967,7 @@ impl<'meta> Fixups<'meta> {
         &'a self,
         globs: impl IntoIterator<Item = impl AsRef<str> + 'a> + 'a,
         excepts: impl IntoIterator<Item = impl AsRef<str> + 'a> + 'a,
+        strict_match: bool,
     ) -> Result<impl Iterator<Item = PathBuf> + 'a> {
         let rel_manifest = relative_path(&self.third_party_dir, self.manifest_dir);
 
@@ -958,6 +987,7 @@ impl<'meta> Fixups<'meta> {
                 move |glob| rel_glob(glob.as_ref())
             }),
             excepts.into_iter().map(move |glob| rel_glob(glob.as_ref())),
+            strict_match,
         )
     }
 }
@@ -967,14 +997,18 @@ impl<'meta> Fixups<'meta> {
 /// `base` - base directory for everything. All globs and dirs are relative to this, as are resulting paths
 /// `dirs` - starting directories for walk, relative to base.
 /// `globs` - set of globs to match
-/// `exclude` - globs to exclude from output
+/// `excepts` - globs to exclude from output
+/// `strict_match` - require all globs to be matched (even if they're later excluded by `excepts`)
 fn globwalk<'a>(
     base: impl Into<PathBuf> + 'a,
     dirs: impl IntoIterator<Item = impl AsRef<Path> + 'a> + 'a,
     globs: impl IntoIterator<Item = impl AsRef<str>>,
     excepts: impl IntoIterator<Item = impl AsRef<str>>,
+    strict_match: bool,
 ) -> Result<impl Iterator<Item = PathBuf> + 'a> {
     let base = base.into();
+
+    let mut fullglobs = Vec::new();
 
     let mut builder = GlobSetBuilder::new();
     for glob in globs {
@@ -984,8 +1018,9 @@ fn globwalk<'a>(
                 .literal_separator(true)
                 .build()?,
         );
+        fullglobs.push(fullglob);
     }
-    let globs = builder.build()?;
+    let globset = builder.build()?;
 
     let mut builder = GlobSetBuilder::new();
     for except in excepts {
@@ -996,17 +1031,35 @@ fn globwalk<'a>(
                 .build()?,
         );
     }
-    let excepts = builder.build()?;
+    let exceptset = builder.build()?;
 
-    let res = dirs
+    let mut globs_used = HashSet::new();
+
+    let res: Vec<_> = dirs
         .into_iter()
         .flat_map({
             let base = base.clone();
             move |dir| WalkDir::new(base.join(dir.as_ref())).into_iter()
         })
         .filter_map(|res| res.ok())
-        .filter(move |entry| globs.is_match(entry.path()) && !excepts.is_match(entry.path()))
-        .map(move |entry| relative_path(&base, entry.path()));
+        .filter(|entry| -> bool {
+            let matches = globset.matches(entry.path());
+            let found = !matches.is_empty();
+            globs_used.extend(matches);
+            found && !exceptset.is_match(entry.path())
+        })
+        .map(|entry| relative_path(&base, entry.path()))
+        .collect();
 
-    Ok(res)
+    if strict_match && globs_used.len() != globset.len() {
+        let mut unmatched = Vec::new();
+        for (idx, fglob) in fullglobs.into_iter().enumerate() {
+            if !globs_used.contains(&idx) {
+                unmatched.push(fglob);
+            }
+        }
+        bail!("Unmatched globs: {:?}", unmatched);
+    }
+
+    Ok(res.into_iter())
 }
