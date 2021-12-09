@@ -23,7 +23,7 @@ use crate::{
         self, BuildscriptGenrule, BuildscriptGenruleFilter, BuildscriptGenruleSrcs, Common, Rule,
         RuleRef, RustBinary,
     },
-    buckify::relative_path,
+    buckify::{normalize_dotdot, relative_path},
     cargo::{Manifest, ManifestTarget},
     collection::SetOrMap,
     config::Config,
@@ -763,11 +763,31 @@ impl<'meta> Fixups<'meta> {
     /// the normal source glob rooted at the package's manifest dir.
     pub fn compute_srcs(
         &self,
-        srcs: Vec<String>,
+        srcs: Vec<PathBuf>,
     ) -> Result<Vec<(Option<PlatformExpr>, BTreeSet<PathBuf>)>> {
         let mut ret: Vec<(Option<PlatformExpr>, BTreeSet<PathBuf>)> = vec![];
 
         let manifest_rel = relative_path(&self.third_party_dir, self.manifest_dir);
+
+        let tp_rel_extra_src_fn = |srcs: &[String]| {
+            srcs.iter()
+                .map(|src| self.manifest_dir.join(src))
+                .map(|src| relative_path(&self.third_party_dir, &src))
+                .map(|src| normalize_dotdot(&src))
+                .map(|src| src.display().to_string())
+                .collect::<Vec<String>>()
+        };
+        let tp_rel_srcs = srcs
+            .iter()
+            .map(|src| relative_path(&self.third_party_dir, src))
+            .map(|src| src.display().to_string())
+            .collect::<Vec<String>>();
+        let tp_rel_extra_srcs: Vec<_> = self
+            .fixup_config
+            .base(&self.package.version)
+            .into_iter()
+            .flat_map(|base| tp_rel_extra_src_fn(&base.extra_srcs))
+            .collect();
 
         log::info!(
             "pkg {}, srcs {:?}, manifest_rel {}",
@@ -783,20 +803,37 @@ impl<'meta> Fixups<'meta> {
             .filter(|(platform, _)| platform.is_some())
             .any(|(_, config)| config.overlay.is_some());
 
+        // List of directories that srcs may be found in
+        let mut common_src_dirs: Vec<PathBuf> = vec![self.manifest_dir.to_path_buf()];
+        if let Some(base) = self.fixup_config.base(&self.package.version) {
+            common_src_dirs.extend(
+                base.src_referenced_dirs
+                    .iter()
+                    .map(|path| self.manifest_dir.join(&path))
+                    .map(|path| normalize_dotdot(&path)),
+            );
+        }
+
         let mut common_files = HashSet::new();
         // Base sources are not required because they're either computed
         // precisely or a random guess of globs.
         common_files.extend(
-            self.manifestwalk(&srcs, None::<&str>, false)
-                .context("Srcs")?,
+            self::globwalk(
+                &self.third_party_dir,
+                common_src_dirs.iter(),
+                tp_rel_srcs.iter(),
+                None::<&str>,
+                false, /* strict_globs */
+            )
+            .context("Srcs")?,
         );
+
         // Fixup-specified extra srcs are required (to avoid errors)
         common_files.extend(
-            self.manifestwalk(
-                self.fixup_config
-                    .base(&self.package.version)
-                    .into_iter()
-                    .flat_map(|base| base.extra_srcs.iter().map(String::as_str)),
+            self::globwalk(
+                &self.third_party_dir,
+                common_src_dirs.iter(),
+                tp_rel_extra_srcs.iter(),
                 None::<&str>,
                 self.config.strict_globs,
             )
@@ -823,14 +860,24 @@ impl<'meta> Fixups<'meta> {
             let mut set = BTreeSet::new();
 
             // Platform-specific sources
-            let mut files: HashSet<_> = self
-                .manifestwalk(
-                    config.extra_srcs.iter().map(String::as_str),
-                    None::<&str>,
-                    self.config.strict_globs,
-                )
-                .context("Platform-specific extra srcs")?
-                .collect();
+            let mut platform_src_dirs: Vec<PathBuf> = vec![self.manifest_dir.to_path_buf()];
+            platform_src_dirs.extend(
+                config
+                    .src_referenced_dirs
+                    .iter()
+                    .map(|path| self.manifest_dir.join(path))
+                    .map(|path| normalize_dotdot(&path))
+                    .collect::<Vec<PathBuf>>(),
+            );
+            let mut files: HashSet<_> = self::globwalk(
+                &self.third_party_dir,
+                platform_src_dirs.iter(),
+                tp_rel_extra_src_fn(&config.extra_srcs),
+                None::<&str>,
+                self.config.strict_globs,
+            )
+            .context("Platform-specific extra srcs")?
+            .collect();
 
             let mut overlay_files = config.overlay_files(&self.fixup_dir)?;
 

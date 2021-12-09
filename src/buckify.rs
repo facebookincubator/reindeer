@@ -194,8 +194,7 @@ fn generate_target_rules<'scope>(
             Ok(srcs) => {
                 let srcs = srcs
                     .into_iter()
-                    .map(|src| relative_path(pkg.manifest_dir(), &normalize_dotdot(&src.path)))
-                    .map(|path| path.display().to_string())
+                    .map(|src| normalize_dotdot(&src.path))
                     .collect::<Vec<_>>();
                 log::debug!("crate_srcfiles returned {:#?}", srcs);
                 srcs
@@ -211,7 +210,7 @@ fn generate_target_rules<'scope>(
 
     if srcs.is_empty() {
         // If that didn't work out, get srcs the globby way
-        srcs = vec![srcdir.join("**/*.rs").display().to_string()]
+        srcs = vec![tgt.src_path.parent().unwrap().join("**/*.rs")]
     }
 
     // Platform-specific rule bits which are common to all platforms

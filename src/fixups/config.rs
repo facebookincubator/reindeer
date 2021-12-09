@@ -117,6 +117,10 @@ pub struct FixupConfig {
     /// Extra src globs, rooted in manifest dir for package
     #[serde(default)]
     pub extra_srcs: Vec<String>,
+    /// Dirs with contents that are referenced in src files.
+    /// Relative to manifest dir for package.
+    #[serde(default)]
+    pub src_referenced_dirs: Vec<PathBuf>,
     /// Extra flags for rustc
     #[serde(default)]
     pub rustc_flags: Vec<String>,
