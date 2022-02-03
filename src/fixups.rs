@@ -232,7 +232,7 @@ impl<'meta> Fixups<'meta> {
 
                 // Build and run it, and filter the output for --cfg options
                 // for the main target's rustc command line
-                BuildscriptFixup::RustcFlags(RustcFlags { env, .. }) => {
+                BuildscriptFixup::RustcFlags(RustcFlags { env, path_env, .. }) => {
                     // Emit the build script itself
                     res.push(Rule::Binary(buildscript.clone()));
 
@@ -247,6 +247,7 @@ impl<'meta> Fixups<'meta> {
                             features: features.clone(),
                             cfgs: vec![],
                             env: env.clone(),
+                            path_env: path_env.clone(),
                         },
                         outfile: "args.txt".to_string(),
                     }))
@@ -259,6 +260,7 @@ impl<'meta> Fixups<'meta> {
                     files,      // output files
                     mapped,     // outputs mapped to a different path
                     env,        // env set while running
+                    path_env,   // env pointing to pathnames set while running
                     ..
                 }) => {
                     // Emit the build script itself
@@ -284,6 +286,7 @@ impl<'meta> Fixups<'meta> {
                             features: features.clone(),
                             cfgs: vec![],
                             env: env.clone(),
+                            path_env: path_env.clone(),
                         },
                         files: files
                             .clone()

@@ -233,6 +233,8 @@ pub struct BuildscriptGenrule {
     pub cfgs: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub path_env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]

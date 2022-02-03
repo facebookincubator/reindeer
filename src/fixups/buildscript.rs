@@ -90,8 +90,12 @@ pub struct RustcFlags {
     // of kind and name (eg `["bin","cargo"]`). Empty means apply to main lib target.
     #[serde(default)]
     pub targets: Vec<(TargetKind, Option<String>)>,
+    // Runtime environment for the gensrc program
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    // Runtime environment for paths that's made absolute
+    #[serde(default)]
+    pub path_env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -101,12 +105,19 @@ pub struct GenSrcs {
     // of kind and name (eg `["bin","cargo"]`). Empty means apply to main lib target.
     #[serde(default)]
     pub targets: Vec<(TargetKind, Option<String>)>,
+    // Runtime environment for the gensrc program
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    // Runtime environment for paths that's made absolute
+    #[serde(default)]
+    pub path_env: BTreeMap<String, String>,
+    // Generated files
     #[serde(default)]
     pub files: BTreeSet<String>,
+    // Generated files, mapped to a location in the crate's namespace
     #[serde(default)]
     pub mapped: BTreeMap<String, String>,
+    // Code generator's inputs
     #[serde(default)]
     pub input_srcs: Vec<String>,
 }
