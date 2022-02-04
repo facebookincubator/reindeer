@@ -82,8 +82,8 @@ def rust_buildscript_genrule_srcs(name, buildscript_rule, files, package_name, v
     pre = _make_preamble("$OUT", package_name, version, features, cfgs, env, target)
     cxx_genrule(
         name = name,
-        out = name + "-outputs",
         srcs = srcs,
+        out = name + "-outputs",
         cmd = pre + "$(exe {buildscript})".format(
             buildscript = buildscript_rule,
         ),
@@ -123,7 +123,7 @@ def third_party_rust_library(name, platform = {}, dlopen_enable = False, python_
         if python_ext:
             linker_flags.append("-uPyInit_{}".format(python_ext))
             kwargs["preferred_linkage"] = "static"
-        cxx_binary(name = name + "-so", deps = [":" + name], link_style = "static_pic", linker_flags = linker_flags)
+        cxx_binary(name = name + "-so", link_style = "static_pic", linker_flags = linker_flags, deps = [":" + name])
 
     rust_library(name, **platform_attrs(_get_plat(), platform, kwargs))
 
