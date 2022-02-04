@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# @nolint
+
 """Skylib module containing functions that operate on dictionaries."""
 
 def _add(*dictionaries):

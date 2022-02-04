@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# @nolint
+
 """Skylib module containing common hash-set algorithms.
 
   An empty set can be created using: `sets.make()`, or it can be created with some starting values

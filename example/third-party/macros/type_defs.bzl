@@ -1,5 +1,7 @@
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 
+# @nolint
+
 """Provides macros for queries type information."""
 
 _SELECT_TYPE = type(select({"DEFAULT": []}))

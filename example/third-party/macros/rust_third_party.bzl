@@ -1,3 +1,5 @@
+# @nolint
+
 load(":iterable.bzl", "iterable")
 load(":new_sets.bzl", "sets")
 load(":type_defs.bzl", "is_dict")

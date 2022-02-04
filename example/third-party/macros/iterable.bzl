@@ -1,5 +1,7 @@
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 
+# @nolint
+
 """Provides utility methods for working with iterable collections."""
 
 load(":type_defs.bzl", "is_list")
