@@ -132,6 +132,8 @@ pub struct Common {
     pub public: bool,
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub licenses: BTreeSet<PathBuf>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub compatible_with: Vec<RuleRef>,
 }
 
 fn always<T>(_: &T) -> bool {

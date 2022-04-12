@@ -311,6 +311,7 @@ impl<'meta> Fixups<'meta> {
                     preprocessor_flags,
                     header_namespace,
                     deps,
+                    compatible_with,
                     ..
                 }) => {
                     let rule = buck::CxxLibrary {
@@ -328,6 +329,11 @@ impl<'meta> Fixups<'meta> {
                             },
                             public: *public,
                             licenses: Default::default(),
+                            compatible_with: compatible_with
+                                .iter()
+                                .cloned()
+                                .map(RuleRef::abs)
+                                .collect(),
                         },
                         // Just collect the sources, excluding things in the exclude list
                         srcs: self
@@ -402,6 +408,7 @@ impl<'meta> Fixups<'meta> {
                     name,
                     static_libs,
                     public,
+                    compatible_with,
                     ..
                 }) => {
                     let libs = self
@@ -429,6 +436,11 @@ impl<'meta> Fixups<'meta> {
                                 },
                                 public: *public,
                                 licenses: Default::default(),
+                                compatible_with: compatible_with
+                                    .iter()
+                                    .cloned()
+                                    .map(RuleRef::abs)
+                                    .collect(),
                             },
                             static_lib: static_lib.clone(),
                         };

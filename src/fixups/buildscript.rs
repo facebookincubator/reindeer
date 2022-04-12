@@ -156,6 +156,8 @@ pub struct CxxLibraryFixup {
     pub header_namespace: Option<String>,
     #[serde(default)]
     pub deps: Vec<String>,
+    #[serde(default)]
+    pub compatible_with: Vec<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -171,6 +173,8 @@ pub struct PrebuiltCxxLibraryFixup {
     pub targets: Vec<(TargetKind, Option<String>)>,
     #[serde(default)]
     pub public: bool, // make public
+    #[serde(default)]
+    pub compatible_with: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize)]
