@@ -141,7 +141,7 @@ impl<'meta> Index<'meta> {
             .filter_map(|dep| {
                 dep.rename
                     .as_ref()
-                    .map(|alias| (alias.replace("-", "_"), alias.as_str()))
+                    .map(|alias| (alias.replace('-', "_"), alias.as_str()))
             })
             .collect();
 
@@ -198,12 +198,10 @@ impl<'meta> Index<'meta> {
             .collect();
         let mut pkgerrs = PackageMetaError::new();
 
-        let res: HashMap<_, _> = self
-            .root_pkg
-            .metadata
-            .get("third-party")
-            .map(|v| serde_json::from_value::<HashMap<String, ExtraMetadata>>(v.clone()))
-            .unwrap_or_else(|| Ok(HashMap::new()))?;
+        let res = self.root_pkg.metadata.get("third-party").map_or_else(
+            || Ok(HashMap::new()),
+            |v| serde_json::from_value::<HashMap<String, ExtraMetadata>>(v.clone()),
+        )?;
 
         let mut ret: HashMap<&'meta str, ExtraMetadata> = HashMap::new();
         for (name, val) in res {
@@ -297,7 +295,7 @@ impl<'meta> Index<'meta> {
                 // this happens seem to be unconditional OR condition).
                 for mdep in mdeps {
                     if let Some(plat) = &mdep.target {
-                        match PlatformPredicate::parse(&plat) {
+                        match PlatformPredicate::parse(plat) {
                             Ok(pred) => platforms.push(pred),
                             Err(err) => {
                                 log::error!("Failed to parse predicate for {}: {}", dep, err);

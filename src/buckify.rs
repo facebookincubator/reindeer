@@ -227,7 +227,7 @@ fn generate_target_rules<'scope>(
     }
 
     unzip_platform(
-        &config,
+        config,
         &mut base,
         &mut perplat,
         |rule, flags| {
@@ -239,7 +239,7 @@ fn generate_target_rules<'scope>(
     .context("rustc_flags")?;
 
     unzip_platform(
-        &config,
+        config,
         &mut base,
         &mut perplat,
         |rule, srcs| {
@@ -251,7 +251,7 @@ fn generate_target_rules<'scope>(
     .context("srcs")?;
 
     unzip_platform(
-        &config,
+        config,
         &mut base,
         &mut perplat,
         |rule, map| {
@@ -271,7 +271,7 @@ fn generate_target_rules<'scope>(
     .context("mapped_srcs(gen_srcs)")?;
 
     unzip_platform(
-        &config,
+        config,
         &mut base,
         &mut perplat,
         |rule, map| {
@@ -291,7 +291,7 @@ fn generate_target_rules<'scope>(
     .context("mapped_srcs(paths)")?;
 
     unzip_platform(
-        &config,
+        config,
         &mut base,
         &mut perplat,
         |rule, features| {
@@ -308,7 +308,7 @@ fn generate_target_rules<'scope>(
     .context("features")?;
 
     unzip_platform(
-        &config,
+        config,
         &mut base,
         &mut perplat,
         |rule, env| {
@@ -344,6 +344,7 @@ fn generate_target_rules<'scope>(
                 if dep.filter(platform)? {
                     let dep = dep.clone();
 
+                    #[allow(clippy::collapsible_else_if)]
                     if let Some(alias) = alias.clone() {
                         if is_default {
                             // Just use normal deps
@@ -383,7 +384,7 @@ fn generate_target_rules<'scope>(
     let mut bin_perplat = perplat.clone();
 
     unzip_platform(
-        &config,
+        config,
         &mut bin_base,
         &mut bin_perplat,
         |rule, link_style| {
@@ -444,7 +445,7 @@ fn generate_target_rules<'scope>(
                 platform: perplat,
             },
         };
-        fixups.emit_buildscript_rules(buildscript, &config)?
+        fixups.emit_buildscript_rules(buildscript, config)?
     } else if tgt.kind_bin() && tgt.crate_bin() && index.is_public(pkg) {
         vec![Rule::Binary(RustBinary {
             common: RustCommon {

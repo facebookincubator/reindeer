@@ -30,7 +30,7 @@ pub fn cargo_get_metadata(config: &Config, args: &Args, paths: &Paths) -> Result
     let metadata: Metadata = self::run_cargo_json(
         config,
         &paths.third_party_dir,
-        &args,
+        args,
         &[
             "metadata",
             "--format-version",

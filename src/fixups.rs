@@ -84,8 +84,7 @@ impl<'meta> Fixups<'meta> {
                 .context(format!("Failed to parse {}", fixup_path.display()))?
         } else {
             log::debug!("no fixups at {}", fixup_path.display());
-            let fixup =
-                FixupConfigFile::template(&paths.third_party_dir, &index, &package, &target);
+            let fixup = FixupConfigFile::template(&paths.third_party_dir, index, package, target);
             if config.fixup_templates && target.kind_custom_build() {
                 log::info!(
                     "Writing template for {} to {}",
@@ -209,7 +208,7 @@ impl<'meta> Fixups<'meta> {
             match plat {
                 None => features.extend(buildscript.common.base.features.iter().cloned()),
                 Some(expr) => {
-                    let platnames = platform_names_for_expr(&self.config, expr)?;
+                    let platnames = platform_names_for_expr(self.config, expr)?;
                     for platname in platnames {
                         if let Some(platattr) = buildscript.common.platform.get(platname) {
                             features.extend(platattr.features.iter().cloned())
@@ -320,7 +319,7 @@ impl<'meta> Fixups<'meta> {
                                 format!(
                                     "{}-{}",
                                     self.index
-                                        .public_alias(&self.package)
+                                        .public_alias(self.package)
                                         .unwrap_or(self.package.name.as_str()),
                                     name
                                 )
@@ -421,8 +420,8 @@ impl<'meta> Fixups<'meta> {
                                     format!(
                                         "{}-{}-{}",
                                         self.index
-                                            .public_alias(&self.package)
-                                            .unwrap_or_else(|| self.package.name.as_str()),
+                                            .public_alias(self.package)
+                                            .unwrap_or(self.package.name.as_str()),
                                         name,
                                         static_lib.file_name().unwrap().to_string_lossy()
                                     )
@@ -603,7 +602,7 @@ impl<'meta> Fixups<'meta> {
             // Only use the alias if it isn't the same as the target anyway
             let tgtname = package
                 .dependency_target()
-                .map(|tgt| tgt.name.replace("-", "_"));
+                .map(|tgt| tgt.name.replace('-', "_"));
 
             let original_alias = alias;
 
@@ -681,8 +680,8 @@ impl<'meta> Fixups<'meta> {
                         format!(
                             "{}-{}",
                             self.index
-                                .public_alias(&self.package)
-                                .unwrap_or_else(|| self.package.name.as_str()),
+                                .public_alias(self.package)
+                                .unwrap_or(self.package.name.as_str()),
                             name,
                         )
                     } else {
@@ -706,8 +705,8 @@ impl<'meta> Fixups<'meta> {
                             format!(
                                 "{}-{}-{}",
                                 self.index
-                                    .public_alias(&self.package)
-                                    .unwrap_or_else(|| self.package.name.as_str()),
+                                    .public_alias(self.package)
+                                    .unwrap_or(self.package.name.as_str()),
                                 name,
                                 static_lib.file_name().unwrap().to_string_lossy()
                             )

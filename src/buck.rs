@@ -77,7 +77,7 @@ impl RuleRef {
             Some(cfg) => {
                 let cfg = PlatformPredicate::parse(cfg)?;
 
-                cfg.eval(&platform_config)
+                cfg.eval(platform_config)
             }
         };
         Ok(res)
@@ -408,7 +408,7 @@ pub fn write_buckfile<'a>(
     }
 
     for r in rules {
-        r.render(&config, out)?
+        r.render(config, out)?
     }
 
     Ok(())

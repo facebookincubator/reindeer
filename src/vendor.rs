@@ -52,14 +52,14 @@ pub(crate) fn cargo_vendor(
     fs::create_dir_all(&configdir)?;
 
     log::info!("Running cargo {:?}", cmdline);
-    let cargoconfig = cargo::run_cargo(config, &paths.third_party_dir, &args, &cmdline)?;
+    let cargoconfig = cargo::run_cargo(config, &paths.third_party_dir, args, &cmdline)?;
 
     fs::write(configdir.join("config"), cargoconfig)?;
 
     filter_checksum_files(&paths.third_party_dir, vendordir, &config.vendor)?;
 
     if audit_sec {
-        crate::audit_sec::audit_sec(&config, paths, no_fetch, false).context("doing audit_sec")?;
+        crate::audit_sec::audit_sec(config, paths, no_fetch, false).context("doing audit_sec")?;
     }
 
     Ok(())
@@ -134,7 +134,7 @@ fn filter_checksum_files(
 
         let mut changed = false;
 
-        let pkgdir = relative_path(&third_party_dir, &path); // vendor/foo-1.2.3
+        let pkgdir = relative_path(third_party_dir, &path); // vendor/foo-1.2.3
 
         checksums.files.retain(|k, _| {
             log::trace!("{}: checking {}", checksum.display(), k);
