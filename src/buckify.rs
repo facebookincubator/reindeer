@@ -17,9 +17,10 @@ use crate::{
     tp_metadata, Args, Paths,
 };
 use anyhow::{bail, Context, Result};
+use rayon::prelude::*;
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
-    fs::File,
+    fs,
     io::{self, Write},
     iter,
     path::{Component, Path, PathBuf},
@@ -525,7 +526,12 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
     if stdout {
         let mut out = Vec::new();
         buck::write_buckfile(&config.buck, rules.iter(), &mut out).context("writing buck file")?;
-        print_build_rules(config, paths, &out)?;
+        if let Some(buildifier) = buildifier.as_ref() {
+            out = buildify(buildifier, &out)?;
+        }
+        // Ignore error, for example pipe closed resulting from
+        // `reindeer buckify --stdout | head`.
+        let _ = io::stdout().write_all(&out);
         return Ok(());
     }
 
@@ -534,11 +540,14 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
     {
         measure_time::trace_time!("Write build rules to file");
 
-        let mut out = File::create(&buckpath).context("creating target file")?;
+        let mut out = Vec::new();
         buck::write_buckfile(&config.buck, rules.iter(), &mut out).context("writing buck file")?;
-
         if let Some(buildifier) = buildifier.as_ref() {
-            run_buildifier(buildifier, &buckpath)?;
+            out = buildify(buildifier, &out)?;
+        }
+        if !matches!(fs::read(&buckpath), Ok(x) if x == out) {
+            fs::write(&buckpath, out)
+                .with_context(|| format!("write {} file", buckpath.display()))?;
         }
     }
 
@@ -547,21 +556,29 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
         measure_time::trace_time!("Emit METADATA.bzl for each vendored dependency");
 
         let extra_meta = context.index.get_extra_meta()?;
-        for pkg in context.index.all_packages() {
-            let metadata_path = pkg.manifest_dir().join("METADATA.bzl");
-            let mut out = File::create(&metadata_path).context("creating METADATA.bzl file")?;
-            tp_metadata::write(&config.buck, pkg, &extra_meta, &mut out).with_context(|| {
-                format!("writing METADATA.bzl file for {} {}", pkg.name, pkg.version)
+        context
+            .index
+            .all_packages()
+            .par_bridge()
+            .try_for_each(|pkg| {
+                let mut out = Vec::new();
+                tp_metadata::write(&config.buck, pkg, &extra_meta, &mut out).with_context(
+                    || format!("writing METADATA.bzl file for {} {}", pkg.name, pkg.version),
+                )?;
+                // Avoid watcher churn since more often than not, nothing has
+                // changed in existing files.
+                let metadata_path = pkg.manifest_dir().join("METADATA.bzl");
+                if !matches!(fs::read(&metadata_path), Ok(x) if x == out) {
+                    fs::write(&metadata_path, out)
+                        .with_context(|| format!("write {} file", metadata_path.display()))?;
+                }
+                anyhow::Ok(())
             })?;
-        }
     }
 
     // Emit RUST_TARGETS.bzl
     if let Some(rust_targets) = config.buck.targets_name.as_ref() {
         measure_time::trace_time!("Emit RUST_TARGETS.bzl");
-
-        let rusttgtspath = paths.third_party_dir.join(rust_targets);
-        let mut out = File::create(&rusttgtspath).context("creating targets file")?;
 
         let set: BTreeSet<&str> = rules
             .iter()
@@ -569,6 +586,7 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
             .map(|r| r.get_name())
             .collect();
 
+        let mut out = Vec::new();
         write!(
             out,
             "\
@@ -580,7 +598,13 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
         .context("writing targets file header")?;
 
         if let Some(buildifier) = buildifier.as_ref() {
-            run_buildifier(buildifier, &rusttgtspath)?;
+            out = buildify(buildifier, &out)?;
+        }
+
+        let rusttgtspath = paths.third_party_dir.join(rust_targets);
+        if !matches!(fs::read(&rusttgtspath), Ok(x) if x == out) {
+            fs::write(&rusttgtspath, out)
+                .with_context(|| format!("writing {} file", rusttgtspath.display()))?;
         }
     }
 
@@ -593,54 +617,27 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
     Ok(())
 }
 
-fn run_buildifier(buildifier: &Path, path: &Path) -> Result<()> {
-    log::debug!(
-        "Running buildifier {} -i {}",
-        buildifier.display(),
-        path.display()
-    );
-
-    let path = path.to_string_lossy();
-    Command::new(buildifier)
-        .args(&["-i", &*path])
-        .output()
-        .with_context(|| format!("executing buildifier {}", buildifier.display()))?;
-
-    Ok(())
-}
-
-fn print_build_rules(config: &Config, paths: &Paths, content: &[u8]) -> Result<()> {
-    let buildifier = match config.buildifier_path.as_ref() {
-        Some(buildifier) => buildifier,
-        None => {
-            // Ignore error, for example pipe closed resulting from `reindeer
-            // buckify --stdout | head`.
-            let _ = io::stdout().write_all(content);
-            return Ok(());
-        }
-    };
-
-    let buildifier = paths.third_party_dir.join(buildifier);
-    let mut child = Command::new(&buildifier)
+fn buildify(buildifier: &Path, content: &[u8]) -> Result<Vec<u8>> {
+    let mut child = Command::new(buildifier)
         .stdin(Stdio::piped())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("executing buildifier {}", buildifier.display()))?;
 
-    let mut buildifier_stdin = child.stdin.take().unwrap();
-    // Ignore error -- buildifier may stop reading past a syntax error, but
-    // that would already be reported by it to its inherited stderr and does
-    // not need to be handled here.
-    let _ = buildifier_stdin.write_all(content);
-    // Closes the pipe.
-    drop(buildifier_stdin);
+    let mut stdin = child.stdin.take().unwrap();
+    let _ = stdin.write_all(content);
+    drop(stdin);
 
-    let status = child.wait().context("executing buildifier")?;
-    if status.success() {
-        Ok(())
-    } else if let Some(code) = status.code() {
-        bail!("buildifier failed with code {}", code);
+    let output = child.wait_with_output().context("executing buildifier")?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else if let Some(code) = output.status.code() {
+        bail!(
+            "buildifier failed with code {} and stderr {}",
+            code,
+            String::from_utf8_lossy(&output.stderr),
+        );
     } else {
         bail!("buildifier failed");
     }
