@@ -473,11 +473,19 @@ fn generate_target_rules<'scope>(
 }
 
 pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool) -> Result<()> {
-    let metadata = cargo_get_metadata(config, args, paths)?;
+    let metadata = {
+        measure_time::trace_time!("Get cargo metadata");
+        cargo_get_metadata(config, args, paths)?
+    };
 
     if args.debug {
         log::trace!("Metadata {:#?}", metadata);
     }
+
+    let buildifier = config
+        .buildifier_path
+        .as_ref()
+        .map(|x| paths.third_party_dir.join(x));
 
     let index = index::Index::new(config.include_top_level, config.extra_top_levels, &metadata);
 
@@ -492,9 +500,12 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
 
     let packages = context.index.public_packages();
 
-    rayon::scope(move |scope| {
-        generate_dep_rules(context, scope, tx, packages);
-    });
+    {
+        measure_time::trace_time!("generate_dep_rules");
+        rayon::scope(move |scope| {
+            generate_dep_rules(context, scope, tx, packages);
+        });
+    }
 
     // Collect rules from channel
     let rules: BTreeSet<_> = match rx.iter().collect::<Result<_>>() {
@@ -521,12 +532,20 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
     // Write build rules to file
     let buckpath = paths.third_party_dir.join(&config.buck.file_name);
     {
+        measure_time::trace_time!("Write build rules to file");
+
         let mut out = File::create(&buckpath).context("creating target file")?;
         buck::write_buckfile(&config.buck, rules.iter(), &mut out).context("writing buck file")?;
+
+        if let Some(buildifier) = buildifier.as_ref() {
+            run_buildifier(buildifier, &buckpath)?;
+        }
     }
 
     // Emit METADATA.bzl for each vendored dependency.
     if config.emit_metadata {
+        measure_time::trace_time!("Emit METADATA.bzl for each vendored dependency");
+
         let extra_meta = context.index.get_extra_meta()?;
         for pkg in context.index.all_packages() {
             let metadata_path = pkg.manifest_dir().join("METADATA.bzl");
@@ -539,6 +558,8 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
 
     // Emit RUST_TARGETS.bzl
     if let Some(rust_targets) = config.buck.targets_name.as_ref() {
+        measure_time::trace_time!("Emit RUST_TARGETS.bzl");
+
         let rusttgtspath = paths.third_party_dir.join(rust_targets);
         let mut out = File::create(&rusttgtspath).context("creating targets file")?;
 
@@ -557,15 +578,9 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
             serde_starlark::to_string_pretty(&set)?
         )
         .context("writing targets file header")?;
-    }
 
-    if let Some(buildifier) = config.buildifier_path.as_ref() {
-        let path = paths.third_party_dir.join(buildifier);
-        run_buildifier(&path, &buckpath)?;
-
-        if let Some(rust_targets) = config.buck.targets_name.as_ref() {
-            let rusttgtspath = paths.third_party_dir.join(rust_targets);
-            run_buildifier(&path, &rusttgtspath)?;
+        if let Some(buildifier) = buildifier.as_ref() {
+            run_buildifier(buildifier, &rusttgtspath)?;
         }
     }
 
