@@ -1103,6 +1103,7 @@ fn globwalk<'a>(
             move |dir| WalkDir::new(base.join(dir.as_ref())).into_iter()
         })
         .filter_map(|res| res.ok())
+        .filter(|entry| !entry.file_type().is_dir())
         .filter(|entry| -> bool {
             let matches = globset.matches(entry.path());
             let found = !matches.is_empty();
