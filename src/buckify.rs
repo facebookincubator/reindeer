@@ -323,7 +323,7 @@ fn generate_target_rules<'scope>(
     // Compute set of dependencies any rule we generate here will need. They will only
     // be emitted if we actually emit some rules below.
     let mut dep_pkgs = Vec::new();
-    for (deppkg, dep, alias) in fixups.compute_deps()? {
+    for (deppkg, dep, rename) in fixups.compute_deps()? {
         if dep.has_platform() {
             // If this is a platform-specific dependency, find the
             // matching supported platform(s) and insert it into the appropriate
@@ -346,16 +346,16 @@ fn generate_target_rules<'scope>(
                     let dep = dep.clone();
 
                     #[allow(clippy::collapsible_else_if)]
-                    if let Some(alias) = alias.clone() {
+                    if let Some(rename) = rename.clone() {
                         if is_default {
                             // Just use normal deps
-                            base.named_deps.insert(alias, dep);
+                            base.named_deps.insert(rename, dep);
                         } else {
                             perplat
                                 .entry(name.clone())
                                 .or_default()
                                 .named_deps
-                                .insert(alias, dep);
+                                .insert(rename, dep);
                         }
                     } else {
                         if is_default {
@@ -371,8 +371,8 @@ fn generate_target_rules<'scope>(
         } else {
             // Otherwise this is not platform-specific and can go into the
             // generic dependencies.
-            if let Some(alias) = alias {
-                base.named_deps.insert(alias, dep);
+            if let Some(rename) = rename {
+                base.named_deps.insert(rename, dep);
             } else {
                 base.deps.insert(dep);
             }

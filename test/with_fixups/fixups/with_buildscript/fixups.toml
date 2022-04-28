@@ -8,8 +8,9 @@
 
 extra_deps = ["fbsource//third-party/rust:lazy_static"]
 
-# Rust dependencies to be filtered. They are the local alias being used for
-# the dependency, without any versioning information.
+# Rust dependencies to be filtered. They are the local name (the new name for
+# renamed dependencies) being used for the dependency, without any versioning
+# information.
 filter_deps = ["simple"]
 
 # Additional command line options

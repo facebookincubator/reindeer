@@ -319,7 +319,7 @@ impl<'meta> Fixups<'meta> {
                                 format!(
                                     "{}-{}",
                                     self.index
-                                        .public_alias(self.package)
+                                        .public_rename(self.package)
                                         .unwrap_or(self.package.name.as_str()),
                                     name
                                 )
@@ -420,7 +420,7 @@ impl<'meta> Fixups<'meta> {
                                     format!(
                                         "{}-{}-{}",
                                         self.index
-                                            .public_alias(self.package)
+                                            .public_rename(self.package)
                                             .unwrap_or(self.package.name.as_str()),
                                         name,
                                         static_lib.file_name().unwrap().to_string_lossy()
@@ -582,9 +582,9 @@ impl<'meta> Fixups<'meta> {
         }
 
         for ResolvedDep {
-            alias,
             package,
             platform,
+            rename,
         } in self
             .index
             .resolved_deps_for_target(self.package, self.target)
@@ -595,27 +595,27 @@ impl<'meta> Fixups<'meta> {
                 self.target.name,
                 self.target.kind(),
                 package,
-                alias,
+                rename,
                 self.target.kind()
             );
 
-            // Only use the alias if it isn't the same as the target anyway
+            // Only use the rename if it isn't the same as the target anyway.
             let tgtname = package
                 .dependency_target()
                 .map(|tgt| tgt.name.replace('-', "_"));
 
-            let original_alias = alias;
+            let original_rename = rename;
 
-            let alias = match tgtname {
-                Some(ref tgtname) if tgtname == alias => None,
-                Some(_) | None => Some(alias.to_string()),
+            let rename = match tgtname {
+                Some(ref tgtname) if tgtname == rename => None,
+                Some(_) | None => Some(rename.to_owned()),
             };
 
-            if all_omits.contains(original_alias) {
+            if all_omits.contains(original_rename) {
                 // If the dependency is for a particular platform and that has it excluded,
                 // skip it.
                 if let Some(platform_omits) = omits.get(&platform.as_ref()) {
-                    if platform_omits.contains(original_alias) {
+                    if platform_omits.contains(original_rename) {
                         continue;
                     }
                 }
@@ -627,7 +627,7 @@ impl<'meta> Fixups<'meta> {
                     let mut excludes = vec![];
                     for (platform_expr, platform_omits) in &omits {
                         if let Some(platform_expr) = platform_expr {
-                            if platform_omits.contains(original_alias) {
+                            if platform_omits.contains(original_rename) {
                                 let platform_pred = PlatformPredicate::parse(platform_expr)?;
                                 excludes.push(PlatformPredicate::Not(Box::new(platform_pred)));
                             }
@@ -640,7 +640,7 @@ impl<'meta> Fixups<'meta> {
                         Some(package),
                         RuleRef::local(self.index.rule_name(package))
                             .with_platform(Some(&platform_expr)),
-                        alias.clone(),
+                        rename.clone(),
                     ));
 
                     // Since we've already added the platform-excluding rule, skip the generic rule
@@ -653,7 +653,7 @@ impl<'meta> Fixups<'meta> {
             ret.push((
                 Some(package),
                 RuleRef::local(self.index.rule_name(package)).with_platform(platform.as_ref()),
-                alias,
+                rename,
             ))
         }
 
@@ -680,7 +680,7 @@ impl<'meta> Fixups<'meta> {
                         format!(
                             "{}-{}",
                             self.index
-                                .public_alias(self.package)
+                                .public_rename(self.package)
                                 .unwrap_or(self.package.name.as_str()),
                             name,
                         )
@@ -705,7 +705,7 @@ impl<'meta> Fixups<'meta> {
                             format!(
                                 "{}-{}-{}",
                                 self.index
-                                    .public_alias(self.package)
+                                    .public_rename(self.package)
                                     .unwrap_or(self.package.name.as_str()),
                                 name,
                                 static_lib.file_name().unwrap().to_string_lossy()

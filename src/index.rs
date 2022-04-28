@@ -81,9 +81,9 @@ impl fmt::Display for PackageMetaError {
 
 #[derive(Debug, Clone)]
 pub struct ResolvedDep<'meta> {
-    pub alias: &'meta str,
     pub package: &'meta Manifest,
     pub platform: Option<PlatformExpr>,
+    pub rename: &'meta str,
 }
 
 impl<'meta> Index<'meta> {
@@ -138,16 +138,16 @@ impl<'meta> Index<'meta> {
             .dependencies
             .iter()
             .filter_map(|dep| {
-                let alias = dep.rename.as_ref()?;
-                Some((alias.replace('-', "_"), alias.as_str()))
+                let rename = dep.rename.as_deref()?;
+                Some((rename.replace('-', "_"), rename))
             })
             .collect();
 
-        // Compute public set, with pkgid mapped to alias if it has one. Public set is
+        // Compute public set, with pkgid mapped to rename if it has one. Public set is
         // anything in top_levels, or first-order dependencies of root_pkg.
         let public_set = tmp
             .resolved_deps(tmp.root_pkg)
-            .map(|(alias, pkg)| (&pkg.id, dep_renamed.get(alias).cloned()))
+            .map(|(rename, pkg)| (&pkg.id, dep_renamed.get(rename).cloned()))
             .chain(top_levels.iter().map(|pkgid| (*pkgid, None)))
             .collect();
 
@@ -159,8 +159,8 @@ impl<'meta> Index<'meta> {
         self.public_set.contains_key(&pkg.id)
     }
 
-    /// Return a package's local alias, if it has one.
-    pub fn public_alias(&self, pkg: &Manifest) -> Option<&str> {
+    /// Return a package's local name (the renamed name), if it has one.
+    pub fn public_rename(&self, pkg: &Manifest) -> Option<&str> {
         self.public_set.get(&pkg.id).and_then(|x| *x)
     }
 
@@ -179,9 +179,9 @@ impl<'meta> Index<'meta> {
     /// Return the public package rule name
     pub fn rule_name(&self, pkg: &Manifest) -> String {
         match self.public_set.get(&pkg.id) {
-            Some(None) => pkg.name.to_string(),        // Base name
-            Some(Some(alias)) => (*alias).to_string(), // Alias
-            None => pkg.to_string(),                   // Full version info
+            Some(None) => pkg.name.to_string(),          // Base name
+            Some(Some(rename)) => (*rename).to_string(), // Rename
+            None => pkg.to_string(),                     // Full version info
         }
     }
 
@@ -283,7 +283,7 @@ impl<'meta> Index<'meta> {
         }
 
         // Resolved dependencies filtered by deps for target
-        self.resolved_deps(pkg).filter_map(move |(alias, dep)| {
+        self.resolved_deps(pkg).filter_map(move |(rename, dep)| {
             let mdeps = deps.get(dep.name.as_str())?;
 
             let mut platforms = vec![]; // empty = unconditional
@@ -309,13 +309,13 @@ impl<'meta> Index<'meta> {
             }
 
             Some(ResolvedDep {
-                alias,
                 package: dep,
                 platform: match &*platforms {
                     [] => None,
                     [plat] => Some(format!("cfg({})", plat).into()),
                     _ => Some(format!("cfg({})", PlatformPredicate::Any(platforms)).into()),
                 },
+                rename,
             })
         })
     }
