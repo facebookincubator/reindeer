@@ -10,7 +10,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     error, fmt,
-    sync::Arc,
 };
 
 use anyhow::Result;
@@ -24,7 +23,7 @@ use crate::{
 /// Index for interesting things in Cargo metadata
 pub struct Index<'meta> {
     /// Map a PkgId to the Manifest (package) with its details
-    pkgid_to_pkg: Arc<HashMap<&'meta PkgId, &'meta Manifest>>,
+    pkgid_to_pkg: HashMap<&'meta PkgId, &'meta Manifest>,
     /// Map a PkgId to a Node (ie all the details of a resolve dependency)
     pkgid_to_node: HashMap<&'meta PkgId, &'meta Node>,
     /// Represents the Cargo.toml itself
@@ -128,7 +127,7 @@ impl<'meta> Index<'meta> {
         }
 
         let tmp = Index {
-            pkgid_to_pkg: Arc::new(pkgid_to_pkg),
+            pkgid_to_pkg,
             pkgid_to_node: metadata.resolve.nodes.iter().map(|n| (&n.id, n)).collect(),
             root_pkg,
             public_set: BTreeMap::new(),
@@ -139,9 +138,8 @@ impl<'meta> Index<'meta> {
             .dependencies
             .iter()
             .filter_map(|dep| {
-                dep.rename
-                    .as_ref()
-                    .map(|alias| (alias.replace('-', "_"), alias.as_str()))
+                let alias = dep.rename.as_ref()?;
+                Some((alias.replace('-', "_"), alias.as_str()))
             })
             .collect();
 
@@ -167,15 +165,14 @@ impl<'meta> Index<'meta> {
     }
 
     /// Return all public packages
-    pub fn public_packages(&'meta self) -> impl Iterator<Item = &'meta Manifest> {
-        let pkgid_to_pkg = Arc::clone(&self.pkgid_to_pkg);
+    pub fn public_packages(&self) -> impl Iterator<Item = &'meta Manifest> + '_ {
         self.public_set
             .keys()
-            .map(move |id| *pkgid_to_pkg.get(id).expect("missing pkgid"))
+            .map(|id| *self.pkgid_to_pkg.get(id).expect("missing pkgid"))
     }
 
     /// Returns the transitive closure of dependencies of public packages.
-    pub fn all_packages(&'meta self) -> impl Iterator<Item = &'meta Manifest> {
+    pub fn all_packages(&self) -> impl Iterator<Item = &'meta Manifest> + '_ {
         self.pkgid_to_pkg.values().copied()
     }
 
@@ -238,15 +235,16 @@ impl<'meta> Index<'meta> {
     /// This should generally be filtered by a target, but for the top-level we don't really care
     fn resolved_deps(
         &self,
-        pkg: &'meta Manifest,
-    ) -> impl Iterator<Item = (&'meta str, &'meta Manifest)> {
-        let pkgid_to_pkg = Arc::clone(&self.pkgid_to_pkg);
-
-        self.pkgid_to_node.get(&pkg.id).unwrap().deps.iter().map(
-            move |NodeDep { name, pkg, .. }| {
-                (name.as_str(), pkgid_to_pkg.get(pkg).cloned().unwrap())
-            },
-        )
+        pkg: &Manifest,
+    ) -> impl Iterator<Item = (&'meta str, &'meta Manifest)> + '_ {
+        self.pkgid_to_node
+            .get(&pkg.id)
+            .unwrap()
+            .deps
+            .iter()
+            .map(|NodeDep { name, pkg, .. }| {
+                (name.as_str(), self.pkgid_to_pkg.get(pkg).cloned().unwrap())
+            })
     }
 
     /// Return the set of (unresolved) dependencies for a particular target.
@@ -272,7 +270,7 @@ impl<'meta> Index<'meta> {
         &self,
         pkg: &'meta Manifest,
         tgt: &'meta ManifestTarget,
-    ) -> impl Iterator<Item = ResolvedDep<'meta>> {
+    ) -> impl Iterator<Item = ResolvedDep<'meta>> + '_ {
         // Unresolved dependency names
         let mut deps = HashMap::new();
 
@@ -286,38 +284,38 @@ impl<'meta> Index<'meta> {
 
         // Resolved dependencies filtered by deps for target
         self.resolved_deps(pkg).filter_map(move |(alias, dep)| {
-            deps.get(dep.name.as_str()).map(|mdeps| {
-                let mut platforms = vec![]; // empty = unconditional
+            let mdeps = deps.get(dep.name.as_str())?;
 
-                // If there are multiple manifestdeps then union all the
-                // target predicates, where "unconditional" beats all.
-                // (This is probably very over-engineered because all the times
-                // this happens seem to be unconditional OR condition).
-                for mdep in mdeps {
-                    if let Some(plat) = &mdep.target {
-                        match PlatformPredicate::parse(plat) {
-                            Ok(pred) => platforms.push(pred),
-                            Err(err) => {
-                                log::error!("Failed to parse predicate for {}: {}", dep, err);
-                                continue;
-                            }
+            let mut platforms = vec![]; // empty = unconditional
+
+            // If there are multiple manifestdeps then union all the
+            // target predicates, where "unconditional" beats all.
+            // (This is probably very over-engineered because all the times
+            // this happens seem to be unconditional OR condition).
+            for mdep in mdeps {
+                if let Some(plat) = &mdep.target {
+                    match PlatformPredicate::parse(plat) {
+                        Ok(pred) => platforms.push(pred),
+                        Err(err) => {
+                            log::error!("Failed to parse predicate for {}: {}", dep, err);
+                            continue;
                         }
-                    } else {
-                        // No platform condition = unconditional
-                        platforms = vec![];
-                        break;
                     }
+                } else {
+                    // No platform condition = unconditional
+                    platforms = vec![];
+                    break;
                 }
+            }
 
-                ResolvedDep {
-                    alias,
-                    package: dep,
-                    platform: match &*platforms {
-                        [] => None,
-                        [plat] => Some(format!("cfg({})", plat).into()),
-                        _ => Some(format!("cfg({})", PlatformPredicate::Any(platforms)).into()),
-                    },
-                }
+            Some(ResolvedDep {
+                alias,
+                package: dep,
+                platform: match &*platforms {
+                    [] => None,
+                    [plat] => Some(format!("cfg({})", plat).into()),
+                    _ => Some(format!("cfg({})", PlatformPredicate::Any(platforms)).into()),
+                },
             })
         })
     }
