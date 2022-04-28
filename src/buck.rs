@@ -185,12 +185,6 @@ pub struct RustCommon {
     pub platform: BTreeMap<PlatformName, PlatformRustCommon>,
 }
 
-impl AsRef<Common> for RustCommon {
-    fn as_ref(&self) -> &Common {
-        &self.common
-    }
-}
-
 fn is_false(v: &bool) -> bool {
     !*v
 }
@@ -207,22 +201,10 @@ pub struct RustLibrary {
     pub python_ext: Option<String>,
 }
 
-impl AsRef<Common> for RustLibrary {
-    fn as_ref(&self) -> &Common {
-        self.common.as_ref()
-    }
-}
-
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct RustBinary {
     #[serde(flatten)]
     pub common: RustCommon,
-}
-
-impl AsRef<Common> for RustBinary {
-    fn as_ref(&self) -> &Common {
-        self.common.as_ref()
-    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -315,8 +297,22 @@ impl Ord for Rule {
 impl Rule {
     pub fn get_name(&self) -> &str {
         match self {
-            Rule::Binary(rule) => &rule.as_ref().name,
-            Rule::Library(rule) => &rule.as_ref().name,
+            Rule::Binary(RustBinary {
+                common:
+                    RustCommon {
+                        common: Common { name, .. },
+                        ..
+                    },
+                ..
+            }) => name,
+            Rule::Library(RustLibrary {
+                common:
+                    RustCommon {
+                        common: Common { name, .. },
+                        ..
+                    },
+                ..
+            }) => name,
             Rule::BuildscriptGenruleSrcs(BuildscriptGenruleSrcs {
                 base: BuildscriptGenrule { name, .. },
                 ..
@@ -339,8 +335,22 @@ impl Rule {
 
     pub fn is_public(&self) -> bool {
         match self {
-            Rule::Binary(rule) => rule.as_ref().public,
-            Rule::Library(rule) => rule.as_ref().public,
+            Rule::Binary(RustBinary {
+                common:
+                    RustCommon {
+                        common: Common { public, .. },
+                        ..
+                    },
+                ..
+            }) => *public,
+            Rule::Library(RustLibrary {
+                common:
+                    RustCommon {
+                        common: Common { public, .. },
+                        ..
+                    },
+                ..
+            }) => *public,
             Rule::BuildscriptGenruleSrcs(_) | Rule::BuildscriptGenruleFilter(_) => false,
             Rule::CxxLibrary(CxxLibrary {
                 common: Common { public, .. },
