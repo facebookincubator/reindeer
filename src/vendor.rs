@@ -5,17 +5,21 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+use anyhow::Context;
+use anyhow::Result;
+use serde::Deserialize;
+use serde::Serialize;
+use std::fs;
+use std::path::Path;
 
-use crate::{
-    buckify::relative_path,
-    cargo,
-    config::{Config, VendorConfig},
-    Args, Paths,
-};
-use globset::{GlobBuilder, GlobSetBuilder};
+use crate::buckify::relative_path;
+use crate::cargo;
+use crate::config::Config;
+use crate::config::VendorConfig;
+use crate::Args;
+use crate::Paths;
+use globset::GlobBuilder;
+use globset::GlobSetBuilder;
 use ignore::gitignore::GitignoreBuilder;
 use indexmap::IndexMap;
 

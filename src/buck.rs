@@ -8,24 +8,28 @@
 //! Definitions of Buck-related types
 //!
 //! Model Buck rules in a rough way. Can definitely be improved.
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, BTreeSet},
-    fmt::{self, Display},
-    io::{Error, Write},
-    path::PathBuf,
-};
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::fmt;
+use std::fmt::Display;
+use std::io::Error;
+use std::io::Write;
+use std::path::PathBuf;
 
 use semver::Version;
-use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
+use serde::de::Deserializer;
+use serde::ser::Serializer;
+use serde::Deserialize;
+use serde::Serialize;
 
-use crate::{
-    collection::SetOrMap,
-    config::BuckConfig,
-    platform::{
-        PlatformConfig, PlatformExpr, PlatformName, PlatformPredicate, PredicateParseError,
-    },
-};
+use crate::collection::SetOrMap;
+use crate::config::BuckConfig;
+use crate::platform::PlatformConfig;
+use crate::platform::PlatformExpr;
+use crate::platform::PlatformName;
+use crate::platform::PlatformPredicate;
+use crate::platform::PredicateParseError;
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RuleRef {

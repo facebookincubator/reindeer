@@ -5,22 +5,25 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
-    path::{Path, PathBuf},
-};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::collections::HashSet;
+use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use walkdir::WalkDir;
 
-use crate::{
-    buckify::relative_path,
-    cargo::{Manifest, ManifestTarget},
-    fixups::buildscript::{BuildscriptFixup, BuildscriptFixups},
-    index::{Index, ResolvedDep},
-    platform::PlatformExpr,
-};
+use crate::buckify::relative_path;
+use crate::cargo::Manifest;
+use crate::cargo::ManifestTarget;
+use crate::fixups::buildscript::BuildscriptFixup;
+use crate::fixups::buildscript::BuildscriptFixups;
+use crate::index::Index;
+use crate::index::ResolvedDep;
+use crate::platform::PlatformExpr;
 
 /// Top-level fixup config file (correspondins to a fixups.toml)
 #[derive(Debug, Deserialize, Default, Serialize)]

@@ -7,37 +7,54 @@
 
 //! Per-package configuration information
 
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    fmt, fs, iter,
-    path::{Path, PathBuf},
-};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fmt;
+use std::fs;
+use std::iter;
+use std::path::Path;
+use std::path::PathBuf;
 
-use anyhow::{anyhow, bail, Context, Result};
-use globset::{GlobBuilder, GlobSetBuilder};
+use anyhow::anyhow;
+use anyhow::bail;
+use anyhow::Context;
+use anyhow::Result;
+use globset::GlobBuilder;
+use globset::GlobSetBuilder;
 
 use walkdir::WalkDir;
 
-use crate::{
-    buck::{
-        self, BuildscriptGenrule, BuildscriptGenruleFilter, BuildscriptGenruleSrcs, Common, Rule,
-        RuleRef, RustBinary,
-    },
-    buckify::{normalize_dotdot, relative_path},
-    cargo::{Manifest, ManifestTarget},
-    collection::SetOrMap,
-    config::Config,
-    index::{Index, ResolvedDep},
-    platform::{platform_names_for_expr, PlatformExpr, PlatformPredicate},
-    Paths,
-};
+use crate::buck;
+use crate::buck::BuildscriptGenrule;
+use crate::buck::BuildscriptGenruleFilter;
+use crate::buck::BuildscriptGenruleSrcs;
+use crate::buck::Common;
+use crate::buck::Rule;
+use crate::buck::RuleRef;
+use crate::buck::RustBinary;
+use crate::buckify::normalize_dotdot;
+use crate::buckify::relative_path;
+use crate::cargo::Manifest;
+use crate::cargo::ManifestTarget;
+use crate::collection::SetOrMap;
+use crate::config::Config;
+use crate::index::Index;
+use crate::index::ResolvedDep;
+use crate::platform::platform_names_for_expr;
+use crate::platform::PlatformExpr;
+use crate::platform::PlatformPredicate;
+use crate::Paths;
 
 mod buildscript;
 mod config;
 
-use buildscript::{
-    BuildscriptFixup, CxxLibraryFixup, GenSrcs, PrebuiltCxxLibraryFixup, RustcFlags,
-};
+use buildscript::BuildscriptFixup;
+use buildscript::CxxLibraryFixup;
+use buildscript::GenSrcs;
+use buildscript::PrebuiltCxxLibraryFixup;
+use buildscript::RustcFlags;
 use config::FixupConfigFile;
 
 /// Fixups for a specific package & target

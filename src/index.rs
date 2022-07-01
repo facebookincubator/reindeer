@@ -7,18 +7,26 @@
 
 //! Index for Cargo metadata, and various useful traversals.
 
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    error, fmt,
-};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::error;
+use std::fmt;
 
 use anyhow::Result;
 use serde::Deserialize;
 
-use crate::{
-    cargo::{DepKind, Manifest, ManifestDep, ManifestTarget, Metadata, Node, NodeDep, PkgId},
-    platform::{PlatformExpr, PlatformPredicate},
-};
+use crate::cargo::DepKind;
+use crate::cargo::Manifest;
+use crate::cargo::ManifestDep;
+use crate::cargo::ManifestTarget;
+use crate::cargo::Metadata;
+use crate::cargo::Node;
+use crate::cargo::NodeDep;
+use crate::cargo::PkgId;
+use crate::platform::PlatformExpr;
+use crate::platform::PlatformPredicate;
 
 /// Index for interesting things in Cargo metadata
 pub struct Index<'meta> {

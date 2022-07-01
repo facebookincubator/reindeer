@@ -7,17 +7,21 @@
 
 //! Global third-party config
 
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    fs,
-    io::ErrorKind,
-    path::{Path, PathBuf},
-};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fs;
+use std::io::ErrorKind;
+use std::path::Path;
+use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Context;
+use anyhow::Result;
 use serde::Deserialize;
 
-use crate::platform::{PlatformConfig, PlatformName};
+use crate::platform::PlatformConfig;
+use crate::platform::PlatformName;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]

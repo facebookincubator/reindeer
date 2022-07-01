@@ -5,19 +5,20 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-    marker::PhantomData,
-};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::fmt;
+use std::marker::PhantomData;
 
-use serde::{
-    de::{
-        value::{MapAccessDeserializer, SeqAccessDeserializer},
-        Deserialize, Deserializer, MapAccess, SeqAccess, Visitor,
-    },
-    ser::{Serialize, Serializer},
-};
+use serde::de::value::MapAccessDeserializer;
+use serde::de::value::SeqAccessDeserializer;
+use serde::de::Deserialize;
+use serde::de::Deserializer;
+use serde::de::MapAccess;
+use serde::de::SeqAccess;
+use serde::de::Visitor;
+use serde::ser::Serialize;
+use serde::ser::Serializer;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SetOrMap<T> {

@@ -5,18 +5,26 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use anyhow::{Context, Result};
+use anyhow::Context;
+use anyhow::Result;
 
-use crate::{config::Config, Paths};
-use rustsec::{
-    advisory::Informational,
-    lockfile::Lockfile,
-    report::{Report, Settings},
-    warning::{Kind, Warning},
-    Database, Fixer, Repository,
-};
+use crate::config::Config;
+use crate::Paths;
+use rustsec::advisory::Informational;
+use rustsec::lockfile::Lockfile;
+use rustsec::report::Report;
+use rustsec::report::Settings;
+use rustsec::warning::Kind;
+use rustsec::warning::Warning;
+use rustsec::Database;
+use rustsec::Fixer;
+use rustsec::Repository;
 use std::io::Write;
-use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
+use termcolor::Color;
+use termcolor::ColorChoice;
+use termcolor::ColorSpec;
+use termcolor::StandardStream;
+use termcolor::WriteColor;
 
 /// Check crates for known security problems. Requires an existing Cargo.lock.
 pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) -> Result<()> {

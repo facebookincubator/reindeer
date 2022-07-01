@@ -8,14 +8,17 @@
 //! Generate third-party metadata corresponding to METADATA.bzl
 
 use anyhow::Result;
-use serde::{Serialize, Serializer};
-use std::{
-    collections::HashMap,
-    fmt::{self, Display},
-    io::{BufWriter, Write},
-};
+use serde::Serialize;
+use serde::Serializer;
+use std::collections::HashMap;
+use std::fmt;
+use std::fmt::Display;
+use std::io::BufWriter;
+use std::io::Write;
 
-use crate::{cargo::Manifest, config::BuckConfig, index::ExtraMetadata};
+use crate::cargo::Manifest;
+use crate::config::BuckConfig;
+use crate::index::ExtraMetadata;
 
 #[derive(Serialize)]
 struct TpMetadata<'a> {

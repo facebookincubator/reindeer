@@ -6,14 +6,17 @@
  */
 
 use crate::config::Config;
-use serde::{de::Deserializer, Deserialize, Serialize};
-use std::{
-    collections::{HashMap, HashSet},
-    error,
-    fmt::{self, Display},
-};
+use serde::de::Deserializer;
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::error;
+use std::fmt;
+use std::fmt::Display;
 
-use nom::error::{convert_error, VerboseError};
+use nom::error::convert_error;
+use nom::error::VerboseError;
 
 /// A single PlatformConfig represents a single platform. Each field represents a set of
 /// platform attributes which are true for this platform. A non-present attribute means
@@ -181,16 +184,26 @@ impl<'a> Display for PlatformPredicate<'a> {
 }
 
 mod parser {
-    use nom::{
-        branch::alt,
-        bytes::complete::{escaped, tag, take_while1},
-        character::complete::{char, multispace0, one_of},
-        combinator::{cut, map, opt},
-        error::{context, ContextError, ParseError},
-        multi::separated_list0,
-        sequence::{delimited, preceded, separated_pair, terminated},
-        AsChar, IResult,
-    };
+    use nom::branch::alt;
+    use nom::bytes::complete::escaped;
+    use nom::bytes::complete::tag;
+    use nom::bytes::complete::take_while1;
+    use nom::character::complete::char;
+    use nom::character::complete::multispace0;
+    use nom::character::complete::one_of;
+    use nom::combinator::cut;
+    use nom::combinator::map;
+    use nom::combinator::opt;
+    use nom::error::context;
+    use nom::error::ContextError;
+    use nom::error::ParseError;
+    use nom::multi::separated_list0;
+    use nom::sequence::delimited;
+    use nom::sequence::preceded;
+    use nom::sequence::separated_pair;
+    use nom::sequence::terminated;
+    use nom::AsChar;
+    use nom::IResult;
 
     use super::PlatformPredicate;
 

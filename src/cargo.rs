@@ -11,20 +11,30 @@
 //! get metadata about a crate. It also defines all the types for deserializing from Cargo's
 //! JSON output.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    env,
-    fmt::{self, Display},
-    io::{BufRead, BufReader},
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-    thread,
-};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::env;
+use std::fmt;
+use std::fmt::Display;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::process::Stdio;
+use std::thread;
 
-use anyhow::{Context, Result};
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
+use anyhow::Context;
+use anyhow::Result;
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
 
-use crate::{config::Config, platform::PlatformExpr, Args, Paths};
+use crate::config::Config;
+use crate::platform::PlatformExpr;
+use crate::Args;
+use crate::Paths;
 
 pub fn cargo_get_metadata(config: &Config, args: &Args, paths: &Paths) -> Result<Metadata> {
     let metadata: Metadata = self::run_cargo_json(

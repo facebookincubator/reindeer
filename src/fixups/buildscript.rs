@@ -5,23 +5,26 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-    marker::PhantomData,
-    ops::Deref,
-    path::PathBuf,
-};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::fmt;
+use std::marker::PhantomData;
+use std::ops::Deref;
+use std::path::PathBuf;
 
 use anyhow::Result;
 
-use serde::{
-    de::{Error as DeError, MapAccess, Visitor},
-    ser::SerializeMap,
-    Deserialize, Deserializer, Serialize, Serializer,
-};
+use serde::de::Error as DeError;
+use serde::de::MapAccess;
+use serde::de::Visitor;
+use serde::ser::SerializeMap;
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
+use serde::Serializer;
 
-use crate::{cargo::TargetKind, collection::SetOrMap};
+use crate::cargo::TargetKind;
+use crate::collection::SetOrMap;
 
 #[derive(Deserialize, Debug, Serialize)]
 pub struct BuildscriptFixups(pub Vec<BuildscriptFixup>);

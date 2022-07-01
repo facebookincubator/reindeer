@@ -7,26 +7,46 @@
 
 //! Implement buckification - generate Buck build rules from Cargo metadata
 
-use crate::{
-    buck::{self, Common, PlatformRustCommon, Rule, RuleRef, RustBinary, RustCommon, RustLibrary},
-    cargo::{cargo_get_metadata, Edition, Manifest, ManifestTarget, PkgId},
-    config::Config,
-    fixups::Fixups,
-    index,
-    platform::{platform_names_for_expr, PlatformExpr, PlatformName},
-    tp_metadata, Args, Paths,
-};
-use anyhow::{bail, Context, Result};
+use crate::buck;
+use crate::buck::Common;
+use crate::buck::PlatformRustCommon;
+use crate::buck::Rule;
+use crate::buck::RuleRef;
+use crate::buck::RustBinary;
+use crate::buck::RustCommon;
+use crate::buck::RustLibrary;
+use crate::cargo::cargo_get_metadata;
+use crate::cargo::Edition;
+use crate::cargo::Manifest;
+use crate::cargo::ManifestTarget;
+use crate::cargo::PkgId;
+use crate::config::Config;
+use crate::fixups::Fixups;
+use crate::index;
+use crate::platform::platform_names_for_expr;
+use crate::platform::PlatformExpr;
+use crate::platform::PlatformName;
+use crate::tp_metadata;
+use crate::Args;
+use crate::Paths;
+use anyhow::bail;
+use anyhow::Context;
+use anyhow::Result;
 use rayon::prelude::*;
-use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
-    fs,
-    io::{self, Write},
-    iter,
-    path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
-    sync::{mpsc, Mutex},
-};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::collections::HashSet;
+use std::fs;
+use std::io;
+use std::io::Write;
+use std::iter;
+use std::path::Component;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::process::Stdio;
+use std::sync::mpsc;
+use std::sync::Mutex;
 
 // normalize a/../b => a/b
 pub fn normalize_dotdot(path: &Path) -> PathBuf {
