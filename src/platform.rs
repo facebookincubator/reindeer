@@ -5,10 +5,6 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use crate::config::Config;
-use serde::de::Deserializer;
-use serde::Deserialize;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error;
@@ -17,6 +13,11 @@ use std::fmt::Display;
 
 use nom::error::convert_error;
 use nom::error::VerboseError;
+use serde::de::Deserializer;
+use serde::Deserialize;
+use serde::Serialize;
+
+use crate::config::Config;
 
 /// A single PlatformConfig represents a single platform. Each field represents a set of
 /// platform attributes which are true for this platform. A non-present attribute means

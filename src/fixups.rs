@@ -23,7 +23,6 @@ use anyhow::Context;
 use anyhow::Result;
 use globset::GlobBuilder;
 use globset::GlobSetBuilder;
-
 use walkdir::WalkDir;
 
 use crate::buck;

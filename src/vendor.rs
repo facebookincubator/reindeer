@@ -5,12 +5,17 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use anyhow::Context;
-use anyhow::Result;
-use serde::Deserialize;
-use serde::Serialize;
 use std::fs;
 use std::path::Path;
+
+use anyhow::Context;
+use anyhow::Result;
+use globset::GlobBuilder;
+use globset::GlobSetBuilder;
+use ignore::gitignore::GitignoreBuilder;
+use indexmap::IndexMap;
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::buckify::relative_path;
 use crate::cargo;
@@ -18,10 +23,6 @@ use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::Args;
 use crate::Paths;
-use globset::GlobBuilder;
-use globset::GlobSetBuilder;
-use ignore::gitignore::GitignoreBuilder;
-use indexmap::IndexMap;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CargoChecksums {

@@ -7,6 +7,26 @@
 
 //! Implement buckification - generate Buck build rules from Cargo metadata
 
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::collections::HashSet;
+use std::fs;
+use std::io;
+use std::io::Write;
+use std::iter;
+use std::path::Component;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::process::Stdio;
+use std::sync::mpsc;
+use std::sync::Mutex;
+
+use anyhow::bail;
+use anyhow::Context;
+use anyhow::Result;
+use rayon::prelude::*;
+
 use crate::buck;
 use crate::buck::Common;
 use crate::buck::PlatformRustCommon;
@@ -29,24 +49,6 @@ use crate::platform::PlatformName;
 use crate::tp_metadata;
 use crate::Args;
 use crate::Paths;
-use anyhow::bail;
-use anyhow::Context;
-use anyhow::Result;
-use rayon::prelude::*;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::HashSet;
-use std::fs;
-use std::io;
-use std::io::Write;
-use std::iter;
-use std::path::Component;
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::Command;
-use std::process::Stdio;
-use std::sync::mpsc;
-use std::sync::Mutex;
 
 // normalize a/../b => a/b
 pub fn normalize_dotdot(path: &Path) -> PathBuf {
