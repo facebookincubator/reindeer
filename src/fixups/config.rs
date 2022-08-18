@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
+use std::fmt::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -67,7 +68,7 @@ impl FixupConfigFile {
             relpath.display()
         );
         for ResolvedDep { package, .. } in index.resolved_deps_for_target(package, target) {
-            msg += &format!("\n    {}", package);
+            let _ = write!(&mut msg, "\n    {}", package);
         }
 
         let buildscript = vec![BuildscriptFixup::Build, BuildscriptFixup::Unresolved(msg)];
