@@ -417,6 +417,29 @@ fn generate_target_rules<'scope>(
         fixups.compute_link_style(),
     )
     .context("link_style")?;
+
+    // "preferred_linkage" only really applies to libraries, so maintain separate library base &
+    // perplat
+    let mut lib_base = base.clone();
+    let mut lib_perplat = perplat.clone();
+
+    unzip_platform(
+        config,
+        &mut lib_base,
+        &mut lib_perplat,
+        |rule, preferred_linkage| {
+            log::debug!(
+                "pkg {} target {}: preferred_linkage {}",
+                pkg,
+                tgt.name,
+                preferred_linkage
+            );
+            rule.preferred_linkage = Some(preferred_linkage);
+        },
+        fixups.compute_preferred_linkage(),
+    )
+    .context("preferred_linkage")?;
+
     // Standalone binary - binary for a package always takes the package's library as a dependency
     // if there is one
     if let Some(true) = pkg.dependency_target().map(ManifestTarget::kind_lib) {
@@ -440,8 +463,8 @@ fn generate_target_rules<'scope>(
                 krate: tgt.name.replace('-', "_"),
                 rootmod,
                 edition,
-                base,
-                platform: perplat,
+                base: lib_base,
+                platform: lib_perplat,
             },
             proc_macro: tgt.crate_proc_macro(),
             dlopen_enable: tgt.kind_cdylib() && fixups.python_ext().is_none(),

@@ -1026,12 +1026,24 @@ impl<'meta> Fixups<'meta> {
         ret
     }
 
-    /// Compute linkage
+    /// Compute link_style (how dependencies should be linked)
     pub fn compute_link_style(&self) -> Vec<(Option<PlatformExpr>, String)> {
         let mut ret = Vec::new();
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
             if let Some(link_style) = config.link_style.as_ref() {
                 ret.push((platform.cloned(), link_style.clone()));
+            }
+        }
+
+        ret
+    }
+
+    /// Compute preferred_linkage (how dependents should link you)
+    pub fn compute_preferred_linkage(&self) -> Vec<(Option<PlatformExpr>, String)> {
+        let mut ret = Vec::new();
+        for (platform, config) in self.fixup_config.configs(&self.package.version) {
+            if let Some(preferred_linkage) = config.preferred_linkage.as_ref() {
+                ret.push((platform.cloned(), preferred_linkage.clone()));
             }
         }
 

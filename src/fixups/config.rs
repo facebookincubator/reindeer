@@ -152,8 +152,10 @@ pub struct FixupConfig {
     /// manifest dir, and therefore have the same directory
     /// structure.
     pub overlay: Option<PathBuf>,
-    /// Rust binary link style.
+    /// Rust binary link style (how dependencies should be linked)
     pub link_style: Option<String>,
+    /// Rust library preferred linkage (how dependents should link you)
+    pub preferred_linkage: Option<String>,
 
     // Table/map-like values must come after everything else
     /// Additional env variables

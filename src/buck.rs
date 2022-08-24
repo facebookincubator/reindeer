@@ -166,6 +166,9 @@ pub struct PlatformRustCommon {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_style: Option<String>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred_linkage: Option<String>,
+
     // Dummy map to make serde treat this struct as a map
     #[serde(skip_serializing_if = "always", flatten)]
     pub _dummy: BTreeMap<(), ()>,
