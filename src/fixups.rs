@@ -158,6 +158,12 @@ impl<'meta> Fixups<'meta> {
         self.fixup_config.omit_targets.contains(&self.target.name)
     }
 
+    pub fn precise_srcs(&self) -> bool {
+        self.fixup_config
+            .precise_srcs
+            .unwrap_or(self.config.precise_srcs)
+    }
+
     fn buildscript_target(&self) -> Option<&ManifestTarget> {
         self.package
             .targets

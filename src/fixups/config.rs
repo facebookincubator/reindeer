@@ -34,6 +34,12 @@ pub struct FixupConfigFile {
     #[serde(default)]
     pub omit_targets: BTreeSet<String>,
 
+    /// Skip precise srcs detection and fallback to `**/*.rs`.
+    /// Overrides the global config `precise_srcs` for this crate.
+    /// This is useful for pathologically large crates where
+    /// src detection dominates buckification (e.g. the `windows` crate).
+    pub precise_srcs: Option<bool>,
+
     /// If the crate is generating a cdylib which is intended to be
     /// a Python extension module, set this to give the module name.
     /// This is passed as a `python_ext` parameter on the `rust_library`
