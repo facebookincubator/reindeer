@@ -24,15 +24,15 @@ use crate::index::ExtraMetadata;
 
 #[derive(Serialize)]
 struct TpMetadata<'a> {
-    name: &'a str,
-    version: &'a semver::Version,
     licenses: Vec<License>,
     maintainers: Vec<&'a str>,
+    name: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     owner: Option<&'a str>,
     upstream_address: &'a str,
     upstream_hash: &'a str,
     upstream_type: &'a str,
+    version: &'a semver::Version,
 }
 
 pub fn write(
@@ -82,14 +82,14 @@ pub fn write(
     };
 
     let metadata = TpMetadata {
-        name,
-        version,
         licenses,
         maintainers,
+        name,
         owner,
         upstream_address,
         upstream_hash,
         upstream_type,
+        version,
     };
 
     let mut out = BufWriter::new(out);
