@@ -10,14 +10,14 @@ use std::io::Write;
 use anyhow::Context;
 use anyhow::Result;
 use rustsec::advisory::Informational;
-use rustsec::lockfile::Lockfile;
 use rustsec::report::Report;
 use rustsec::report::Settings;
-use rustsec::warning::Kind;
-use rustsec::warning::Warning;
 use rustsec::Database;
 use rustsec::Fixer;
+use rustsec::Lockfile;
 use rustsec::Repository;
+use rustsec::Warning;
+use rustsec::WarningKind;
 use termcolor::Color;
 use termcolor::ColorChoice;
 use termcolor::ColorSpec;
@@ -96,12 +96,12 @@ pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) 
         let pkg = &warning.package;
         let adv = match &warning {
             Warning {
-                kind: Kind::Notice,
+                kind: WarningKind::Notice,
                 advisory: Some(advisory),
                 ..
             } => Some((advisory, "WARNING")),
             Warning {
-                kind: Kind::Unmaintained,
+                kind: WarningKind::Unmaintained,
                 advisory: Some(advisory),
                 ..
             } => Some((advisory, "UNMAINTAINED")),
