@@ -27,6 +27,8 @@ struct TpMetadata<'a> {
     version: &'a semver::Version,
     licenses: Vec<License>,
     maintainers: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<&'a str>,
     upstream_address: &'a str,
     upstream_hash: &'a str,
     upstream_type: &'a str,
@@ -46,11 +48,9 @@ pub fn write(
         .as_deref()
         .map_or_else(Vec::new, split_spdx_license_list);
 
-    let maintainers = extra
-        .get(pkg.name.as_str())
-        .map(|m| m.oncall.as_str())
-        .into_iter()
-        .collect();
+    let owner = extra.get(pkg.name.as_str()).map(|m| m.oncall.as_str());
+
+    let maintainers = owner.into_iter().collect();
 
     let cratesio_url;
     let mut upstream_address = "";
@@ -85,6 +85,7 @@ pub fn write(
         version,
         licenses,
         maintainers,
+        owner,
         upstream_address,
         upstream_hash,
         upstream_type,
