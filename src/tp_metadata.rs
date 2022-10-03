@@ -10,8 +10,9 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
+use std::io;
 use std::io::BufWriter;
-use std::io::Write;
+use std::io::Write as _;
 
 use anyhow::Result;
 use serde::Serialize;
@@ -38,7 +39,7 @@ pub fn write(
     config: &BuckConfig,
     pkg: &Manifest,
     extra: &HashMap<&str, ExtraMetadata>,
-    out: &mut impl Write,
+    out: &mut impl io::Write,
 ) -> Result<()> {
     let name = &pkg.name;
     let version = &pkg.version;
@@ -99,7 +100,7 @@ pub fn write(
     }
 
     out.write_all(b"METADATA = ")?;
-    let json_formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+    let json_formatter = PrettyWithTrailingCommasFormatter::new();
     let mut serializer = serde_json::Serializer::with_formatter(&mut out, json_formatter);
     metadata.serialize(&mut serializer)?;
     out.write_all(b"\n")?;
@@ -249,5 +250,96 @@ fn split_spdx_license_list(spdx: &str) -> Vec<License> {
         nodes
     } else {
         vec![license]
+    }
+}
+
+/// Passthrough to `serde_json::ser::PrettyFormatter`,
+/// but add trailing commas in arrays and objects.
+struct PrettyWithTrailingCommasFormatter {
+    formatter: serde_json::ser::PrettyFormatter<'static>,
+    has_value: bool,
+}
+
+impl PrettyWithTrailingCommasFormatter {
+    fn new() -> Self {
+        PrettyWithTrailingCommasFormatter {
+            formatter: serde_json::ser::PrettyFormatter::with_indent(b"    "),
+            has_value: false,
+        }
+    }
+}
+
+impl serde_json::ser::Formatter for PrettyWithTrailingCommasFormatter {
+    fn begin_array<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.has_value = false;
+        self.formatter.begin_array(writer)
+    }
+
+    fn end_array<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        if self.has_value {
+            writer.write_all(b",")?;
+        }
+        self.formatter.end_array(writer)
+    }
+
+    fn begin_array_value<W>(&mut self, writer: &mut W, first: bool) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.formatter.begin_array_value(writer, first)
+    }
+
+    fn end_array_value<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.has_value = true;
+        self.formatter.end_array_value(writer)
+    }
+
+    fn begin_object<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.has_value = false;
+        self.formatter.begin_object(writer)
+    }
+
+    fn end_object<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        if self.has_value {
+            writer.write_all(b",")?;
+        }
+        self.formatter.end_object(writer)
+    }
+
+    fn begin_object_key<W>(&mut self, writer: &mut W, first: bool) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.formatter.begin_object_key(writer, first)
+    }
+
+    fn begin_object_value<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.formatter.begin_object_value(writer)
+    }
+
+    fn end_object_value<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.has_value = true;
+        self.formatter.end_object_value(writer)
     }
 }
