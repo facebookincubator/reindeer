@@ -26,6 +26,7 @@ use globset::GlobSetBuilder;
 use walkdir::WalkDir;
 
 use crate::buck;
+use crate::buck::BuckPath;
 use crate::buck::BuildscriptGenrule;
 use crate::buck::BuildscriptGenruleFilter;
 use crate::buck::BuildscriptGenruleSrcs;
@@ -294,6 +295,7 @@ impl<'meta> Fixups<'meta> {
                             self.config.strict_globs,
                         )
                         .context("generated file inputs")?
+                        .map(BuckPath)
                         .collect();
 
                     // Emit rules to extract generated sources
@@ -360,6 +362,7 @@ impl<'meta> Fixups<'meta> {
                         srcs: self
                             .manifestwalk(srcs, exclude, self.config.strict_globs)
                             .context("C++ sources")?
+                            .map(BuckPath)
                             .collect(),
                         // Collect the nominated headers, plus everything in the fixup include
                         // path(s).
@@ -387,6 +390,7 @@ impl<'meta> Fixups<'meta> {
                             false,
                         )
                         .context("C++ headers")?
+                        .map(BuckPath)
                         .collect(),
                         exported_headers: match exported_headers {
                             SetOrMap::Set(exported_headers) => SetOrMap::Set(
@@ -396,6 +400,7 @@ impl<'meta> Fixups<'meta> {
                                     self.config.strict_globs,
                                 )
                                 .context("C++ exported headers")?
+                                .map(BuckPath)
                                 .collect(),
                             ),
                             SetOrMap::Map(exported_headers) => {
@@ -404,7 +409,9 @@ impl<'meta> Fixups<'meta> {
                                 SetOrMap::Map(
                                     exported_headers
                                         .iter()
-                                        .map(|(name, path)| (name.clone(), rel_manifest.join(path)))
+                                        .map(|(name, path)| {
+                                            (name.clone(), BuckPath(rel_manifest.join(path)))
+                                        })
                                         .collect(),
                                 )
                             }
@@ -413,6 +420,7 @@ impl<'meta> Fixups<'meta> {
                             .iter()
                             .map(|path| rel_fixup.join(path))
                             .chain(include_paths.iter().map(|path| rel_manifest.join(path)))
+                            .map(BuckPath)
                             .collect(),
                         compiler_flags: compiler_flags.clone(),
                         preprocessor_flags: preprocessor_flags.clone(),
@@ -463,7 +471,7 @@ impl<'meta> Fixups<'meta> {
                                     .map(RuleRef::abs)
                                     .collect(),
                             },
-                            static_lib: static_lib.clone(),
+                            static_lib: BuckPath(static_lib.clone()),
                         };
                         res.push(Rule::PrebuiltCxxLibrary(rule));
                     }

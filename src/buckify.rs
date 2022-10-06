@@ -28,6 +28,7 @@ use anyhow::Result;
 use rayon::prelude::*;
 
 use crate::buck;
+use crate::buck::BuckPath;
 use crate::buck::Common;
 use crate::buck::PlatformRustCommon;
 use crate::buck::Rule;
@@ -201,6 +202,7 @@ fn generate_target_rules<'scope>(
                 .map(|file| relative_path(&paths.third_party_dir, pkg.manifest_dir()).join(file))
                 .into_iter(),
         )
+        .map(BuckPath)
         .collect();
 
     let global_rustc_flags = config.rustc_flags.clone();
@@ -267,7 +269,7 @@ fn generate_target_rules<'scope>(
         &mut perplat,
         |rule, srcs| {
             log::debug!("pkg {} target {}: adding srcs {:?}", pkg, tgt.name, srcs);
-            rule.srcs.extend(srcs)
+            rule.srcs.extend(srcs.into_iter().map(BuckPath))
         },
         fixups.compute_srcs(srcs)?,
     )
@@ -286,7 +288,7 @@ fn generate_target_rules<'scope>(
             );
             let targets = map
                 .into_iter()
-                .map(|(rule, path)| (rule.target().to_string(), path));
+                .map(|(rule, path)| (rule.target().to_string(), BuckPath(path)));
             rule.mapped_srcs.extend(targets);
         },
         fixups.compute_gen_srcs(&srcdir),
@@ -306,7 +308,7 @@ fn generate_target_rules<'scope>(
             );
             let paths = map
                 .into_iter()
-                .map(|(from, to)| (from.display().to_string(), to));
+                .map(|(from, to)| (from.display().to_string(), BuckPath(to)));
             rule.mapped_srcs.extend(paths);
         },
         fixups.compute_mapped_srcs()?,
@@ -461,7 +463,7 @@ fn generate_target_rules<'scope>(
                     compatible_with: vec![],
                 },
                 krate: tgt.name.replace('-', "_"),
-                rootmod,
+                rootmod: BuckPath(rootmod),
                 edition,
                 base: lib_base,
                 platform: lib_perplat,
@@ -481,7 +483,7 @@ fn generate_target_rules<'scope>(
                     compatible_with: vec![],
                 },
                 krate: tgt.name.replace('-', "_"),
-                rootmod,
+                rootmod: BuckPath(rootmod),
                 edition,
                 base: PlatformRustCommon {
                     // don't use fixed ones because it will be a cyclic dependency
@@ -502,7 +504,7 @@ fn generate_target_rules<'scope>(
                     compatible_with: vec![],
                 },
                 krate: tgt.name.replace('-', "_"),
-                rootmod,
+                rootmod: BuckPath(rootmod),
                 edition,
                 base: bin_base,
                 platform: bin_perplat,

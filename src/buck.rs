@@ -125,6 +125,15 @@ impl<'de> Deserialize<'de> for RuleTarget {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct BuckPath(pub PathBuf);
+
+impl Serialize for BuckPath {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(ser)
+    }
+}
+
 fn visibility<S: Serializer>(vis: &bool, ser: S) -> Result<S::Ok, S::Error> {
     if *vis { vec!["PUBLIC"] } else { vec![] }.serialize(ser)
 }
@@ -135,7 +144,7 @@ pub struct Common {
     #[serde(rename = "visibility", serialize_with = "visibility")]
     pub public: bool,
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
-    pub licenses: BTreeSet<PathBuf>,
+    pub licenses: BTreeSet<BuckPath>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub compatible_with: Vec<RuleRef>,
 }
@@ -148,9 +157,9 @@ fn always<T>(_: &T) -> bool {
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Ord, PartialOrd)]
 pub struct PlatformRustCommon {
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
-    pub srcs: BTreeSet<PathBuf>,
+    pub srcs: BTreeSet<BuckPath>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub mapped_srcs: BTreeMap<String, PathBuf>,
+    pub mapped_srcs: BTreeMap<String, BuckPath>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rustc_flags: Vec<String>,
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
@@ -181,7 +190,7 @@ pub struct RustCommon {
     #[serde(rename = "crate")]
     pub krate: String,
     #[serde(rename = "crate_root")]
-    pub rootmod: PathBuf,
+    pub rootmod: BuckPath,
     pub edition: crate::cargo::Edition,
     // Platform-dependent
     #[serde(flatten)]
@@ -241,17 +250,17 @@ pub struct BuildscriptGenruleSrcs {
     pub base: BuildscriptGenrule,
     pub files: BTreeSet<String>,
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
-    pub srcs: BTreeSet<PathBuf>,
+    pub srcs: BTreeSet<BuckPath>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct CxxLibrary {
     #[serde(flatten)]
     pub common: Common,
-    pub srcs: BTreeSet<PathBuf>,
-    pub headers: BTreeSet<PathBuf>,
+    pub srcs: BTreeSet<BuckPath>,
+    pub headers: BTreeSet<BuckPath>,
     #[serde(skip_serializing_if = "SetOrMap::is_empty")]
-    pub exported_headers: SetOrMap<PathBuf>,
+    pub exported_headers: SetOrMap<BuckPath>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub compiler_flags: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -259,7 +268,7 @@ pub struct CxxLibrary {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub header_namespace: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub include_directories: Vec<PathBuf>,
+    pub include_directories: Vec<BuckPath>,
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub deps: BTreeSet<RuleRef>,
     pub preferred_linkage: Option<String>,
@@ -269,7 +278,7 @@ pub struct CxxLibrary {
 pub struct PrebuiltCxxLibrary {
     #[serde(flatten)]
     pub common: Common,
-    pub static_lib: PathBuf,
+    pub static_lib: BuckPath,
 }
 
 pub enum Rule {
