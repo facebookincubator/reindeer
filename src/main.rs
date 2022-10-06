@@ -102,13 +102,13 @@ pub struct Paths {
 fn try_main() -> Result<()> {
     let args = Args::from_args();
 
-    let third_party_dir = args.third_party_dir.canonicalize()?;
+    let third_party_dir = dunce::canonicalize(&args.third_party_dir)?;
     let config = config::read_config(&third_party_dir)?;
 
     let paths = {
         let mut cell_dir = third_party_dir.clone();
         if let Some(x) = &config.buck_cell_root {
-            cell_dir = cell_dir.join(x).canonicalize()?;
+            cell_dir = dunce::canonicalize(cell_dir.join(x))?;
         }
         Paths {
             manifest_path: third_party_dir.join("Cargo.toml"),
