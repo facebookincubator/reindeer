@@ -130,7 +130,13 @@ pub struct BuckPath(pub PathBuf);
 
 impl Serialize for BuckPath {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        self.0.serialize(ser)
+        // Even on Windows we want to use forward slash paths
+        match self.0.as_path().to_str() {
+            Some(s) => s.replace('\\', "/").serialize(ser),
+            None => Err(serde::ser::Error::custom(
+                "path contains invalid UTF-8 characters",
+            )),
+        }
     }
 }
 
