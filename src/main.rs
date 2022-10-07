@@ -38,6 +38,7 @@ mod tp_metadata;
 mod vendor;
 
 #[derive(Debug, StructOpt)]
+#[structopt(bin_name = "reindeer")]
 pub struct Args {
     /// Enable debug output
     #[structopt(long, short = "D")]
