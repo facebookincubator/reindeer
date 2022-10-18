@@ -28,6 +28,7 @@ use anyhow::Result;
 use rayon::prelude::*;
 
 use crate::buck;
+use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::Common;
 use crate::buck::PlatformRustCommon;
@@ -454,25 +455,33 @@ fn generate_target_rules<'scope>(
         || (tgt.kind_cdylib() && tgt.crate_cdylib())
     {
         // Library or procmacro
-        vec![Rule::Library(RustLibrary {
+        let mut rules = vec![Rule::Library(RustLibrary {
             common: RustCommon {
                 common: Common {
                     name: index.rule_name(pkg),
-                    public: index.is_public(pkg),
+                    public: false,
                     licenses,
                     compatible_with: vec![],
                 },
                 krate: tgt.name.replace('-', "_"),
                 rootmod: BuckPath(rootmod),
                 edition,
-                _migration_sort_name: format!("{}-{}", pkg, index.public_rename(pkg).unwrap_or("")),
                 base: lib_base,
                 platform: lib_perplat,
             },
             proc_macro: tgt.crate_proc_macro(),
             dlopen_enable: tgt.kind_cdylib() && fixups.python_ext().is_none(),
             python_ext: fixups.python_ext().map(str::to_string),
-        })]
+        })];
+        if index.is_public(pkg) {
+            rules.push(Rule::Alias(Alias {
+                name: index.public_rename(pkg).unwrap_or(&pkg.name).to_owned(),
+                actual: RuleRef::local(index.rule_name(pkg)),
+                public: true,
+                _dummy: Default::default(),
+            }));
+        }
+        rules
     } else if tgt.crate_bin() && tgt.kind_custom_build() {
         // Build script
         let buildscript = RustBinary {
@@ -486,12 +495,6 @@ fn generate_target_rules<'scope>(
                 krate: tgt.name.replace('-', "_"),
                 rootmod: BuckPath(rootmod),
                 edition,
-                _migration_sort_name: format!(
-                    "{}-{}-{}",
-                    pkg,
-                    index.public_rename(pkg).unwrap_or(""),
-                    tgt.name
-                ),
                 base: PlatformRustCommon {
                     // don't use fixed ones because it will be a cyclic dependency
                     rustc_flags: global_rustc_flags,
@@ -502,27 +505,34 @@ fn generate_target_rules<'scope>(
         };
         fixups.emit_buildscript_rules(buildscript, config)?
     } else if tgt.kind_bin() && tgt.crate_bin() && index.is_public(pkg) {
-        vec![Rule::Binary(RustBinary {
+        let mut rules = vec![Rule::Binary(RustBinary {
             common: RustCommon {
                 common: Common {
                     name: format!("{}-{}", index.rule_name(pkg), tgt.name),
-                    public: index.is_public(pkg),
+                    public: false,
                     licenses,
                     compatible_with: vec![],
                 },
                 krate: tgt.name.replace('-', "_"),
                 rootmod: BuckPath(rootmod),
-                _migration_sort_name: format!(
-                    "{}-{}-{}",
-                    pkg,
-                    index.public_rename(pkg).unwrap_or(""),
-                    tgt.name
-                ),
                 edition,
                 base: bin_base,
                 platform: bin_perplat,
             },
-        })]
+        })];
+        if index.is_public(pkg) {
+            rules.push(Rule::Alias(Alias {
+                name: format!(
+                    "{}-{}",
+                    index.public_rename(pkg).unwrap_or(&pkg.name),
+                    tgt.name,
+                ),
+                actual: RuleRef::local(format!("{}-{}", index.rule_name(pkg), tgt.name)),
+                public: true,
+                _dummy: Default::default(),
+            }));
+        }
+        rules
     } else {
         // Ignore everything else for now.
         log::info!("pkg {} target {} Skipping {:?}", pkg, tgt.name, tgt.kind());

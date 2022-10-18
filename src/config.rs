@@ -131,6 +131,9 @@ pub struct BuckConfig {
     #[serde(default)]
     pub buckfile_imports: String,
 
+    /// Rule name for alias
+    #[serde(default = "default_alias")]
+    pub alias: String,
     /// Rule name for rust_library
     #[serde(default = "default_rust_library")]
     pub rust_library: String,
@@ -175,6 +178,10 @@ fn default_buck_file_name() -> String {
     BuckConfig::default().file_name
 }
 
+fn default_alias() -> String {
+    BuckConfig::default().alias
+}
+
 fn default_rust_library() -> String {
     BuckConfig::default().rust_library
 }
@@ -207,6 +214,7 @@ impl Default for BuckConfig {
             generated_file_header: String::new(),
             buckfile_imports: String::new(),
 
+            alias: "alias".to_string(),
             rust_library: "rust_library".to_string(),
             rust_binary: "rust_binary".to_string(),
             cxx_library: "cxx_library".to_string(),

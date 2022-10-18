@@ -184,12 +184,11 @@ impl<'meta> Index<'meta> {
         self.pkgid_to_pkg.values().copied()
     }
 
-    /// Return the public package rule name
+    /// Return the package rule name.
     pub fn rule_name(&self, pkg: &Manifest) -> String {
         match self.public_set.get(&pkg.id) {
-            Some(None) => pkg.name.to_string(),          // Base name
-            Some(Some(rename)) => (*rename).to_string(), // Rename
-            None => pkg.to_string(),                     // Full version info
+            Some(None) | None => pkg.to_string(), // Full version info
+            Some(Some(rename)) => format!("{}-{}", pkg, rename), //  Rename
         }
     }
 

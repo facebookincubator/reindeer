@@ -140,6 +140,18 @@ impl Serialize for BuckPath {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct Alias {
+    pub name: String,
+    pub actual: RuleRef,
+    #[serde(rename = "visibility", serialize_with = "visibility")]
+    pub public: bool,
+
+    // Dummy map to make serde treat this struct as a map
+    #[serde(skip_serializing, flatten)]
+    pub _dummy: BTreeMap<(), ()>,
+}
+
 fn visibility<S: Serializer>(vis: &bool, ser: S) -> Result<S::Ok, S::Error> {
     if *vis { vec!["PUBLIC"] } else { vec![] }.serialize(ser)
 }
@@ -198,8 +210,6 @@ pub struct RustCommon {
     #[serde(rename = "crate_root")]
     pub rootmod: BuckPath,
     pub edition: crate::cargo::Edition,
-    #[serde(skip_serializing)] // DELETEME!
-    pub _migration_sort_name: String,
     // Platform-dependent
     #[serde(flatten)]
     pub base: PlatformRustCommon,
@@ -291,6 +301,7 @@ pub struct PrebuiltCxxLibrary {
 
 #[derive(Debug)]
 pub enum Rule {
+    Alias(Alias),
     Binary(RustBinary),
     Library(RustLibrary),
     BuildscriptGenruleSrcs(BuildscriptGenruleSrcs),
@@ -315,40 +326,14 @@ impl PartialOrd for Rule {
 
 impl Ord for Rule {
     fn cmp(&self, other: &Self) -> Ordering {
-        self._migration_sort_name()
-            .cmp(other._migration_sort_name())
+        self.get_name().cmp(other.get_name())
     }
 }
 
 impl Rule {
-    // DELETEME!
-    fn _migration_sort_name(&self) -> &str {
-        match self {
-            Rule::Binary(RustBinary {
-                common:
-                    RustCommon {
-                        _migration_sort_name,
-                        ..
-                    },
-                ..
-            })
-            | Rule::Library(RustLibrary {
-                common:
-                    RustCommon {
-                        _migration_sort_name,
-                        ..
-                    },
-                ..
-            }) => _migration_sort_name,
-            Rule::BuildscriptGenruleSrcs(_)
-            | Rule::BuildscriptGenruleFilter(_)
-            | Rule::CxxLibrary(_)
-            | Rule::PrebuiltCxxLibrary(_) => self.get_name(),
-        }
-    }
-
     pub fn get_name(&self) -> &str {
         match self {
+            Rule::Alias(Alias { name, .. }) => name,
             Rule::Binary(RustBinary {
                 common:
                     RustCommon {
@@ -387,6 +372,7 @@ impl Rule {
 
     pub fn is_public(&self) -> bool {
         match self {
+            Rule::Alias(Alias { public, .. }) => *public,
             Rule::Binary(RustBinary {
                 common:
                     RustCommon {
@@ -417,6 +403,9 @@ impl Rule {
 
     pub fn render(&self, config: &BuckConfig, out: &mut impl Write) -> Result<(), Error> {
         match self {
+            Rule::Alias(alias) => {
+                out.write_all(serde_starlark::function_call(&config.alias, &alias)?.as_bytes())?;
+            }
             Rule::Binary(bin) => {
                 out.write_all(
                     serde_starlark::function_call(&config.rust_binary, &bin)?.as_bytes(),
