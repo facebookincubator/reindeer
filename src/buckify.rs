@@ -465,6 +465,7 @@ fn generate_target_rules<'scope>(
                 krate: tgt.name.replace('-', "_"),
                 rootmod: BuckPath(rootmod),
                 edition,
+                _migration_sort_name: format!("{}-{}", pkg, index.public_rename(pkg).unwrap_or("")),
                 base: lib_base,
                 platform: lib_perplat,
             },
@@ -485,6 +486,12 @@ fn generate_target_rules<'scope>(
                 krate: tgt.name.replace('-', "_"),
                 rootmod: BuckPath(rootmod),
                 edition,
+                _migration_sort_name: format!(
+                    "{}-{}-{}",
+                    pkg,
+                    index.public_rename(pkg).unwrap_or(""),
+                    tgt.name
+                ),
                 base: PlatformRustCommon {
                     // don't use fixed ones because it will be a cyclic dependency
                     rustc_flags: global_rustc_flags,
@@ -505,6 +512,12 @@ fn generate_target_rules<'scope>(
                 },
                 krate: tgt.name.replace('-', "_"),
                 rootmod: BuckPath(rootmod),
+                _migration_sort_name: format!(
+                    "{}-{}-{}",
+                    pkg,
+                    index.public_rename(pkg).unwrap_or(""),
+                    tgt.name
+                ),
                 edition,
                 base: bin_base,
                 platform: bin_perplat,

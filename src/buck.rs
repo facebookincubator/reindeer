@@ -198,6 +198,8 @@ pub struct RustCommon {
     #[serde(rename = "crate_root")]
     pub rootmod: BuckPath,
     pub edition: crate::cargo::Edition,
+    #[serde(skip_serializing)] // DELETEME!
+    pub _migration_sort_name: String,
     // Platform-dependent
     #[serde(flatten)]
     pub base: PlatformRustCommon,
@@ -287,6 +289,7 @@ pub struct PrebuiltCxxLibrary {
     pub static_lib: BuckPath,
 }
 
+#[derive(Debug)]
 pub enum Rule {
     Binary(RustBinary),
     Library(RustLibrary),
@@ -306,17 +309,44 @@ impl PartialEq for Rule {
 
 impl PartialOrd for Rule {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.get_name().partial_cmp(other.get_name())
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for Rule {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.get_name().cmp(other.get_name())
+        self._migration_sort_name()
+            .cmp(other._migration_sort_name())
     }
 }
 
 impl Rule {
+    // DELETEME!
+    fn _migration_sort_name(&self) -> &str {
+        match self {
+            Rule::Binary(RustBinary {
+                common:
+                    RustCommon {
+                        _migration_sort_name,
+                        ..
+                    },
+                ..
+            })
+            | Rule::Library(RustLibrary {
+                common:
+                    RustCommon {
+                        _migration_sort_name,
+                        ..
+                    },
+                ..
+            }) => _migration_sort_name,
+            Rule::BuildscriptGenruleSrcs(_)
+            | Rule::BuildscriptGenruleFilter(_)
+            | Rule::CxxLibrary(_)
+            | Rule::PrebuiltCxxLibrary(_) => self.get_name(),
+        }
+    }
+
     pub fn get_name(&self) -> &str {
         match self {
             Rule::Binary(RustBinary {
