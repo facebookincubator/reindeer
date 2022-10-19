@@ -233,6 +233,8 @@ pub struct RustLibrary {
     pub dlopen_enable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub python_ext: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub linkable_alias: Option<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]

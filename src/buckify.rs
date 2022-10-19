@@ -454,6 +454,9 @@ fn generate_target_rules<'scope>(
         || (tgt.kind_proc_macro() && tgt.crate_proc_macro())
         || (tgt.kind_cdylib() && tgt.crate_cdylib())
     {
+        let alias = index
+            .is_public(pkg)
+            .then(|| index.public_rename(pkg).unwrap_or(&pkg.name));
         // Library or procmacro
         let mut rules = vec![Rule::Library(RustLibrary {
             common: RustCommon {
@@ -472,10 +475,15 @@ fn generate_target_rules<'scope>(
             proc_macro: tgt.crate_proc_macro(),
             dlopen_enable: tgt.kind_cdylib() && fixups.python_ext().is_none(),
             python_ext: fixups.python_ext().map(str::to_string),
+            linkable_alias: if tgt.kind_cdylib() || fixups.python_ext().is_some() {
+                alias.map(ToOwned::to_owned)
+            } else {
+                None
+            },
         })];
-        if index.is_public(pkg) {
+        if let Some(alias) = alias {
             rules.push(Rule::Alias(Alias {
-                name: index.public_rename(pkg).unwrap_or(&pkg.name).to_owned(),
+                name: alias.to_owned(),
                 actual: RuleRef::local(index.rule_name(pkg)),
                 public: true,
                 _dummy: Default::default(),
