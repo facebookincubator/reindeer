@@ -69,6 +69,13 @@ impl RuleRef {
         &self.target
     }
 
+    pub fn target_name(&self) -> &str {
+        match &self.target {
+            RuleTarget::Local(name) => name,
+            RuleTarget::Abs(name) => name,
+        }
+    }
+
     pub fn has_platform(&self) -> bool {
         self.platform.is_some()
     }
@@ -326,9 +333,24 @@ impl PartialOrd for Rule {
     }
 }
 
+fn rule_sort_key(rule: &Rule) -> (&str, usize) {
+    match rule {
+        Rule::Alias(Alias { actual, .. }) => {
+            // Make the alias rule come before the actual rule.
+            (actual.target_name(), 0)
+        }
+        Rule::Binary(_)
+        | Rule::Library(_)
+        | Rule::BuildscriptGenruleSrcs(_)
+        | Rule::BuildscriptGenruleFilter(_)
+        | Rule::CxxLibrary(_)
+        | Rule::PrebuiltCxxLibrary(_) => (rule.get_name(), 1),
+    }
+}
+
 impl Ord for Rule {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.get_name().cmp(other.get_name())
+        rule_sort_key(self).cmp(&rule_sort_key(other))
     }
 }
 
