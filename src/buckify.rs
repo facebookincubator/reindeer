@@ -446,7 +446,9 @@ fn generate_target_rules<'scope>(
     // Standalone binary - binary for a package always takes the package's library as a dependency
     // if there is one
     if let Some(true) = pkg.dependency_target().map(ManifestTarget::kind_lib) {
-        bin_base.deps.insert(RuleRef::local(index.rule_name(pkg)));
+        bin_base
+            .deps
+            .insert(RuleRef::local(index.private_rule_name(pkg)));
     }
 
     // Generate rules appropriate to each kind of crate we want to support
@@ -454,14 +456,23 @@ fn generate_target_rules<'scope>(
         || (tgt.kind_proc_macro() && tgt.crate_proc_macro())
         || (tgt.kind_cdylib() && tgt.crate_cdylib())
     {
-        let alias = index
-            .is_public(pkg)
-            .then(|| index.public_rename(pkg).unwrap_or(&pkg.name));
         // Library or procmacro
-        let mut rules = vec![Rule::Library(RustLibrary {
+        let mut rules = vec![];
+        let actual = index.private_rule_name(pkg);
+
+        if index.is_public(pkg) {
+            rules.push(Rule::Alias(Alias {
+                name: index.public_rule_name(pkg).to_owned(),
+                actual: RuleRef::local(actual.clone()),
+                public: true,
+                _dummy: Default::default(),
+            }));
+        }
+
+        rules.push(Rule::Library(RustLibrary {
             common: RustCommon {
                 common: Common {
-                    name: index.rule_name(pkg),
+                    name: actual,
                     public: false,
                     licenses,
                     compatible_with: vec![],
@@ -475,20 +486,15 @@ fn generate_target_rules<'scope>(
             proc_macro: tgt.crate_proc_macro(),
             dlopen_enable: tgt.kind_cdylib() && fixups.python_ext().is_none(),
             python_ext: fixups.python_ext().map(str::to_string),
-            linkable_alias: if tgt.kind_cdylib() || fixups.python_ext().is_some() {
-                alias.map(ToOwned::to_owned)
+            linkable_alias: if index.is_public(pkg)
+                && (tgt.kind_cdylib() || fixups.python_ext().is_some())
+            {
+                Some(index.public_rule_name(pkg).to_owned())
             } else {
                 None
             },
-        })];
-        if let Some(alias) = alias {
-            rules.push(Rule::Alias(Alias {
-                name: alias.to_owned(),
-                actual: RuleRef::local(index.rule_name(pkg)),
-                public: true,
-                _dummy: Default::default(),
-            }));
-        }
+        }));
+
         rules
     } else if tgt.crate_bin() && tgt.kind_custom_build() {
         // Build script
@@ -513,10 +519,22 @@ fn generate_target_rules<'scope>(
         };
         fixups.emit_buildscript_rules(buildscript, config)?
     } else if tgt.kind_bin() && tgt.crate_bin() && index.is_public(pkg) {
-        let mut rules = vec![Rule::Binary(RustBinary {
+        let mut rules = vec![];
+        let actual = format!("{}-{}", index.private_rule_name(pkg), tgt.name);
+
+        if index.is_public(pkg) {
+            rules.push(Rule::Alias(Alias {
+                name: format!("{}-{}", index.public_rule_name(pkg), tgt.name),
+                actual: RuleRef::local(actual.clone()),
+                public: true,
+                _dummy: Default::default(),
+            }));
+        }
+
+        rules.push(Rule::Binary(RustBinary {
             common: RustCommon {
                 common: Common {
-                    name: format!("{}-{}", index.rule_name(pkg), tgt.name),
+                    name: actual,
                     public: false,
                     licenses,
                     compatible_with: vec![],
@@ -527,19 +545,8 @@ fn generate_target_rules<'scope>(
                 base: bin_base,
                 platform: bin_perplat,
             },
-        })];
-        if index.is_public(pkg) {
-            rules.push(Rule::Alias(Alias {
-                name: format!(
-                    "{}-{}",
-                    index.public_rename(pkg).unwrap_or(&pkg.name),
-                    tgt.name,
-                ),
-                actual: RuleRef::local(format!("{}-{}", index.rule_name(pkg), tgt.name)),
-                public: true,
-                _dummy: Default::default(),
-            }));
-        }
+        }));
+
         rules
     } else {
         // Ignore everything else for now.

@@ -167,11 +167,6 @@ impl<'meta> Index<'meta> {
         self.public_set.contains_key(&pkg.id)
     }
 
-    /// Return a package's local name (the renamed name), if it has one.
-    pub fn public_rename(&self, pkg: &Manifest) -> Option<&str> {
-        self.public_set.get(&pkg.id).and_then(|x| *x)
-    }
-
     /// Return all public packages
     pub fn public_packages(&self) -> impl Iterator<Item = &'meta Manifest> + '_ {
         self.public_set
@@ -184,11 +179,19 @@ impl<'meta> Index<'meta> {
         self.pkgid_to_pkg.values().copied()
     }
 
-    /// Return the package rule name.
-    pub fn rule_name(&self, pkg: &Manifest) -> String {
+    /// Return the private package rule name.
+    pub fn private_rule_name(&self, pkg: &Manifest) -> String {
         match self.public_set.get(&pkg.id) {
             Some(None) | None => pkg.to_string(), // Full version info
-            Some(Some(rename)) => format!("{}-{}", pkg, rename), //  Rename
+            Some(Some(rename)) => format!("{}-{}", pkg, rename), // Rename
+        }
+    }
+
+    /// Return the package public rule name.
+    pub fn public_rule_name(&self, pkg: &'meta Manifest) -> &str {
+        match self.public_set.get(&pkg.id) {
+            Some(None) | None => &pkg.name, // Package name
+            Some(Some(rename)) => rename,   // Rename
         }
     }
 

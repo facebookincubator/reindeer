@@ -26,6 +26,7 @@ use globset::GlobSetBuilder;
 use walkdir::WalkDir;
 
 use crate::buck;
+use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::BuildscriptGenrule;
 use crate::buck::BuildscriptGenruleFilter;
@@ -337,20 +338,22 @@ impl<'meta> Fixups<'meta> {
                     compatible_with,
                     ..
                 }) => {
+                    let actual = format!("{}-{}", self.index.private_rule_name(self.package), name);
+
+                    if *public {
+                        let rule = Rule::Alias(Alias {
+                            name: format!("{}-{}", self.index.public_rule_name(self.package), name),
+                            actual: RuleRef::local(actual.clone()),
+                            public: true,
+                            _dummy: Default::default(),
+                        });
+                        res.push(rule);
+                    }
+
                     let rule = buck::CxxLibrary {
                         common: Common {
-                            name: if *public {
-                                format!(
-                                    "{}-{}",
-                                    self.index
-                                        .public_rename(self.package)
-                                        .unwrap_or(self.package.name.as_str()),
-                                    name
-                                )
-                            } else {
-                                format!("{}-{}", self.package, name)
-                            },
-                            public: *public,
+                            name: actual,
+                            public: false,
                             licenses: Default::default(),
                             compatible_with: compatible_with
                                 .iter()
@@ -444,26 +447,32 @@ impl<'meta> Fixups<'meta> {
                         .manifestwalk(static_libs, Vec::<String>::new(), self.config.strict_globs)
                         .context("Static libraries")?;
                     for static_lib in libs {
+                        let actual = format!(
+                            "{}-{}-{}",
+                            self.index.private_rule_name(self.package),
+                            name,
+                            static_lib.file_name().unwrap().to_string_lossy(),
+                        );
+
+                        if *public {
+                            let rule = Rule::Alias(Alias {
+                                name: format!(
+                                    "{}-{}-{}",
+                                    self.index.public_rule_name(self.package),
+                                    name,
+                                    static_lib.file_name().unwrap().to_string_lossy(),
+                                ),
+                                actual: RuleRef::local(actual.clone()),
+                                public: true,
+                                _dummy: Default::default(),
+                            });
+                            res.push(rule);
+                        }
+
                         let rule = buck::PrebuiltCxxLibrary {
                             common: Common {
-                                name: if *public {
-                                    format!(
-                                        "{}-{}-{}",
-                                        self.index
-                                            .public_rename(self.package)
-                                            .unwrap_or(self.package.name.as_str()),
-                                        name,
-                                        static_lib.file_name().unwrap().to_string_lossy()
-                                    )
-                                } else {
-                                    format!(
-                                        "{}-{}-{}",
-                                        self.package,
-                                        name,
-                                        static_lib.file_name().unwrap().to_string_lossy()
-                                    )
-                                },
-                                public: *public,
+                                name: actual,
+                                public: false,
                                 licenses: Default::default(),
                                 compatible_with: compatible_with
                                     .iter()
@@ -668,7 +677,7 @@ impl<'meta> Fixups<'meta> {
                     let platform_expr: PlatformExpr = format!("cfg({})", platform_pred).into();
                     ret.push((
                         Some(package),
-                        RuleRef::local(self.index.rule_name(package))
+                        RuleRef::local(self.index.private_rule_name(package))
                             .with_platform(Some(&platform_expr)),
                         rename.clone(),
                     ));
@@ -682,7 +691,8 @@ impl<'meta> Fixups<'meta> {
             // No filtering involved? Just insert it like normal.
             ret.push((
                 Some(package),
-                RuleRef::local(self.index.rule_name(package)).with_platform(platform.as_ref()),
+                RuleRef::local(self.index.private_rule_name(package))
+                    .with_platform(platform.as_ref()),
                 rename,
             ))
         }
@@ -702,28 +712,24 @@ impl<'meta> Fixups<'meta> {
                 if let BuildscriptFixup::CxxLibrary(CxxLibraryFixup {
                     add_dep: true,
                     name,
-                    public,
                     ..
                 }) = buildscript
                 {
-                    let dep_name = if *public {
-                        format!(
+                    ret.push((
+                        None,
+                        RuleRef::local(format!(
                             "{}-{}",
-                            self.index
-                                .public_rename(self.package)
-                                .unwrap_or(self.package.name.as_str()),
-                            name,
-                        )
-                    } else {
-                        format!("{}-{}", self.package, name)
-                    };
-                    ret.push((None, RuleRef::local(dep_name).with_platform(platform), None))
+                            self.index.private_rule_name(self.package),
+                            name
+                        ))
+                        .with_platform(platform),
+                        None,
+                    ));
                 }
                 if let BuildscriptFixup::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup {
                     add_dep: true,
                     name,
                     static_libs,
-                    public,
                     ..
                 }) = buildscript
                 {
@@ -731,24 +737,17 @@ impl<'meta> Fixups<'meta> {
                         .manifestwalk(static_libs, Vec::<String>::new(), self.config.strict_globs)
                         .context("Prebuilt C++ libraries")?;
                     for static_lib in libs {
-                        let dep_name = if *public {
-                            format!(
+                        ret.push((
+                            None,
+                            RuleRef::local(format!(
                                 "{}-{}-{}",
-                                self.index
-                                    .public_rename(self.package)
-                                    .unwrap_or(self.package.name.as_str()),
+                                self.index.private_rule_name(self.package),
                                 name,
-                                static_lib.file_name().unwrap().to_string_lossy()
-                            )
-                        } else {
-                            format!(
-                                "{}-{}-{}",
-                                self.package,
-                                name,
-                                static_lib.file_name().unwrap().to_string_lossy()
-                            )
-                        };
-                        ret.push((None, RuleRef::local(dep_name).with_platform(platform), None))
+                                static_lib.file_name().unwrap().to_string_lossy(),
+                            ))
+                            .with_platform(platform),
+                            None,
+                        ))
                     }
                 }
             }
