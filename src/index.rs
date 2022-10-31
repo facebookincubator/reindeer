@@ -162,6 +162,11 @@ impl<'meta> Index<'meta> {
         Index { public_set, ..tmp }
     }
 
+    /// Test if a package is the root package
+    pub fn is_root_package(&self, pkg: &Manifest) -> bool {
+        self.root_pkg.id == pkg.id
+    }
+
     /// Test if a package is public
     pub fn is_public(&self, pkg: &Manifest) -> bool {
         self.public_set.contains_key(&pkg.id)

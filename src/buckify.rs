@@ -458,12 +458,13 @@ fn generate_target_rules<'scope>(
     {
         // Library or procmacro
         let mut rules = vec![];
-        let actual = index.private_rule_name(pkg);
 
-        if index.is_public(pkg) {
+        // The root package is public but we don't expose it via
+        // an alias. The root package library is exposed directly.
+        if index.is_public(pkg) && !index.is_root_package(pkg) {
             rules.push(Rule::Alias(Alias {
                 name: index.public_rule_name(pkg).to_owned(),
-                actual: RuleRef::local(actual.clone()),
+                actual: RuleRef::local(index.private_rule_name(pkg)),
                 public: true,
                 _dummy: Default::default(),
             }));
@@ -472,8 +473,12 @@ fn generate_target_rules<'scope>(
         rules.push(Rule::Library(RustLibrary {
             common: RustCommon {
                 common: Common {
-                    name: actual,
-                    public: false,
+                    name: if index.is_root_package(pkg) {
+                        index.public_rule_name(pkg).to_owned()
+                    } else {
+                        index.private_rule_name(pkg)
+                    },
+                    public: index.is_root_package(pkg),
                     licenses,
                     compatible_with: vec![],
                 },
