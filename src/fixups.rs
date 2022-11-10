@@ -116,7 +116,7 @@ impl<'meta> Fixups<'meta> {
                 );
 
                 let file = toml::ser::to_string_pretty(&fixup)?;
-                fs::create_dir_all(&fixup_path.parent().unwrap())?;
+                fs::create_dir_all(fixup_path.parent().unwrap())?;
                 fs::write(&fixup_path, file)?;
             }
             fixup
@@ -852,7 +852,7 @@ impl<'meta> Fixups<'meta> {
             common_src_dirs.extend(
                 base.src_referenced_dirs
                     .iter()
-                    .map(|path| self.manifest_dir.join(&path))
+                    .map(|path| self.manifest_dir.join(path))
                     .map(|path| normalize_dotdot(&path)),
             );
         }
