@@ -183,7 +183,7 @@ impl<'meta> Fixups<'meta> {
     fn buildscript_gen_srcs_rulename(&self, file: Option<&str>) -> String {
         if let Some(file) = file {
             format!(
-                "{}-srcs={}",
+                "{}-srcs[{}]",
                 self.buildscript_rule_name().expect("no buildscript"),
                 file
             )

@@ -85,21 +85,11 @@ def rust_buildscript_genrule_srcs(name, buildscript_rule, files, package_name, v
     cxx_genrule(
         name = name,
         srcs = srcs,
-        out = name + "-outputs",
         cmd = pre + "$(exe {buildscript})".format(
             buildscript = buildscript_rule,
         ),
+        outs = {file: [file] for file in files},
     )
-    mainrule = ":" + name
-    for file in files:
-        cxx_genrule(
-            name = "{}={}".format(name, file),
-            out = file,
-            cmd = "mkdir -p \\$(dirname $OUT) && cp $(location {main})/{file} $OUT".format(
-                main = mainrule,
-                file = file,
-            ),
-        )
 
 # Add platform-specific args to args for a given platform. This assumes there's some static configuration
 # for target platform (_get_plat) which isn't very flexible. A better approach would be to construct
