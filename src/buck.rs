@@ -222,8 +222,50 @@ pub struct RustCommon {
     pub base: PlatformRustCommon,
 
     // Platform-specific
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        skip_serializing_if = "BTreeMap::is_empty",
+        serialize_with = "serialize_platforms_dict"
+    )]
     pub platform: BTreeMap<PlatformName, PlatformRustCommon>,
+}
+
+/// Serialize as:
+///
+/// ```bzl
+/// platforms = {
+///     "linux-x86_64": dict(
+///         srcs = [...],
+///         preferred_linkage = "...",
+///         deps = [...],
+///     ),
+/// }
+/// ```
+///
+/// If we didn't do this, it would come out as follows instead, and `buildifier`
+/// would refuse to sort the keys, or sort/normalize the contents of the srcs
+/// and deps attributes.
+///
+/// ```bzl
+/// platforms = {
+///     "linux-x86_64": {
+///         "srcs": [...],
+///         "preferred_linkage": [...],
+///         "deps": [...],
+///     },
+/// }
+/// ```
+fn serialize_platforms_dict<S>(
+    platforms: &BTreeMap<PlatformName, PlatformRustCommon>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    #[derive(Serialize)]
+    #[serde(rename = "call:dict")]
+    struct Dict<T>(T);
+
+    serializer.collect_map(platforms.iter().map(|(name, value)| (name, Dict(value))))
 }
 
 fn is_false(v: &bool) -> bool {
