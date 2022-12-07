@@ -677,6 +677,7 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
 
 fn buildify(buildifier: &Path, content: &[u8]) -> Result<Vec<u8>> {
     let mut child = Command::new(buildifier)
+        .arg("-type=build")
         .arg("-buildifier_disable=label")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
