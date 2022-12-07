@@ -573,10 +573,14 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
         log::trace!("Metadata {:#?}", metadata);
     }
 
-    let buildifier = config
-        .buildifier_path
-        .as_ref()
-        .map(|x| paths.third_party_dir.join(x));
+    let buildifier = config.buildifier.as_ref().map(|buildifier| {
+        let buildifier = Path::new(buildifier);
+        if buildifier.iter().nth(1).is_some() {
+            paths.third_party_dir.join(buildifier)
+        } else {
+            buildifier.to_owned()
+        }
+    });
 
     let index = index::Index::new(config.include_top_level, config.extra_top_levels, &metadata);
 
@@ -683,7 +687,7 @@ fn buildify(buildifier: &Path, content: &[u8]) -> Result<Vec<u8>> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .with_context(|| format!("executing buildifier {}", buildifier.display()))?;
+        .with_context(|| format!("executing buildifier `{}`", buildifier.display()))?;
 
     let mut stdin = child.stdin.take().unwrap();
     let _ = stdin.write_all(content);
