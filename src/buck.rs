@@ -394,37 +394,6 @@ impl Rule {
         .as_str()
     }
 
-    pub fn is_public(&self) -> bool {
-        match self {
-            Rule::Alias(Alias { public, .. }) => *public,
-            Rule::Binary(RustBinary {
-                common:
-                    RustCommon {
-                        common: Common { public, .. },
-                        ..
-                    },
-                ..
-            }) => *public,
-            Rule::Library(RustLibrary {
-                common:
-                    RustCommon {
-                        common: Common { public, .. },
-                        ..
-                    },
-                ..
-            }) => *public,
-            Rule::BuildscriptGenruleSrcs(_) | Rule::BuildscriptGenruleFilter(_) => false,
-            Rule::CxxLibrary(CxxLibrary {
-                common: Common { public, .. },
-                ..
-            }) => *public,
-            Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
-                common: Common { public, .. },
-                ..
-            }) => *public,
-        }
-    }
-
     pub fn render(&self, config: &BuckConfig, out: &mut impl Write) -> Result<(), Error> {
         match self {
             Rule::Alias(alias) => {

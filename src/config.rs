@@ -121,9 +121,6 @@ pub struct BuckConfig {
     /// Name of BUCK file
     #[serde(default = "default_buck_file_name")]
     pub file_name: String,
-    /// Rust targets filename (.bzl with set of all target names - not generated if omitted)
-    #[serde(default)]
-    pub targets_name: Option<String>,
     /// Banner for the top of all generated bzl files, namely BUCK and METADATA.bzl
     #[serde(default)]
     pub generated_file_header: String,
@@ -210,7 +207,6 @@ impl Default for BuckConfig {
     fn default() -> Self {
         BuckConfig {
             file_name: "BUCK".to_string(),
-            targets_name: None,
             generated_file_header: String::new(),
             buckfile_imports: String::new(),
 
