@@ -32,6 +32,7 @@ use crate::buck::BuildscriptGenrule;
 use crate::buck::BuildscriptGenruleFilter;
 use crate::buck::BuildscriptGenruleSrcs;
 use crate::buck::Common;
+use crate::buck::Name;
 use crate::buck::Rule;
 use crate::buck::RuleRef;
 use crate::buck::RustBinary;
@@ -262,7 +263,7 @@ impl<'meta> Fixups<'meta> {
                     // Emit rule to get its stdout and filter it into args
                     res.push(Rule::BuildscriptGenruleFilter(BuildscriptGenruleFilter {
                         base: BuildscriptGenrule {
-                            name: self.buildscript_rustc_flags_rulename(),
+                            name: Name(self.buildscript_rustc_flags_rulename()),
 
                             buildscript_rule: RuleRef::new(format!(":{buildscript_rule_name}")),
                             package_name: self.package.name.clone(),
@@ -302,7 +303,7 @@ impl<'meta> Fixups<'meta> {
                     // Emit rules to extract generated sources
                     res.push(Rule::BuildscriptGenruleSrcs(BuildscriptGenruleSrcs {
                         base: BuildscriptGenrule {
-                            name: self.buildscript_gen_srcs_rulename(None),
+                            name: Name(self.buildscript_gen_srcs_rulename(None)),
 
                             buildscript_rule: RuleRef::new(format!(":{buildscript_rule_name}")),
                             package_name: self.package.name.clone(),
@@ -342,7 +343,11 @@ impl<'meta> Fixups<'meta> {
 
                     if *public {
                         let rule = Rule::Alias(Alias {
-                            name: format!("{}-{}", self.index.public_rule_name(self.package), name),
+                            name: Name(format!(
+                                "{}-{}",
+                                self.index.public_rule_name(self.package),
+                                name,
+                            )),
                             actual: RuleRef::new(format!(":{actual}")),
                             public: true,
                             _dummy: Default::default(),
@@ -352,7 +357,7 @@ impl<'meta> Fixups<'meta> {
 
                     let rule = buck::CxxLibrary {
                         common: Common {
-                            name: actual,
+                            name: Name(actual),
                             public: false,
                             licenses: Default::default(),
                             compatible_with: compatible_with
@@ -456,12 +461,12 @@ impl<'meta> Fixups<'meta> {
 
                         if *public {
                             let rule = Rule::Alias(Alias {
-                                name: format!(
+                                name: Name(format!(
                                     "{}-{}-{}",
                                     self.index.public_rule_name(self.package),
                                     name,
                                     static_lib.file_name().unwrap().to_string_lossy(),
-                                ),
+                                )),
                                 actual: RuleRef::new(format!(":{actual}")),
                                 public: true,
                                 _dummy: Default::default(),
@@ -471,7 +476,7 @@ impl<'meta> Fixups<'meta> {
 
                         let rule = buck::PrebuiltCxxLibrary {
                             common: Common {
-                                name: actual,
+                                name: Name(actual),
                                 public: false,
                                 licenses: Default::default(),
                                 compatible_with: compatible_with

@@ -31,6 +31,7 @@ use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::Common;
+use crate::buck::Name;
 use crate::buck::PlatformRustCommon;
 use crate::buck::Rule;
 use crate::buck::RuleRef;
@@ -463,7 +464,7 @@ fn generate_target_rules<'scope>(
         // an alias. The root package library is exposed directly.
         if index.is_public(pkg) && !index.is_root_package(pkg) {
             rules.push(Rule::Alias(Alias {
-                name: index.public_rule_name(pkg).to_owned(),
+                name: Name(index.public_rule_name(pkg).to_owned()),
                 actual: RuleRef::new(format!(":{}", index.private_rule_name(pkg))),
                 public: true,
                 _dummy: Default::default(),
@@ -474,9 +475,9 @@ fn generate_target_rules<'scope>(
             common: RustCommon {
                 common: Common {
                     name: if index.is_root_package(pkg) {
-                        index.public_rule_name(pkg).to_owned()
+                        Name(index.public_rule_name(pkg).to_owned())
                     } else {
-                        index.private_rule_name(pkg)
+                        Name(index.private_rule_name(pkg))
                     },
                     public: index.is_root_package(pkg),
                     licenses,
@@ -506,7 +507,7 @@ fn generate_target_rules<'scope>(
         let buildscript = RustBinary {
             common: RustCommon {
                 common: Common {
-                    name: format!("{}-{}", pkg, tgt.name),
+                    name: Name(format!("{}-{}", pkg, tgt.name)),
                     public: false,
                     licenses: Default::default(),
                     compatible_with: vec![],
@@ -529,7 +530,7 @@ fn generate_target_rules<'scope>(
 
         if index.is_public(pkg) {
             rules.push(Rule::Alias(Alias {
-                name: format!("{}-{}", index.public_rule_name(pkg), tgt.name),
+                name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
                 actual: RuleRef::new(format!(":{actual}")),
                 public: true,
                 _dummy: Default::default(),
@@ -539,7 +540,7 @@ fn generate_target_rules<'scope>(
         rules.push(Rule::Binary(RustBinary {
             common: RustCommon {
                 common: Common {
-                    name: actual,
+                    name: Name(actual),
                     public: false,
                     licenses,
                     compatible_with: vec![],

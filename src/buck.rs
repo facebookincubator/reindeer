@@ -27,6 +27,10 @@ use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
 use crate::platform::PredicateParseError;
 
+/// Only the name of a target. Does not include package path, nor leading colon.
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
+pub struct Name(pub String);
+
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RuleRef {
     pub target: String,
@@ -90,7 +94,7 @@ impl Serialize for BuckPath {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct Alias {
-    pub name: String,
+    pub name: Name,
     pub actual: RuleRef,
     #[serde(rename = "visibility", serialize_with = "visibility")]
     pub public: bool,
@@ -106,7 +110,7 @@ fn visibility<S: Serializer>(vis: &bool, ser: S) -> Result<S::Ok, S::Error> {
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 pub struct Common {
-    pub name: String,
+    pub name: Name,
     #[serde(rename = "visibility", serialize_with = "visibility")]
     pub public: bool,
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
@@ -235,7 +239,7 @@ pub struct RustBinary {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct BuildscriptGenrule {
-    pub name: String,
+    pub name: Name,
     pub buildscript_rule: RuleRef,
     pub package_name: String,
     pub version: Version,
@@ -374,7 +378,7 @@ impl Rule {
             | Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
                 common: Common { name, .. },
                 ..
-            }) => name,
+            }) => &name.0,
         }
     }
 
