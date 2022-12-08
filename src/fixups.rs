@@ -264,7 +264,7 @@ impl<'meta> Fixups<'meta> {
                         base: BuildscriptGenrule {
                             name: self.buildscript_rustc_flags_rulename(),
 
-                            buildscript_rule: RuleRef::local(buildscript_rule_name.clone()),
+                            buildscript_rule: RuleRef::new(format!(":{buildscript_rule_name}")),
                             package_name: self.package.name.clone(),
                             version: self.package.version.clone(),
                             features: features.clone(),
@@ -304,7 +304,7 @@ impl<'meta> Fixups<'meta> {
                         base: BuildscriptGenrule {
                             name: self.buildscript_gen_srcs_rulename(None),
 
-                            buildscript_rule: RuleRef::local(buildscript_rule_name.clone()),
+                            buildscript_rule: RuleRef::new(format!(":{buildscript_rule_name}")),
                             package_name: self.package.name.clone(),
                             version: self.package.version.clone(),
                             features: features.clone(),
@@ -343,7 +343,7 @@ impl<'meta> Fixups<'meta> {
                     if *public {
                         let rule = Rule::Alias(Alias {
                             name: format!("{}-{}", self.index.public_rule_name(self.package), name),
-                            actual: RuleRef::local(actual.clone()),
+                            actual: RuleRef::new(format!(":{actual}")),
                             public: true,
                             _dummy: Default::default(),
                         });
@@ -358,7 +358,7 @@ impl<'meta> Fixups<'meta> {
                             compatible_with: compatible_with
                                 .iter()
                                 .cloned()
-                                .map(RuleRef::abs)
+                                .map(RuleRef::new)
                                 .collect(),
                         },
                         // Just collect the sources, excluding things in the exclude list
@@ -428,7 +428,7 @@ impl<'meta> Fixups<'meta> {
                         compiler_flags: compiler_flags.clone(),
                         preprocessor_flags: preprocessor_flags.clone(),
                         header_namespace: header_namespace.clone(),
-                        deps: deps.iter().cloned().map(RuleRef::abs).collect(),
+                        deps: deps.iter().cloned().map(RuleRef::new).collect(),
                         preferred_linkage: Some("static".to_string()),
                     };
 
@@ -462,7 +462,7 @@ impl<'meta> Fixups<'meta> {
                                     name,
                                     static_lib.file_name().unwrap().to_string_lossy(),
                                 ),
-                                actual: RuleRef::local(actual.clone()),
+                                actual: RuleRef::new(format!(":{actual}")),
                                 public: true,
                                 _dummy: Default::default(),
                             });
@@ -477,7 +477,7 @@ impl<'meta> Fixups<'meta> {
                                 compatible_with: compatible_with
                                     .iter()
                                     .cloned()
-                                    .map(RuleRef::abs)
+                                    .map(RuleRef::new)
                                     .collect(),
                             },
                             static_lib: BuckPath(static_lib.clone()),
@@ -677,7 +677,7 @@ impl<'meta> Fixups<'meta> {
                     let platform_expr: PlatformExpr = format!("cfg({})", platform_pred).into();
                     ret.push((
                         Some(package),
-                        RuleRef::local(self.index.private_rule_name(package))
+                        RuleRef::new(format!(":{}", self.index.private_rule_name(package)))
                             .with_platform(Some(&platform_expr)),
                         rename.clone(),
                     ));
@@ -691,7 +691,7 @@ impl<'meta> Fixups<'meta> {
             // No filtering involved? Just insert it like normal.
             ret.push((
                 Some(package),
-                RuleRef::local(self.index.private_rule_name(package))
+                RuleRef::new(format!(":{}", self.index.private_rule_name(package)))
                     .with_platform(platform.as_ref()),
                 rename,
             ))
@@ -701,7 +701,7 @@ impl<'meta> Fixups<'meta> {
             ret.extend(config.extra_deps.iter().map(|dep| {
                 (
                     None,
-                    RuleRef::abs(dep.to_string()).with_platform(platform),
+                    RuleRef::new(dep.to_string()).with_platform(platform),
                     None,
                 )
             }));
@@ -717,8 +717,8 @@ impl<'meta> Fixups<'meta> {
                 {
                     ret.push((
                         None,
-                        RuleRef::local(format!(
-                            "{}-{}",
+                        RuleRef::new(format!(
+                            ":{}-{}",
                             self.index.private_rule_name(self.package),
                             name
                         ))
@@ -739,8 +739,8 @@ impl<'meta> Fixups<'meta> {
                     for static_lib in libs {
                         ret.push((
                             None,
-                            RuleRef::local(format!(
-                                "{}-{}-{}",
+                            RuleRef::new(format!(
+                                ":{}-{}-{}",
                                 self.index.private_rule_name(self.package),
                                 name,
                                 static_lib.file_name().unwrap().to_string_lossy(),
@@ -1019,13 +1019,19 @@ impl<'meta> Fixups<'meta> {
                 if let BuildscriptFixup::GenSrcs(GenSrcs { files, mapped, .. }) = fix {
                     for file in files {
                         map.insert(
-                            RuleRef::local(self.buildscript_gen_srcs_rulename(Some(file))),
+                            RuleRef::new(format!(
+                                ":{}",
+                                self.buildscript_gen_srcs_rulename(Some(file)),
+                            )),
                             srcdir.join(file),
                         );
                     }
                     for (file, path) in mapped {
                         map.insert(
-                            RuleRef::local(self.buildscript_gen_srcs_rulename(Some(file))),
+                            RuleRef::new(format!(
+                                ":{}",
+                                self.buildscript_gen_srcs_rulename(Some(file)),
+                            )),
                             srcdir.join(path),
                         );
                     }

@@ -11,16 +11,12 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::fmt;
-use std::fmt::Display;
 use std::io::Error;
 use std::io::Write;
 use std::path::PathBuf;
 
 use semver::Version;
-use serde::de::Deserializer;
 use serde::ser::Serializer;
-use serde::Deserialize;
 use serde::Serialize;
 
 use crate::collection::SetOrMap;
@@ -33,27 +29,14 @@ use crate::platform::PredicateParseError;
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RuleRef {
-    target: RuleTarget,
+    pub target: String,
     platform: Option<PlatformExpr>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum RuleTarget {
-    Local(String),
-    Abs(String),
-}
-
 impl RuleRef {
-    pub fn local(target: String) -> Self {
+    pub fn new(target: String) -> Self {
         RuleRef {
-            target: RuleTarget::Local(target),
-            platform: None,
-        }
-    }
-
-    pub fn abs(target: String) -> Self {
-        RuleRef {
-            target: RuleTarget::Abs(target),
+            target,
             platform: None,
         }
     }
@@ -62,17 +45,6 @@ impl RuleRef {
         RuleRef {
             target: self.target,
             platform: platform.cloned(),
-        }
-    }
-
-    pub fn target(&self) -> &RuleTarget {
-        &self.target
-    }
-
-    pub fn target_name(&self) -> &str {
-        match &self.target {
-            RuleTarget::Local(name) => name,
-            RuleTarget::Abs(name) => name,
         }
     }
 
@@ -98,37 +70,6 @@ impl RuleRef {
 impl Serialize for RuleRef {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         self.target.serialize(ser)
-    }
-}
-
-impl Display for RuleTarget {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            RuleTarget::Local(name) => write!(fmt, ":{}", name),
-            RuleTarget::Abs(name) => write!(fmt, "{}", name),
-        }
-    }
-}
-
-impl Serialize for RuleTarget {
-    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        ser.serialize_str(&self.to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for RuleTarget {
-    fn deserialize<D>(deser: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deser)?;
-        let res = if s.starts_with(':') {
-            RuleTarget::Local(s)
-        } else {
-            // Should really check it contains "//"
-            RuleTarget::Abs(s)
-        };
-        Ok(res)
     }
 }
 
@@ -378,8 +319,10 @@ impl PartialOrd for Rule {
 fn rule_sort_key(rule: &Rule) -> (&str, usize) {
     match rule {
         Rule::Alias(Alias { actual, .. }) => {
-            // Make the alias rule come before the actual rule.
-            (actual.target_name(), 0)
+            // Make the alias rule come before the actual rule. Note that
+            // aliases emitted by reindeer are always to a target within the
+            // same package.
+            (actual.target.strip_prefix(':').unwrap(), 0)
         }
         Rule::Binary(_)
         | Rule::Library(_)

@@ -289,7 +289,7 @@ fn generate_target_rules<'scope>(
             );
             let targets = map
                 .into_iter()
-                .map(|(rule, path)| (rule.target().to_string(), BuckPath(path)));
+                .map(|(rule, path)| (rule.target, BuckPath(path)));
             rule.mapped_srcs.extend(targets);
         },
         fixups.compute_gen_srcs(&srcdir),
@@ -448,7 +448,7 @@ fn generate_target_rules<'scope>(
     if let Some(true) = pkg.dependency_target().map(ManifestTarget::kind_lib) {
         bin_base
             .deps
-            .insert(RuleRef::local(index.private_rule_name(pkg)));
+            .insert(RuleRef::new(format!(":{}", index.private_rule_name(pkg))));
     }
 
     // Generate rules appropriate to each kind of crate we want to support
@@ -464,7 +464,7 @@ fn generate_target_rules<'scope>(
         if index.is_public(pkg) && !index.is_root_package(pkg) {
             rules.push(Rule::Alias(Alias {
                 name: index.public_rule_name(pkg).to_owned(),
-                actual: RuleRef::local(index.private_rule_name(pkg)),
+                actual: RuleRef::new(format!(":{}", index.private_rule_name(pkg))),
                 public: true,
                 _dummy: Default::default(),
             }));
@@ -530,7 +530,7 @@ fn generate_target_rules<'scope>(
         if index.is_public(pkg) {
             rules.push(Rule::Alias(Alias {
                 name: format!("{}-{}", index.public_rule_name(pkg), tgt.name),
-                actual: RuleRef::local(actual.clone()),
+                actual: RuleRef::new(format!(":{actual}")),
                 public: true,
                 _dummy: Default::default(),
             }));
