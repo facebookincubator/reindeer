@@ -40,7 +40,7 @@ impl Display for Name {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct RuleRef {
     pub target: String,
     platform: Option<PlatformExpr>,
@@ -49,6 +49,18 @@ pub struct RuleRef {
 impl From<Name> for RuleRef {
     fn from(name: Name) -> Self {
         RuleRef::new(format!(":{}", name))
+    }
+}
+
+impl Ord for RuleRef {
+    fn cmp(&self, other: &Self) -> Ordering {
+        buildifier_cmp(&self.target, &other.target).then_with(|| self.platform.cmp(&other.platform))
+    }
+}
+
+impl PartialOrd for RuleRef {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -92,7 +104,7 @@ impl Serialize for RuleRef {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct BuckPath(pub PathBuf);
 
 impl Serialize for BuckPath {
@@ -104,6 +116,20 @@ impl Serialize for BuckPath {
                 "path contains invalid UTF-8 characters",
             )),
         }
+    }
+}
+
+impl Ord for BuckPath {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let this = self.0.to_string_lossy();
+        let other = other.0.to_string_lossy();
+        buildifier_cmp(&this, &other)
+    }
+}
+
+impl PartialOrd for BuckPath {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -786,6 +812,27 @@ impl Rule {
         };
         out.write_all(b"\n")
     }
+}
+
+/// Buildifier's preferred sort order for sortable string arrays, regardless of
+/// whether they are arrays of filepaths or labels.
+///
+/// See similar logic in <https://github.com/bazelbuild/buildtools/blob/5.1.0/build/rewrite.go#L590-L622>
+fn buildifier_cmp(a: &str, b: &str) -> Ordering {
+    let phase = |s: &str| {
+        if s.starts_with(':') {
+            1
+        } else if s.starts_with("//") {
+            2
+        } else {
+            0
+        }
+    };
+
+    phase(a).cmp(&phase(b)).then_with(|| {
+        let separators = [':', '.'];
+        a.split(separators).cmp(b.split(separators))
+    })
 }
 
 pub fn write_buckfile<'a>(
