@@ -95,13 +95,19 @@ impl Serialize for BuckPath {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct Alias {
     pub name: Name,
-    pub actual: RuleRef,
+    /// Local target that the alias refers to -- always in the same package.
+    #[serde(serialize_with = "serialize_name_as_label")]
+    pub actual: Name,
     #[serde(rename = "visibility", serialize_with = "visibility")]
     pub public: bool,
 
     // Dummy map to make serde treat this struct as a map
     #[serde(skip_serializing, flatten)]
     pub _dummy: BTreeMap<(), ()>,
+}
+
+fn serialize_name_as_label<S: Serializer>(name: &Name, ser: S) -> Result<S::Ok, S::Error> {
+    ser.collect_str(&format_args!(":{}", name.0))
 }
 
 fn visibility<S: Serializer>(vis: &bool, ser: S) -> Result<S::Ok, S::Error> {
@@ -320,14 +326,11 @@ impl PartialOrd for Rule {
     }
 }
 
-fn rule_sort_key(rule: &Rule) -> (&str, usize) {
+fn rule_sort_key(rule: &Rule) -> (&Name, usize) {
     match rule {
-        Rule::Alias(Alias { actual, .. }) => {
-            // Make the alias rule come before the actual rule. Note that
-            // aliases emitted by reindeer are always to a target within the
-            // same package.
-            (actual.target.strip_prefix(':').unwrap(), 0)
-        }
+        // Make the alias rule come before the actual rule. Note that aliases
+        // emitted by reindeer are always to a target within the same package.
+        Rule::Alias(Alias { actual, .. }) => (actual, 0),
         Rule::Binary(_)
         | Rule::Library(_)
         | Rule::BuildscriptGenruleSrcs(_)
@@ -344,7 +347,7 @@ impl Ord for Rule {
 }
 
 impl Rule {
-    pub fn get_name(&self) -> &str {
+    pub fn get_name(&self) -> &Name {
         match self {
             Rule::Alias(Alias { name, .. })
             | Rule::Binary(RustBinary {
@@ -378,7 +381,7 @@ impl Rule {
             | Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
                 common: Common { name, .. },
                 ..
-            }) => &name.0,
+            }) => name,
         }
     }
 

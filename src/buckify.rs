@@ -465,7 +465,7 @@ fn generate_target_rules<'scope>(
         if index.is_public(pkg) && !index.is_root_package(pkg) {
             rules.push(Rule::Alias(Alias {
                 name: Name(index.public_rule_name(pkg).to_owned()),
-                actual: RuleRef::new(format!(":{}", index.private_rule_name(pkg))),
+                actual: Name(index.private_rule_name(pkg)),
                 public: true,
                 _dummy: Default::default(),
             }));
@@ -526,12 +526,12 @@ fn generate_target_rules<'scope>(
         fixups.emit_buildscript_rules(buildscript, config)?
     } else if tgt.kind_bin() && tgt.crate_bin() && index.is_public(pkg) {
         let mut rules = vec![];
-        let actual = format!("{}-{}", index.private_rule_name(pkg), tgt.name);
+        let actual = Name(format!("{}-{}", index.private_rule_name(pkg), tgt.name));
 
         if index.is_public(pkg) {
             rules.push(Rule::Alias(Alias {
                 name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
-                actual: RuleRef::new(format!(":{actual}")),
+                actual: actual.clone(),
                 public: true,
                 _dummy: Default::default(),
             }));
@@ -540,7 +540,7 @@ fn generate_target_rules<'scope>(
         rules.push(Rule::Binary(RustBinary {
             common: RustCommon {
                 common: Common {
-                    name: Name(actual),
+                    name: actual,
                     public: false,
                     licenses,
                     compatible_with: vec![],

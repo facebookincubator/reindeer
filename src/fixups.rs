@@ -339,7 +339,11 @@ impl<'meta> Fixups<'meta> {
                     compatible_with,
                     ..
                 }) => {
-                    let actual = format!("{}-{}", self.index.private_rule_name(self.package), name);
+                    let actual = Name(format!(
+                        "{}-{}",
+                        self.index.private_rule_name(self.package),
+                        name,
+                    ));
 
                     if *public {
                         let rule = Rule::Alias(Alias {
@@ -348,7 +352,7 @@ impl<'meta> Fixups<'meta> {
                                 self.index.public_rule_name(self.package),
                                 name,
                             )),
-                            actual: RuleRef::new(format!(":{actual}")),
+                            actual: actual.clone(),
                             public: true,
                             _dummy: Default::default(),
                         });
@@ -357,7 +361,7 @@ impl<'meta> Fixups<'meta> {
 
                     let rule = buck::CxxLibrary {
                         common: Common {
-                            name: Name(actual),
+                            name: actual,
                             public: false,
                             licenses: Default::default(),
                             compatible_with: compatible_with
@@ -452,12 +456,12 @@ impl<'meta> Fixups<'meta> {
                         .manifestwalk(static_libs, Vec::<String>::new(), self.config.strict_globs)
                         .context("Static libraries")?;
                     for static_lib in libs {
-                        let actual = format!(
+                        let actual = Name(format!(
                             "{}-{}-{}",
                             self.index.private_rule_name(self.package),
                             name,
                             static_lib.file_name().unwrap().to_string_lossy(),
-                        );
+                        ));
 
                         if *public {
                             let rule = Rule::Alias(Alias {
@@ -467,7 +471,7 @@ impl<'meta> Fixups<'meta> {
                                     name,
                                     static_lib.file_name().unwrap().to_string_lossy(),
                                 )),
-                                actual: RuleRef::new(format!(":{actual}")),
+                                actual: actual.clone(),
                                 public: true,
                                 _dummy: Default::default(),
                             });
@@ -476,7 +480,7 @@ impl<'meta> Fixups<'meta> {
 
                         let rule = buck::PrebuiltCxxLibrary {
                             common: Common {
-                                name: Name(actual),
+                                name: actual,
                                 public: false,
                                 licenses: Default::default(),
                                 compatible_with: compatible_with
