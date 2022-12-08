@@ -290,7 +290,7 @@ fn generate_target_rules<'scope>(
             );
             let targets = map
                 .into_iter()
-                .map(|(rule, path)| (rule.target, BuckPath(path)));
+                .map(|(name, path)| (format!(":{name}"), BuckPath(path)));
             rule.mapped_srcs.extend(targets);
         },
         fixups.compute_gen_srcs(&srcdir),

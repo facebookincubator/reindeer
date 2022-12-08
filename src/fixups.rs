@@ -1008,7 +1008,7 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_gen_srcs(
         &self,
         srcdir: &Path,
-    ) -> Vec<(Option<PlatformExpr>, BTreeMap<RuleRef, PathBuf>)> {
+    ) -> Vec<(Option<PlatformExpr>, BTreeMap<Name, PathBuf>)> {
         let mut ret = vec![];
 
         if self.buildscript_rule_name().is_none() {
@@ -1028,19 +1028,13 @@ impl<'meta> Fixups<'meta> {
                 if let BuildscriptFixup::GenSrcs(GenSrcs { files, mapped, .. }) = fix {
                     for file in files {
                         map.insert(
-                            RuleRef::new(format!(
-                                ":{}",
-                                self.buildscript_gen_srcs_rulename(Some(file)),
-                            )),
+                            self.buildscript_gen_srcs_rulename(Some(file)),
                             srcdir.join(file),
                         );
                     }
                     for (file, path) in mapped {
                         map.insert(
-                            RuleRef::new(format!(
-                                ":{}",
-                                self.buildscript_gen_srcs_rulename(Some(file)),
-                            )),
+                            self.buildscript_gen_srcs_rulename(Some(file)),
                             srcdir.join(path),
                         );
                     }
