@@ -36,6 +36,7 @@ use crate::buck::Name;
 use crate::buck::Rule;
 use crate::buck::RuleRef;
 use crate::buck::RustBinary;
+use crate::buck::Visibility;
 use crate::buckify::normalize_dotdot;
 use crate::buckify::relative_path;
 use crate::cargo::Manifest;
@@ -353,7 +354,7 @@ impl<'meta> Fixups<'meta> {
                                 name,
                             )),
                             actual: actual.clone(),
-                            public: true,
+                            visibility: Visibility::Public,
                             _dummy: Default::default(),
                         });
                         res.push(rule);
@@ -362,7 +363,7 @@ impl<'meta> Fixups<'meta> {
                     let rule = buck::CxxLibrary {
                         common: Common {
                             name: actual,
-                            public: false,
+                            visibility: Visibility::Private,
                             licenses: Default::default(),
                             compatible_with: compatible_with
                                 .iter()
@@ -472,7 +473,7 @@ impl<'meta> Fixups<'meta> {
                                     static_lib.file_name().unwrap().to_string_lossy(),
                                 )),
                                 actual: actual.clone(),
-                                public: true,
+                                visibility: Visibility::Public,
                                 _dummy: Default::default(),
                             });
                             res.push(rule);
@@ -481,7 +482,7 @@ impl<'meta> Fixups<'meta> {
                         let rule = buck::PrebuiltCxxLibrary {
                             common: Common {
                                 name: actual,
-                                public: false,
+                                visibility: Visibility::Private,
                                 licenses: Default::default(),
                                 compatible_with: compatible_with
                                     .iter()

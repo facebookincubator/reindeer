@@ -38,6 +38,7 @@ use crate::buck::RuleRef;
 use crate::buck::RustBinary;
 use crate::buck::RustCommon;
 use crate::buck::RustLibrary;
+use crate::buck::Visibility;
 use crate::cargo::cargo_get_metadata;
 use crate::cargo::Edition;
 use crate::cargo::Manifest;
@@ -466,7 +467,7 @@ fn generate_target_rules<'scope>(
             rules.push(Rule::Alias(Alias {
                 name: index.public_rule_name(pkg),
                 actual: index.private_rule_name(pkg),
-                public: true,
+                visibility: Visibility::Public,
                 _dummy: Default::default(),
             }));
         }
@@ -479,7 +480,11 @@ fn generate_target_rules<'scope>(
                     } else {
                         index.private_rule_name(pkg)
                     },
-                    public: index.is_root_package(pkg),
+                    visibility: if index.is_root_package(pkg) {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    },
                     licenses,
                     compatible_with: vec![],
                 },
@@ -508,7 +513,7 @@ fn generate_target_rules<'scope>(
             common: RustCommon {
                 common: Common {
                     name: Name(format!("{}-{}", pkg, tgt.name)),
-                    public: false,
+                    visibility: Visibility::Private,
                     licenses: Default::default(),
                     compatible_with: vec![],
                 },
@@ -532,7 +537,7 @@ fn generate_target_rules<'scope>(
             rules.push(Rule::Alias(Alias {
                 name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
                 actual: actual.clone(),
-                public: true,
+                visibility: Visibility::Public,
                 _dummy: Default::default(),
             }));
         }
@@ -541,7 +546,7 @@ fn generate_target_rules<'scope>(
             common: RustCommon {
                 common: Common {
                     name: actual,
-                    public: false,
+                    visibility: Visibility::Private,
                     licenses,
                     compatible_with: vec![],
                 },

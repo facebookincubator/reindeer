@@ -106,14 +106,29 @@ impl Serialize for BuckPath {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum Visibility {
+    Public,
+    Private,
+}
+
+impl Serialize for Visibility {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let buck_visibility: &[&str] = match self {
+            Visibility::Public => &["PUBLIC"],
+            Visibility::Private => &[],
+        };
+        buck_visibility.serialize(ser)
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct Alias {
     pub name: Name,
     /// Local target that the alias refers to -- always in the same package.
     #[serde(serialize_with = "serialize_name_as_label")]
     pub actual: Name,
-    #[serde(rename = "visibility", serialize_with = "visibility")]
-    pub public: bool,
+    pub visibility: Visibility,
 
     // Dummy map to make serde treat this struct as a map
     #[serde(skip_serializing, flatten)]
@@ -124,15 +139,10 @@ fn serialize_name_as_label<S: Serializer>(name: &Name, ser: S) -> Result<S::Ok, 
     ser.collect_str(&format_args!(":{}", name.0))
 }
 
-fn visibility<S: Serializer>(vis: &bool, ser: S) -> Result<S::Ok, S::Error> {
-    if *vis { vec!["PUBLIC"] } else { vec![] }.serialize(ser)
-}
-
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 pub struct Common {
     pub name: Name,
-    #[serde(rename = "visibility", serialize_with = "visibility")]
-    pub public: bool,
+    pub visibility: Visibility,
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub licenses: BTreeSet<BuckPath>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
