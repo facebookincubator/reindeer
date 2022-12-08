@@ -686,7 +686,7 @@ impl<'meta> Fixups<'meta> {
                     let platform_expr: PlatformExpr = format!("cfg({})", platform_pred).into();
                     ret.push((
                         Some(package),
-                        RuleRef::new(format!(":{}", self.index.private_rule_name(package)))
+                        RuleRef::from(self.index.private_rule_name(package))
                             .with_platform(Some(&platform_expr)),
                         rename.clone(),
                     ));
@@ -700,7 +700,7 @@ impl<'meta> Fixups<'meta> {
             // No filtering involved? Just insert it like normal.
             ret.push((
                 Some(package),
-                RuleRef::new(format!(":{}", self.index.private_rule_name(package)))
+                RuleRef::from(self.index.private_rule_name(package))
                     .with_platform(platform.as_ref()),
                 rename,
             ))

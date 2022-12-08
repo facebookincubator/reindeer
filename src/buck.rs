@@ -45,6 +45,12 @@ pub struct RuleRef {
     platform: Option<PlatformExpr>,
 }
 
+impl From<Name> for RuleRef {
+    fn from(name: Name) -> Self {
+        RuleRef::new(format!(":{}", name))
+    }
+}
+
 impl RuleRef {
     pub fn new(target: String) -> Self {
         RuleRef {

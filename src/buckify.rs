@@ -449,7 +449,7 @@ fn generate_target_rules<'scope>(
     if let Some(true) = pkg.dependency_target().map(ManifestTarget::kind_lib) {
         bin_base
             .deps
-            .insert(RuleRef::new(format!(":{}", index.private_rule_name(pkg))));
+            .insert(RuleRef::from(index.private_rule_name(pkg)));
     }
 
     // Generate rules appropriate to each kind of crate we want to support
