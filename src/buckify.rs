@@ -468,7 +468,6 @@ fn generate_target_rules<'scope>(
                 name: index.public_rule_name(pkg),
                 actual: index.private_rule_name(pkg),
                 visibility: Visibility::Public,
-                _dummy: Default::default(),
             }));
         }
 
@@ -538,7 +537,6 @@ fn generate_target_rules<'scope>(
                 name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
                 actual: actual.clone(),
                 visibility: Visibility::Public,
-                _dummy: Default::default(),
             }));
         }
 

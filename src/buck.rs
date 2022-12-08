@@ -18,6 +18,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use semver::Version;
+use serde::ser::SerializeMap;
 use serde::ser::Serializer;
 use serde::Serialize;
 
@@ -122,85 +123,116 @@ impl Serialize for Visibility {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Alias {
     pub name: Name,
     /// Local target that the alias refers to -- always in the same package.
-    #[serde(serialize_with = "serialize_name_as_label")]
     pub actual: Name,
     pub visibility: Visibility,
-
-    // Dummy map to make serde treat this struct as a map
-    #[serde(skip_serializing, flatten)]
-    pub _dummy: BTreeMap<(), ()>,
 }
 
-fn serialize_name_as_label<S: Serializer>(name: &Name, ser: S) -> Result<S::Ok, S::Error> {
-    ser.collect_str(&format_args!(":{}", name.0))
+impl Serialize for Alias {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            name,
+            actual,
+            visibility,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("name", name)?;
+        map.serialize_entry("actual", &NameAsLabel(actual))?;
+        map.serialize_entry("visibility", visibility)?;
+        map.end()
+    }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+struct NameAsLabel<'a>(&'a Name);
+
+impl Serialize for NameAsLabel<'_> {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        ser.collect_str(&format_args!(":{}", self.0))
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Common {
     pub name: Name,
     pub visibility: Visibility,
-    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub licenses: BTreeSet<BuckPath>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub compatible_with: Vec<RuleRef>,
 }
 
-fn always<T>(_: &T) -> bool {
-    true
-}
-
 // Rule attributes which could be platform-specific
-#[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Ord, PartialOrd)]
+#[derive(Debug, Default, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct PlatformRustCommon {
-    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub srcs: BTreeSet<BuckPath>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub mapped_srcs: BTreeMap<String, BuckPath>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rustc_flags: Vec<String>,
-    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub features: BTreeSet<String>,
-    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub deps: BTreeSet<RuleRef>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub named_deps: BTreeMap<String, RuleRef>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
 
     // This isn't really "common" (Binaries only), but does need to be platform
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub link_style: Option<String>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub preferred_linkage: Option<String>,
-
-    // Dummy map to make serde treat this struct as a map
-    #[serde(skip_serializing_if = "always", flatten)]
-    pub _dummy: BTreeMap<(), ()>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Ord, PartialOrd)]
+impl Serialize for PlatformRustCommon {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            srcs,
+            mapped_srcs,
+            rustc_flags,
+            features,
+            deps,
+            named_deps,
+            env,
+            link_style,
+            preferred_linkage,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        if !srcs.is_empty() {
+            map.serialize_entry("srcs", srcs)?;
+        }
+        if !env.is_empty() {
+            map.serialize_entry("env", env)?;
+        }
+        if !features.is_empty() {
+            map.serialize_entry("features", features)?;
+        }
+        if let Some(link_style) = link_style {
+            map.serialize_entry("link_style", link_style)?;
+        }
+        if !mapped_srcs.is_empty() {
+            map.serialize_entry("mapped_srcs", mapped_srcs)?;
+        }
+        if !named_deps.is_empty() {
+            map.serialize_entry("named_deps", named_deps)?;
+        }
+        if let Some(preferred_linkage) = preferred_linkage {
+            map.serialize_entry("preferred_linkage", preferred_linkage)?;
+        }
+        if !rustc_flags.is_empty() {
+            map.serialize_entry("rustc_flags", rustc_flags)?;
+        }
+        if !deps.is_empty() {
+            map.serialize_entry("deps", deps)?;
+        }
+        map.end()
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RustCommon {
-    #[serde(flatten)]
     pub common: Common,
-    #[serde(rename = "crate")]
     pub krate: String,
-    #[serde(rename = "crate_root")]
     pub rootmod: BuckPath,
     pub edition: crate::cargo::Edition,
     // Platform-dependent
-    #[serde(flatten)]
     pub base: PlatformRustCommon,
-
     // Platform-specific
-    #[serde(
-        skip_serializing_if = "BTreeMap::is_empty",
-        serialize_with = "serialize_platforms_dict"
-    )]
     pub platform: BTreeMap<PlatformName, PlatformRustCommon>,
 }
 
@@ -230,100 +262,404 @@ pub struct RustCommon {
 /// }
 /// ```
 fn serialize_platforms_dict<S>(
+    map: &mut S,
     platforms: &BTreeMap<PlatformName, PlatformRustCommon>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
+) -> Result<(), S::Error>
 where
-    S: Serializer,
+    S: SerializeMap,
 {
     #[derive(Serialize)]
     #[serde(rename = "call:dict")]
     struct Dict<T>(T);
 
-    serializer.collect_map(platforms.iter().map(|(name, value)| (name, Dict(value))))
+    struct Platforms<'a>(&'a BTreeMap<PlatformName, PlatformRustCommon>);
+
+    impl Serialize for Platforms<'_> {
+        fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+            ser.collect_map(self.0.iter().map(|(name, value)| (name, Dict(value))))
+        }
+    }
+
+    map.serialize_entry("platform", &Platforms(platforms))
 }
 
-fn is_false(v: &bool) -> bool {
-    !*v
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RustLibrary {
-    #[serde(flatten)]
     pub common: RustCommon,
-    #[serde(skip_serializing_if = "is_false")]
     pub proc_macro: bool,
-    #[serde(skip_serializing_if = "is_false")]
     pub dlopen_enable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub python_ext: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub linkable_alias: Option<String>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+impl Serialize for RustLibrary {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            common:
+                RustCommon {
+                    common:
+                        Common {
+                            name,
+                            visibility,
+                            licenses,
+                            compatible_with,
+                        },
+                    krate,
+                    rootmod,
+                    edition,
+                    base:
+                        PlatformRustCommon {
+                            srcs,
+                            mapped_srcs,
+                            rustc_flags,
+                            features,
+                            deps,
+                            named_deps,
+                            env,
+                            link_style,
+                            preferred_linkage,
+                        },
+                    platform,
+                },
+            proc_macro,
+            dlopen_enable,
+            python_ext,
+            linkable_alias,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("name", name)?;
+        if !srcs.is_empty() {
+            map.serialize_entry("srcs", srcs)?;
+        }
+        if !compatible_with.is_empty() {
+            map.serialize_entry("compatible_with", compatible_with)?;
+        }
+        map.serialize_entry("crate", krate)?;
+        map.serialize_entry("crate_root", rootmod)?;
+        if *dlopen_enable {
+            map.serialize_entry("dlopen_enable", &true)?;
+        }
+        map.serialize_entry("edition", edition)?;
+        if !env.is_empty() {
+            map.serialize_entry("env", env)?;
+        }
+        if !features.is_empty() {
+            map.serialize_entry("features", features)?;
+        }
+        if !licenses.is_empty() {
+            map.serialize_entry("licenses", licenses)?;
+        }
+        if let Some(link_style) = link_style {
+            map.serialize_entry("link_style", link_style)?;
+        }
+        if let Some(linkable_alias) = linkable_alias {
+            map.serialize_entry("linkable_alias", linkable_alias)?;
+        }
+        if !mapped_srcs.is_empty() {
+            map.serialize_entry("mapped_srcs", mapped_srcs)?;
+        }
+        if !named_deps.is_empty() {
+            map.serialize_entry("named_deps", named_deps)?;
+        }
+        if !platform.is_empty() {
+            serialize_platforms_dict(&mut map, platform)?;
+        }
+        if let Some(preferred_linkage) = preferred_linkage {
+            map.serialize_entry("preferred_linkage", preferred_linkage)?;
+        }
+        if *proc_macro {
+            map.serialize_entry("proc_macro", &true)?;
+        }
+        if let Some(python_ext) = python_ext {
+            map.serialize_entry("python_ext", python_ext)?;
+        }
+        if !rustc_flags.is_empty() {
+            map.serialize_entry("rustc_flags", rustc_flags)?;
+        }
+        map.serialize_entry("visibility", visibility)?;
+        if !deps.is_empty() {
+            map.serialize_entry("deps", deps)?;
+        }
+        map.end()
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RustBinary {
-    #[serde(flatten)]
     pub common: RustCommon,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+impl Serialize for RustBinary {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            common:
+                RustCommon {
+                    common:
+                        Common {
+                            name,
+                            visibility,
+                            licenses,
+                            compatible_with,
+                        },
+                    krate,
+                    rootmod,
+                    edition,
+                    base:
+                        PlatformRustCommon {
+                            srcs,
+                            mapped_srcs,
+                            rustc_flags,
+                            features,
+                            deps,
+                            named_deps,
+                            env,
+                            link_style,
+                            preferred_linkage,
+                        },
+                    platform,
+                },
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("name", name)?;
+        if !srcs.is_empty() {
+            map.serialize_entry("srcs", srcs)?;
+        }
+        if !compatible_with.is_empty() {
+            map.serialize_entry("compatible_with", compatible_with)?;
+        }
+        map.serialize_entry("crate", krate)?;
+        map.serialize_entry("crate_root", rootmod)?;
+        map.serialize_entry("edition", edition)?;
+        if !env.is_empty() {
+            map.serialize_entry("env", env)?;
+        }
+        if !features.is_empty() {
+            map.serialize_entry("features", features)?;
+        }
+        if !licenses.is_empty() {
+            map.serialize_entry("licenses", licenses)?;
+        }
+        if let Some(link_style) = link_style {
+            map.serialize_entry("link_style", link_style)?;
+        }
+        if !mapped_srcs.is_empty() {
+            map.serialize_entry("mapped_srcs", mapped_srcs)?;
+        }
+        if !named_deps.is_empty() {
+            map.serialize_entry("named_deps", named_deps)?;
+        }
+        if !platform.is_empty() {
+            serialize_platforms_dict(&mut map, platform)?;
+        }
+        if let Some(preferred_linkage) = preferred_linkage {
+            map.serialize_entry("preferred_linkage", preferred_linkage)?;
+        }
+        if !rustc_flags.is_empty() {
+            map.serialize_entry("rustc_flags", rustc_flags)?;
+        }
+        map.serialize_entry("visibility", visibility)?;
+        if !deps.is_empty() {
+            map.serialize_entry("deps", deps)?;
+        }
+        map.end()
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct BuildscriptGenrule {
     pub name: Name,
-    #[serde(serialize_with = "serialize_name_as_label")]
     pub buildscript_rule: Name,
     pub package_name: String,
     pub version: Version,
     pub features: BTreeSet<String>,
     pub cfgs: Vec<String>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub path_env: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct BuildscriptGenruleFilter {
-    #[serde(flatten)]
     pub base: BuildscriptGenrule,
     pub outfile: String,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+impl Serialize for BuildscriptGenruleFilter {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            base:
+                BuildscriptGenrule {
+                    name,
+                    buildscript_rule,
+                    package_name,
+                    version,
+                    features,
+                    cfgs,
+                    env,
+                    path_env,
+                },
+            outfile,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("name", name)?;
+        map.serialize_entry("package_name", package_name)?;
+        map.serialize_entry("buildscript_rule", &NameAsLabel(buildscript_rule))?;
+        map.serialize_entry("cfgs", cfgs)?;
+        if !env.is_empty() {
+            map.serialize_entry("env", env)?;
+        }
+        map.serialize_entry("features", features)?;
+        map.serialize_entry("outfile", outfile)?;
+        if !path_env.is_empty() {
+            map.serialize_entry("path_env", path_env)?;
+        }
+        map.serialize_entry("version", version)?;
+        map.end()
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct BuildscriptGenruleSrcs {
-    #[serde(flatten)]
     pub base: BuildscriptGenrule,
     pub files: BTreeSet<String>,
-    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub srcs: BTreeSet<BuckPath>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+impl Serialize for BuildscriptGenruleSrcs {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            base:
+                BuildscriptGenrule {
+                    name,
+                    buildscript_rule,
+                    package_name,
+                    version,
+                    features,
+                    cfgs,
+                    env,
+                    path_env,
+                },
+            files,
+            srcs,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("name", name)?;
+        map.serialize_entry("package_name", package_name)?;
+        if !srcs.is_empty() {
+            map.serialize_entry("srcs", srcs)?;
+        }
+        map.serialize_entry("buildscript_rule", &NameAsLabel(buildscript_rule))?;
+        map.serialize_entry("cfgs", cfgs)?;
+        if !env.is_empty() {
+            map.serialize_entry("env", env)?;
+        }
+        map.serialize_entry("features", features)?;
+        map.serialize_entry("files", files)?;
+        if !path_env.is_empty() {
+            map.serialize_entry("path_env", path_env)?;
+        }
+        map.serialize_entry("version", version)?;
+        map.end()
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct CxxLibrary {
-    #[serde(flatten)]
     pub common: Common,
     pub srcs: BTreeSet<BuckPath>,
     pub headers: BTreeSet<BuckPath>,
-    #[serde(skip_serializing_if = "SetOrMap::is_empty")]
     pub exported_headers: SetOrMap<BuckPath>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub compiler_flags: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub preprocessor_flags: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub header_namespace: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include_directories: Vec<BuckPath>,
-    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub deps: BTreeSet<RuleRef>,
     pub preferred_linkage: Option<String>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+impl Serialize for CxxLibrary {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            common:
+                Common {
+                    name,
+                    visibility,
+                    licenses,
+                    compatible_with,
+                },
+            srcs,
+            headers,
+            exported_headers,
+            compiler_flags,
+            preprocessor_flags,
+            header_namespace,
+            include_directories,
+            deps,
+            preferred_linkage,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("name", name)?;
+        map.serialize_entry("srcs", srcs)?;
+        map.serialize_entry("headers", headers)?;
+        if let Some(header_namespace) = header_namespace {
+            map.serialize_entry("header_namespace", header_namespace)?;
+        }
+        if !exported_headers.is_empty() {
+            map.serialize_entry("exported_headers", exported_headers)?;
+        }
+        if !compatible_with.is_empty() {
+            map.serialize_entry("compatible_with", compatible_with)?;
+        }
+        if !compiler_flags.is_empty() {
+            map.serialize_entry("compiler_flags", compiler_flags)?;
+        }
+        if !include_directories.is_empty() {
+            map.serialize_entry("include_directories", include_directories)?;
+        }
+        if !licenses.is_empty() {
+            map.serialize_entry("licenses", licenses)?;
+        }
+        map.serialize_entry("preferred_linkage", preferred_linkage)?;
+        if !preprocessor_flags.is_empty() {
+            map.serialize_entry("preprocessor_flags", preprocessor_flags)?;
+        }
+        map.serialize_entry("visibility", visibility)?;
+        if !deps.is_empty() {
+            map.serialize_entry("deps", deps)?;
+        }
+        map.end()
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PrebuiltCxxLibrary {
-    #[serde(flatten)]
     pub common: Common,
     pub static_lib: BuckPath,
+}
+
+impl Serialize for PrebuiltCxxLibrary {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            common:
+                Common {
+                    name,
+                    visibility,
+                    licenses,
+                    compatible_with,
+                },
+            static_lib,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("name", name)?;
+        if !compatible_with.is_empty() {
+            map.serialize_entry("compatible_with", compatible_with)?;
+        }
+        if !licenses.is_empty() {
+            map.serialize_entry("licenses", licenses)?;
+        }
+        map.serialize_entry("static_lib", static_lib)?;
+        map.serialize_entry("visibility", visibility)?;
+        map.end()
+    }
 }
 
 #[derive(Debug)]

@@ -355,7 +355,6 @@ impl<'meta> Fixups<'meta> {
                             )),
                             actual: actual.clone(),
                             visibility: Visibility::Public,
-                            _dummy: Default::default(),
                         });
                         res.push(rule);
                     }
@@ -474,7 +473,6 @@ impl<'meta> Fixups<'meta> {
                                 )),
                                 actual: actual.clone(),
                                 visibility: Visibility::Public,
-                                _dummy: Default::default(),
                             });
                             res.push(rule);
                         }
