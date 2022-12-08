@@ -11,6 +11,8 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::fmt;
+use std::fmt::Display;
 use std::io::Error;
 use std::io::Write;
 use std::path::PathBuf;
@@ -30,6 +32,12 @@ use crate::platform::PredicateParseError;
 /// Only the name of a target. Does not include package path, nor leading colon.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
 pub struct Name(pub String);
+
+impl Display for Name {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&self.0, formatter)
+    }
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RuleRef {

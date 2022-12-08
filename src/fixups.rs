@@ -174,25 +174,25 @@ impl<'meta> Fixups<'meta> {
             .find(|tgt| tgt.kind_custom_build())
     }
 
-    fn buildscript_rustc_flags_rulename(&self) -> String {
-        format!(
+    fn buildscript_rustc_flags_rulename(&self) -> Name {
+        Name(format!(
             "{}-args",
             self.buildscript_rule_name().expect("no buildscript")
-        )
+        ))
     }
 
-    fn buildscript_gen_srcs_rulename(&self, file: Option<&str>) -> String {
+    fn buildscript_gen_srcs_rulename(&self, file: Option<&str>) -> Name {
         if let Some(file) = file {
-            format!(
+            Name(format!(
                 "{}-srcs[{}]",
                 self.buildscript_rule_name().expect("no buildscript"),
                 file
-            )
+            ))
         } else {
-            format!(
+            Name(format!(
                 "{}-srcs",
                 self.buildscript_rule_name().expect("no buildscript")
-            )
+            ))
         }
     }
 
@@ -263,7 +263,7 @@ impl<'meta> Fixups<'meta> {
                     // Emit rule to get its stdout and filter it into args
                     res.push(Rule::BuildscriptGenruleFilter(BuildscriptGenruleFilter {
                         base: BuildscriptGenrule {
-                            name: Name(self.buildscript_rustc_flags_rulename()),
+                            name: self.buildscript_rustc_flags_rulename(),
 
                             buildscript_rule: RuleRef::new(format!(":{buildscript_rule_name}")),
                             package_name: self.package.name.clone(),
@@ -303,7 +303,7 @@ impl<'meta> Fixups<'meta> {
                     // Emit rules to extract generated sources
                     res.push(Rule::BuildscriptGenruleSrcs(BuildscriptGenruleSrcs {
                         base: BuildscriptGenrule {
-                            name: Name(self.buildscript_gen_srcs_rulename(None)),
+                            name: self.buildscript_gen_srcs_rulename(None),
 
                             buildscript_rule: RuleRef::new(format!(":{buildscript_rule_name}")),
                             package_name: self.package.name.clone(),

@@ -464,8 +464,8 @@ fn generate_target_rules<'scope>(
         // an alias. The root package library is exposed directly.
         if index.is_public(pkg) && !index.is_root_package(pkg) {
             rules.push(Rule::Alias(Alias {
-                name: Name(index.public_rule_name(pkg).to_owned()),
-                actual: Name(index.private_rule_name(pkg)),
+                name: index.public_rule_name(pkg),
+                actual: index.private_rule_name(pkg),
                 public: true,
                 _dummy: Default::default(),
             }));
@@ -475,9 +475,9 @@ fn generate_target_rules<'scope>(
             common: RustCommon {
                 common: Common {
                     name: if index.is_root_package(pkg) {
-                        Name(index.public_rule_name(pkg).to_owned())
+                        index.public_rule_name(pkg)
                     } else {
-                        Name(index.private_rule_name(pkg))
+                        index.private_rule_name(pkg)
                     },
                     public: index.is_root_package(pkg),
                     licenses,
@@ -495,7 +495,7 @@ fn generate_target_rules<'scope>(
             linkable_alias: if index.is_public(pkg)
                 && (tgt.kind_cdylib() || fixups.python_ext().is_some())
             {
-                Some(index.public_rule_name(pkg).to_owned())
+                Some(index.public_rule_name(pkg).0)
             } else {
                 None
             },

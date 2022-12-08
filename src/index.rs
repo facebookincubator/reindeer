@@ -17,6 +17,7 @@ use std::fmt;
 use anyhow::Result;
 use serde::Deserialize;
 
+use crate::buck::Name;
 use crate::cargo::DepKind;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestDep;
@@ -185,19 +186,19 @@ impl<'meta> Index<'meta> {
     }
 
     /// Return the private package rule name.
-    pub fn private_rule_name(&self, pkg: &Manifest) -> String {
-        match self.public_set.get(&pkg.id) {
+    pub fn private_rule_name(&self, pkg: &Manifest) -> Name {
+        Name(match self.public_set.get(&pkg.id) {
             Some(None) | None => pkg.to_string(), // Full version info
             Some(Some(rename)) => format!("{}-{}", pkg, rename), // Rename
-        }
+        })
     }
 
     /// Return the package public rule name.
-    pub fn public_rule_name(&self, pkg: &'meta Manifest) -> &str {
-        match self.public_set.get(&pkg.id) {
-            Some(None) | None => &pkg.name, // Package name
-            Some(Some(rename)) => rename,   // Rename
-        }
+    pub fn public_rule_name(&self, pkg: &'meta Manifest) -> Name {
+        Name(match self.public_set.get(&pkg.id) {
+            Some(None) | None => pkg.name.to_owned(), // Package name
+            Some(&Some(rename)) => rename.to_owned(), // Rename
+        })
     }
 
     pub fn get_extra_meta(&self) -> Result<HashMap<&'meta str, ExtraMetadata>> {
