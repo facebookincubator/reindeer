@@ -342,41 +342,40 @@ impl Ord for Rule {
 impl Rule {
     pub fn get_name(&self) -> &str {
         match self {
-            Rule::Alias(Alias { name, .. }) => name,
-            Rule::Binary(RustBinary {
+            Rule::Alias(Alias { name, .. })
+            | Rule::Binary(RustBinary {
                 common:
                     RustCommon {
                         common: Common { name, .. },
                         ..
                     },
                 ..
-            }) => name,
-            Rule::Library(RustLibrary {
+            })
+            | Rule::Library(RustLibrary {
                 common:
                     RustCommon {
                         common: Common { name, .. },
                         ..
                     },
                 ..
-            }) => name,
-            Rule::BuildscriptGenruleSrcs(BuildscriptGenruleSrcs {
+            })
+            | Rule::BuildscriptGenruleSrcs(BuildscriptGenruleSrcs {
                 base: BuildscriptGenrule { name, .. },
                 ..
-            }) => name,
-            Rule::BuildscriptGenruleFilter(BuildscriptGenruleFilter {
+            })
+            | Rule::BuildscriptGenruleFilter(BuildscriptGenruleFilter {
                 base: BuildscriptGenrule { name, .. },
                 ..
-            }) => name,
-            Rule::CxxLibrary(CxxLibrary {
+            })
+            | Rule::CxxLibrary(CxxLibrary {
                 common: Common { name, .. },
                 ..
-            }) => name,
-            Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
+            })
+            | Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
                 common: Common { name, .. },
                 ..
             }) => name,
         }
-        .as_str()
     }
 
     pub fn render(&self, config: &BuckConfig, out: &mut impl Write) -> Result<(), Error> {
