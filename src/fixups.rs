@@ -196,9 +196,9 @@ impl<'meta> Fixups<'meta> {
         }
     }
 
-    fn buildscript_rule_name(&self) -> Option<String> {
+    fn buildscript_rule_name(&self) -> Option<Name> {
         self.buildscript_target()
-            .map(|tgt| format!("{}-{}", self.package, tgt.name))
+            .map(|tgt| Name(format!("{}-{}", self.package, tgt.name)))
     }
 
     /// Return buildscript-related rules
@@ -265,7 +265,7 @@ impl<'meta> Fixups<'meta> {
                         base: BuildscriptGenrule {
                             name: self.buildscript_rustc_flags_rulename(),
 
-                            buildscript_rule: RuleRef::new(format!(":{buildscript_rule_name}")),
+                            buildscript_rule: buildscript_rule_name.clone(),
                             package_name: self.package.name.clone(),
                             version: self.package.version.clone(),
                             features: features.clone(),
@@ -305,7 +305,7 @@ impl<'meta> Fixups<'meta> {
                         base: BuildscriptGenrule {
                             name: self.buildscript_gen_srcs_rulename(None),
 
-                            buildscript_rule: RuleRef::new(format!(":{buildscript_rule_name}")),
+                            buildscript_rule: buildscript_rule_name.clone(),
                             package_name: self.package.name.clone(),
                             version: self.package.version.clone(),
                             features: features.clone(),

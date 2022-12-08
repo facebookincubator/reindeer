@@ -254,7 +254,8 @@ pub struct RustBinary {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct BuildscriptGenrule {
     pub name: Name,
-    pub buildscript_rule: RuleRef,
+    #[serde(serialize_with = "serialize_name_as_label")]
+    pub buildscript_rule: Name,
     pub package_name: String,
     pub version: Version,
     pub features: BTreeSet<String>,
