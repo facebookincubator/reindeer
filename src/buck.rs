@@ -474,7 +474,7 @@ impl Rule {
                 )?;
             }
         };
-        out.write_all(b"\n\n")
+        out.write_all(b"\n")
     }
 }
 
@@ -493,8 +493,11 @@ pub fn write_buckfile<'a>(
         out.write_all(b"\n")?;
     }
 
-    for r in rules {
-        r.render(config, out)?
+    for (i, rule) in rules.enumerate() {
+        if i > 0 {
+            out.write_all(b"\n")?;
+        }
+        rule.render(config, out)?;
     }
 
     Ok(())
