@@ -522,9 +522,10 @@ fn generate_target_rules<'scope>(
                 base: PlatformRustCommon {
                     // don't use fixed ones because it will be a cyclic dependency
                     rustc_flags: global_rustc_flags,
+                    link_style: bin_base.link_style.clone(),
                     ..base
                 },
-                platform: perplat,
+                platform: bin_perplat,
             },
         };
         fixups.emit_buildscript_rules(buildscript, config)?
