@@ -56,19 +56,19 @@ def _make_preamble(out_dir, package_name, version, features, cfgs, env, target_o
         out_dir = out_dir,
         package_name = package_name,
         version = version,
-        features = " ".join(["CARGO_FEATURE_{}=1".format(feature.upper().replace("-", "_")) for feature in features or []]),
-        cfgs = " ".join(["CARGO_CFG_{}=1".format(cfg.upper().replace("-", "_")) for cfg in cfgs or []]),
+        features = " ".join(["CARGO_FEATURE_{}=1".format(feature.upper().replace("-", "_")) for feature in features]),
+        cfgs = " ".join(["CARGO_CFG_{}=1".format(cfg.upper().replace("-", "_")) for cfg in cfgs]),
         target = target_override or _get_native_host_triple(),
         host = _get_native_host_triple(),
         rustc = rustc,
-        env = "\\\n".join(["'{}'='{}'".format(var, val) for var, val in (env or {}).items()]),
+        env = "\\\n".join(["'{}'='{}'".format(var, val) for var, val in env).items()]),
     )
 
 # Invoke a Rust buildscript binary with the right surrounding
 # environment variables. `filters` is a shell command which takes the
 # output of the build script and filters appropriately. It is given the
 # final output file path on its commandline.
-def rust_buildscript_genrule_args(name, buildscript_rule, outfile, package_name, version, filter, features = None, cfgs = None, env = None, target = None):
+def rust_buildscript_genrule_args(name, buildscript_rule, outfile, package_name, version, filter, features = [], cfgs = [], env = {}, target = None):
     pre = _make_preamble("\\$(dirname $OUT)", package_name, version, features, cfgs, env, target)
     fb_native.cxx_genrule(
         name = name,
@@ -80,7 +80,7 @@ def rust_buildscript_genrule_args(name, buildscript_rule, outfile, package_name,
     )
 
 # Invoke a build script for its generated sources.
-def rust_buildscript_genrule_srcs(name, buildscript_rule, files, package_name, version, features = None, cfgs = None, env = None, target = None, srcs = None):
+def rust_buildscript_genrule_srcs(name, buildscript_rule, files, package_name, version, features = [], cfgs = [], env = {}, target = None, srcs = []):
     pre = _make_preamble("$OUT", package_name, version, features, cfgs, env, target)
     cxx_genrule(
         name = name,
