@@ -529,11 +529,15 @@ impl Serialize for BuildscriptGenruleArgs {
         map.serialize_entry("name", name)?;
         map.serialize_entry("package_name", package_name)?;
         map.serialize_entry("buildscript_rule", &NameAsLabel(buildscript_rule))?;
-        map.serialize_entry("cfgs", cfgs)?;
+        if !cfgs.is_empty() {
+            map.serialize_entry("cfgs", cfgs)?;
+        }
         if !env.is_empty() {
             map.serialize_entry("env", env)?;
         }
-        map.serialize_entry("features", features)?;
+        if !features.is_empty() {
+            map.serialize_entry("features", features)?;
+        }
         map.serialize_entry("outfile", outfile)?;
         if !path_env.is_empty() {
             map.serialize_entry("path_env", path_env)?;
@@ -574,11 +578,15 @@ impl Serialize for BuildscriptGenruleSrcs {
             map.serialize_entry("srcs", srcs)?;
         }
         map.serialize_entry("buildscript_rule", &NameAsLabel(buildscript_rule))?;
-        map.serialize_entry("cfgs", cfgs)?;
+        if !cfgs.is_empty() {
+            map.serialize_entry("cfgs", cfgs)?;
+        }
         if !env.is_empty() {
             map.serialize_entry("env", env)?;
         }
-        map.serialize_entry("features", features)?;
+        if !features.is_empty() {
+            map.serialize_entry("features", features)?;
+        }
         map.serialize_entry("files", files)?;
         if !path_env.is_empty() {
             map.serialize_entry("path_env", path_env)?;
