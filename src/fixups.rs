@@ -29,7 +29,7 @@ use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::BuildscriptGenrule;
-use crate::buck::BuildscriptGenruleFilter;
+use crate::buck::BuildscriptGenruleArgs;
 use crate::buck::BuildscriptGenruleSrcs;
 use crate::buck::Common;
 use crate::buck::Name;
@@ -262,7 +262,7 @@ impl<'meta> Fixups<'meta> {
                     res.push(Rule::Binary(buildscript.clone()));
 
                     // Emit rule to get its stdout and filter it into args
-                    res.push(Rule::BuildscriptGenruleFilter(BuildscriptGenruleFilter {
+                    res.push(Rule::BuildscriptGenruleArgs(BuildscriptGenruleArgs {
                         base: BuildscriptGenrule {
                             name: self.buildscript_rustc_flags_rulename(),
 

@@ -504,12 +504,12 @@ pub struct BuildscriptGenrule {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct BuildscriptGenruleFilter {
+pub struct BuildscriptGenruleArgs {
     pub base: BuildscriptGenrule,
     pub outfile: String,
 }
 
-impl Serialize for BuildscriptGenruleFilter {
+impl Serialize for BuildscriptGenruleArgs {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         let Self {
             base:
@@ -694,7 +694,7 @@ pub enum Rule {
     Binary(RustBinary),
     Library(RustLibrary),
     BuildscriptGenruleSrcs(BuildscriptGenruleSrcs),
-    BuildscriptGenruleFilter(BuildscriptGenruleFilter),
+    BuildscriptGenruleArgs(BuildscriptGenruleArgs),
     CxxLibrary(CxxLibrary),
     PrebuiltCxxLibrary(PrebuiltCxxLibrary),
 }
@@ -721,7 +721,7 @@ fn rule_sort_key(rule: &Rule) -> (&Name, usize) {
         Rule::Binary(_)
         | Rule::Library(_)
         | Rule::BuildscriptGenruleSrcs(_)
-        | Rule::BuildscriptGenruleFilter(_)
+        | Rule::BuildscriptGenruleArgs(_)
         | Rule::CxxLibrary(_)
         | Rule::PrebuiltCxxLibrary(_) => (rule.get_name(), 1),
     }
@@ -757,7 +757,7 @@ impl Rule {
                 base: BuildscriptGenrule { name, .. },
                 ..
             })
-            | Rule::BuildscriptGenruleFilter(BuildscriptGenruleFilter {
+            | Rule::BuildscriptGenruleArgs(BuildscriptGenruleArgs {
                 base: BuildscriptGenrule { name, .. },
                 ..
             })
@@ -787,7 +787,7 @@ impl Rule {
                     serde_starlark::function_call(&config.rust_library, &lib)?.as_bytes(),
                 )?;
             }
-            Rule::BuildscriptGenruleFilter(lib) => {
+            Rule::BuildscriptGenruleArgs(lib) => {
                 out.write_all(
                     serde_starlark::function_call(&config.buildscript_genrule_args, &lib)?
                         .as_bytes(),
