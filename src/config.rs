@@ -220,16 +220,16 @@ impl Default for BuckConfig {
 }
 
 pub fn read_config(dir: &Path) -> Result<Config> {
-    let path = dir.join("reindeer.toml");
+    let reindeer_toml = dir.join("reindeer.toml");
+    let mut config = try_read_config(&reindeer_toml)?;
+    config.config_path = dir.to_path_buf();
+    Ok(config)
+}
 
-    let file = match fs::read(&path) {
+fn try_read_config(path: &Path) -> Result<Config> {
+    let file = match fs::read(path) {
         Ok(file) => file,
-        Err(ref err) if err.kind() == ErrorKind::NotFound => {
-            return Ok(Config {
-                config_path: dir.to_path_buf(),
-                ..Config::default()
-            });
-        }
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Config::default()),
         Err(err) => return Err(err).context(format!("Failed to read config {}", path.display())),
     };
 
