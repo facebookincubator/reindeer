@@ -39,6 +39,7 @@ use crate::Paths;
 pub fn cargo_get_metadata(config: &Config, args: &Args, paths: &Paths) -> Result<Metadata> {
     let metadata: Metadata = self::run_cargo_json(
         config,
+        Some(&paths.cargo_home),
         &paths.third_party_dir,
         args,
         &[
@@ -60,11 +61,11 @@ pub fn cargo_get_metadata(config: &Config, args: &Args, paths: &Paths) -> Result
 // Run a cargo command
 pub(crate) fn run_cargo(
     config: &Config,
-    cargo_home: impl AsRef<Path>,
+    cargo_home: Option<&Path>,
+    current_dir: &Path,
     args: &Args,
     opts: &[&str],
 ) -> Result<Vec<u8>> {
-    let cargo_home = cargo_home.as_ref();
     let cmdline: Vec<_> = args
         .cargo_options
         .iter()
@@ -76,7 +77,7 @@ pub(crate) fn run_cargo(
     log::debug!(
         "Running Cargo command {:?} in {}",
         cmdline,
-        cargo_home.display()
+        current_dir.display()
     );
 
     let cargo_path = args
@@ -92,9 +93,11 @@ pub(crate) fn run_cargo(
         .unwrap_or_else(|| PathBuf::from("cargo"));
 
     let mut cargo_command = Command::new(&cargo_path);
+    if let Some(cargo_home) = cargo_home {
+        cargo_command.env("CARGO_HOME", cargo_home);
+    }
     cargo_command
-        .env("CARGO_HOME", cargo_home.join(".cargo"))
-        .current_dir(cargo_home) // make sure it doesn't see any stray .cargo/config files
+        .current_dir(current_dir)
         .args(&cmdline)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -162,11 +165,12 @@ pub(crate) fn run_cargo(
 // Run a cargo command, assuming it returns a json output of some form.
 pub(crate) fn run_cargo_json<T: DeserializeOwned>(
     config: &Config,
-    cargo_home: impl AsRef<Path>,
+    cargo_home: Option<&Path>,
+    current_dir: &Path,
     args: &Args,
     opts: &[&str],
 ) -> Result<T> {
-    let json = run_cargo(config, cargo_home, args, opts).context("running cargo")?;
+    let json = run_cargo(config, cargo_home, current_dir, args, opts).context("running cargo")?;
 
     if args.debug {
         std::fs::write("dump.json", &json)?;

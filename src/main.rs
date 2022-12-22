@@ -96,6 +96,7 @@ enum SubCommand {
 pub struct Paths {
     third_party_dir: PathBuf,
     manifest_path: PathBuf,
+    cargo_home: PathBuf,
     /// Path of the Buck cell root
     cell_dir: PathBuf,
 }
@@ -113,6 +114,7 @@ fn try_main() -> Result<()> {
         }
         Paths {
             manifest_path: third_party_dir.join("Cargo.toml"),
+            cargo_home: third_party_dir.join(".cargo"),
             third_party_dir,
             cell_dir,
         }
@@ -136,6 +138,7 @@ fn try_main() -> Result<()> {
         SubCommand::Update { .. } => {
             let _ = cargo::run_cargo(
                 &config,
+                Some(&paths.cargo_home),
                 &paths.third_party_dir,
                 &args,
                 &[

@@ -57,7 +57,13 @@ pub(crate) fn cargo_vendor(
     fs::create_dir_all(&configdir)?;
 
     log::info!("Running cargo {:?}", cmdline);
-    let cargoconfig = cargo::run_cargo(config, &paths.third_party_dir, args, &cmdline)?;
+    let cargoconfig = cargo::run_cargo(
+        config,
+        Some(&paths.cargo_home),
+        &paths.third_party_dir,
+        args,
+        &cmdline,
+    )?;
 
     fs::write(configdir.join("config"), cargoconfig)?;
 
