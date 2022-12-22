@@ -73,11 +73,6 @@ pub struct Config {
     #[serde(default)]
     pub include_top_level: bool,
 
-    /// Placeholder for backwards compat - now `include_top_level` implies
-    /// public.
-    #[serde(rename = "public_top_level", default)]
-    _public_top_level: bool,
-
     /// Include extra top-level targets for things like
     /// binary and cdylib-only packages
     #[serde(default)]
