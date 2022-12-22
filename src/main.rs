@@ -33,7 +33,9 @@ mod collection;
 mod config;
 mod fixups;
 mod index;
+mod lockfile;
 mod platform;
+mod remap;
 mod tp_metadata;
 mod vendor;
 

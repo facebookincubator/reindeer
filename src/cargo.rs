@@ -11,6 +11,7 @@
 //! get metadata about a crate. It also defines all the types for deserializing from Cargo's
 //! JSON output.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::env;
@@ -33,14 +34,29 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::platform::PlatformExpr;
+use crate::remap::write_remap_all_sources;
 use crate::Args;
 use crate::Paths;
 
 pub fn cargo_get_metadata(config: &Config, args: &Args, paths: &Paths) -> Result<Metadata> {
-    let metadata: Metadata = self::run_cargo_json(
+    let cargo_home;
+    let current_dir;
+    if paths.cargo_home.join("config").exists() {
+        cargo_home = Some(paths.cargo_home.as_path());
+        current_dir = Cow::Borrowed(&paths.third_party_dir);
+    } else {
+        cargo_home = None;
+        let temp_dir = env::temp_dir().join("reindeer");
+        let dot_cargo_dir = temp_dir.join(".cargo");
+        let cargo_config = dot_cargo_dir.join("config");
+        write_remap_all_sources(&cargo_config, &paths.third_party_dir)?;
+        current_dir = Cow::Owned(temp_dir);
+    };
+
+    let metadata: Metadata = run_cargo_json(
         config,
-        Some(&paths.cargo_home),
-        &paths.third_party_dir,
+        cargo_home,
+        &current_dir,
         args,
         &[
             "metadata",
