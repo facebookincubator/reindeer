@@ -19,6 +19,7 @@ use serde::Serialize;
 use serde::Serializer;
 
 use crate::cargo::Manifest;
+use crate::cargo::Source;
 use crate::config::BuckConfig;
 use crate::index::ExtraMetadata;
 
@@ -57,27 +58,27 @@ pub fn write(
     let mut upstream_address = "";
     let mut upstream_hash = "";
     let upstream_type = match &pkg.source {
-        Some(source) if source == "registry+https://github.com/rust-lang/crates.io-index" => {
+        Some(Source::CratesIo) => {
             cratesio_url = format!("https://crates.io/crates/{}/{}", name, version);
             upstream_address = &cratesio_url;
             "crates.io"
         }
-        Some(source) if source.starts_with("git+https://github.com/") => {
-            upstream_address = address_from_cargo_git_source(source);
-            upstream_hash = rev_from_cargo_git_source(source);
-            "github"
+        Some(Source::Git {
+            repo, commit_hash, ..
+        }) => {
+            upstream_address = repo.strip_suffix(".git").unwrap_or(repo);
+            upstream_hash = commit_hash;
+            if repo.starts_with("https://github.com/") {
+                "github"
+            } else if repo.starts_with("https://gitlab.com/") {
+                "gitlab"
+            } else if repo.starts_with("https://gitlab.redox-os.org/") {
+                "gitlab.redox-os.org"
+            } else {
+                ""
+            }
         }
-        Some(source) if source.starts_with("git+https://gitlab.com/") => {
-            upstream_address = address_from_cargo_git_source(source);
-            upstream_hash = rev_from_cargo_git_source(source);
-            "gitlab"
-        }
-        Some(source) if source.starts_with("git+https://gitlab.redox-os.org/") => {
-            upstream_address = address_from_cargo_git_source(source);
-            upstream_hash = rev_from_cargo_git_source(source);
-            "gitlab.redox-os.org"
-        }
-        Some(source) => source,
+        Some(Source::Unrecognized(source)) => source,
         None => "",
     };
 
@@ -107,25 +108,6 @@ pub fn write(
 
     out.flush()?;
     Ok(())
-}
-
-// git+https://github.com/owner/repo.git?branch=patchv1#9f8e7d6c5b4a3210
-fn address_from_cargo_git_source(source: &str) -> &str {
-    if source.starts_with("git+https://") {
-        if let Some(path_end) = source.find('?') {
-            let upstream_address = &source["git+".len()..path_end];
-            return upstream_address
-                .strip_suffix(".git")
-                .unwrap_or(upstream_address);
-        }
-    }
-    ""
-}
-fn rev_from_cargo_git_source(source: &str) -> &str {
-    if let Some(hash_begin) = source.find('#') {
-        return &source[hash_begin + 1..];
-    }
-    ""
 }
 
 enum License {

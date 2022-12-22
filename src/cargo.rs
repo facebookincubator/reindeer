@@ -234,7 +234,7 @@ pub struct Manifest {
     /// Package description
     pub description: Option<String>,
     /// Source registry for package
-    pub source: Option<String>,
+    pub source: Option<Source>,
     /// Package dependencies (unresolved)
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub dependencies: Vec<ManifestDep>,
@@ -573,5 +573,75 @@ impl Display for Edition {
             Edition::Rust2021 => "2021",
         };
         fmt.write_str(edition)
+    }
+}
+
+#[derive(Debug)]
+pub enum Source {
+    CratesIo,
+    Git {
+        repo: String,
+        reference: GitRef,
+        commit_hash: String,
+    },
+    Unrecognized(String),
+}
+
+#[derive(Debug)]
+pub enum GitRef {
+    /// ?rev=
+    Revision,
+    /// ?branch=
+    Branch(String),
+    /// ?tag=
+    Tag(String),
+    /// Not pinned to any of the above.
+    Head,
+}
+
+impl<'de> Deserialize<'de> for Source {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let source = String::deserialize(deserializer)?;
+        Ok(parse_source(&source).unwrap_or(Source::Unrecognized(source)))
+    }
+}
+
+fn parse_source(source: &str) -> Option<Source> {
+    if source == "registry+https://github.com/rust-lang/crates.io-index" {
+        Some(Source::CratesIo)
+    } else if let Some(rest) = source.strip_prefix("git+") {
+        // Git sources look like:
+        //   git+https://github.com/owner/repo.git?branch=patchv1#9f8e7d6c5b4a3210
+        // The #commithash is always present; the ?urlparam is optional.
+        let (address, commit_hash) = rest.split_once('#')?;
+        if let Some((repo, reference)) = address.split_once('?') {
+            Some(Source::Git {
+                repo: repo.to_owned(),
+                reference: if let Some(rev) = reference.strip_prefix("rev=") {
+                    if rev != commit_hash {
+                        return None;
+                    }
+                    GitRef::Revision
+                } else if let Some(branch) = reference.strip_prefix("branch=") {
+                    GitRef::Branch(branch.to_owned())
+                } else if let Some(tag) = reference.strip_prefix("tag=") {
+                    GitRef::Tag(tag.to_owned())
+                } else {
+                    return None;
+                },
+                commit_hash: commit_hash.to_owned(),
+            })
+        } else {
+            Some(Source::Git {
+                repo: address.to_owned(),
+                reference: GitRef::Head,
+                commit_hash: commit_hash.to_owned(),
+            })
+        }
+    } else {
+        None
     }
 }
