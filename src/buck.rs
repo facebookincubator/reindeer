@@ -286,6 +286,11 @@ pub struct RustCommon {
 ///         "deps": [...],
 ///     },
 /// }
+///
+/// Even though we do not run `buildifier` anymore, this style is preferred
+/// because we want to consistently write fields with buck meaning as keywords
+/// (e.g. `field = value`) rather than as maps with arbitrary keys
+/// (e.g. `"key": value`).
 /// ```
 fn serialize_platforms_dict<S>(
     map: &mut S,

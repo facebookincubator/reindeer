@@ -17,12 +17,9 @@ use std::iter;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command;
-use std::process::Stdio;
 use std::sync::mpsc;
 use std::sync::Mutex;
 
-use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
 use rayon::prelude::*;
@@ -578,15 +575,6 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
         log::trace!("Metadata {:#?}", metadata);
     }
 
-    let buildifier = config.buildifier.as_ref().map(|buildifier| {
-        let buildifier = Path::new(buildifier);
-        if buildifier.iter().nth(1).is_some() {
-            paths.third_party_dir.join(buildifier)
-        } else {
-            buildifier.to_owned()
-        }
-    });
-
     let index = index::Index::new(config.include_top_level, config.extra_top_levels, &metadata);
 
     let context = &RuleContext {
@@ -625,9 +613,6 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
     if stdout {
         let mut out = Vec::new();
         buck::write_buckfile(&config.buck, rules.iter(), &mut out).context("writing buck file")?;
-        if let Some(buildifier) = buildifier.as_ref() {
-            out = buildify(buildifier, &out)?;
-        }
         // Ignore error, for example pipe closed resulting from
         // `reindeer buckify --stdout | head`.
         let _ = io::stdout().write_all(&out);
@@ -641,9 +626,6 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
 
         let mut out = Vec::new();
         buck::write_buckfile(&config.buck, rules.iter(), &mut out).context("writing buck file")?;
-        if let Some(buildifier) = buildifier.as_ref() {
-            out = buildify(buildifier, &out)?;
-        }
         if !matches!(fs::read(&buckpath), Ok(x) if x == out) {
             fs::write(&buckpath, out)
                 .with_context(|| format!("write {} file", buckpath.display()))?;
@@ -682,32 +664,4 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
     );
 
     Ok(())
-}
-
-fn buildify(buildifier: &Path, content: &[u8]) -> Result<Vec<u8>> {
-    let mut child = Command::new(buildifier)
-        .arg("-type=build")
-        .arg("-buildifier_disable=label")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("executing buildifier `{}`", buildifier.display()))?;
-
-    let mut stdin = child.stdin.take().unwrap();
-    let _ = stdin.write_all(content);
-    drop(stdin);
-
-    let output = child.wait_with_output().context("executing buildifier")?;
-    if output.status.success() {
-        Ok(output.stdout)
-    } else if let Some(code) = output.status.code() {
-        bail!(
-            "buildifier failed with code {} and stderr {}",
-            code,
-            String::from_utf8_lossy(&output.stderr),
-        );
-    } else {
-        bail!("buildifier failed");
-    }
 }

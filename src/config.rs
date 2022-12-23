@@ -11,7 +11,6 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -19,9 +18,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use anyhow::Result;
-use serde::de::Visitor;
 use serde::Deserialize;
-use serde::Deserializer;
 
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
@@ -60,10 +57,6 @@ pub struct Config {
     ///Provide additional information to resolve unresolved fixup errors
     #[serde(default)]
     pub unresolved_fixup_error_message: Option<String>,
-
-    /// Path to buildifier (if relative, relative to here)
-    #[serde(default, deserialize_with = "deserialize_buildifier")]
-    pub buildifier: Option<String>,
 
     /// Path to buck cell root (if relative, relative to here)
     #[serde(default)]
@@ -239,29 +232,4 @@ fn try_read_config(path: &Path) -> Result<Config> {
     log::debug!("Read config {:#?}", config);
 
     Ok(config)
-}
-
-fn deserialize_buildifier<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct BuildifierVisitor;
-
-    impl<'de> Visitor<'de> for BuildifierVisitor {
-        type Value = Option<String>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("`buildifier = true` or `buildifier = \"path/to/buildifier\"")
-        }
-
-        fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
-            Ok(value.then(|| "buildifier".to_owned()))
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
-            Ok(Some(value.to_owned()))
-        }
-    }
-
-    deserializer.deserialize_any(BuildifierVisitor)
 }
