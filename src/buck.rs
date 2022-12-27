@@ -13,14 +13,15 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::fmt::Display;
-use std::io::Error;
 use std::io::Write;
 use std::path::PathBuf;
 
+use anyhow::Result;
 use semver::Version;
 use serde::ser::SerializeMap;
 use serde::ser::Serializer;
 use serde::Serialize;
+use serde_starlark::FunctionCall;
 
 use crate::collection::SetOrMap;
 use crate::config::BuckConfig;
@@ -32,6 +33,7 @@ use crate::platform::PredicateParseError;
 
 /// Only the name of a target. Does not include package path, nor leading colon.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
+#[serde(transparent)]
 pub struct Name(pub String);
 
 impl Display for Name {
@@ -299,15 +301,15 @@ fn serialize_platforms_dict<S>(
 where
     S: SerializeMap,
 {
-    #[derive(Serialize)]
-    #[serde(rename = "call:dict")]
-    struct Dict<T>(T);
-
     struct Platforms<'a>(&'a BTreeMap<PlatformName, PlatformRustCommon>);
 
     impl Serialize for Platforms<'_> {
         fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-            ser.collect_map(self.0.iter().map(|(name, value)| (name, Dict(value))))
+            ser.collect_map(
+                self.0
+                    .iter()
+                    .map(|(name, value)| (name, FunctionCall::new("dict", value))),
+            )
         }
     }
 
@@ -785,45 +787,29 @@ impl Rule {
         }
     }
 
-    pub fn render(&self, config: &BuckConfig, out: &mut impl Write) -> Result<(), Error> {
-        match self {
-            Rule::Alias(alias) => {
-                out.write_all(serde_starlark::function_call(&config.alias, &alias)?.as_bytes())?;
-            }
-            Rule::Binary(bin) => {
-                out.write_all(
-                    serde_starlark::function_call(&config.rust_binary, &bin)?.as_bytes(),
-                )?;
-            }
+    pub fn render(&self, config: &BuckConfig, out: &mut impl Write) -> Result<()> {
+        use serde_starlark::Serializer;
+        let serialized = match self {
+            Rule::Alias(alias) => FunctionCall::new(&config.alias, alias).serialize(Serializer),
+            Rule::Binary(bin) => FunctionCall::new(&config.rust_binary, bin).serialize(Serializer),
             Rule::Library(lib) => {
-                out.write_all(
-                    serde_starlark::function_call(&config.rust_library, &lib)?.as_bytes(),
-                )?;
+                FunctionCall::new(&config.rust_library, lib).serialize(Serializer)
             }
             Rule::BuildscriptGenruleArgs(lib) => {
-                out.write_all(
-                    serde_starlark::function_call(&config.buildscript_genrule_args, &lib)?
-                        .as_bytes(),
-                )?;
+                FunctionCall::new(&config.buildscript_genrule_args, lib).serialize(Serializer)
             }
             Rule::BuildscriptGenruleSrcs(lib) => {
-                out.write_all(
-                    serde_starlark::function_call(&config.buildscript_genrule_srcs, &lib)?
-                        .as_bytes(),
-                )?;
+                FunctionCall::new(&config.buildscript_genrule_srcs, lib).serialize(Serializer)
             }
             Rule::CxxLibrary(lib) => {
-                out.write_all(
-                    serde_starlark::function_call(&config.cxx_library, &lib)?.as_bytes(),
-                )?;
+                FunctionCall::new(&config.cxx_library, lib).serialize(Serializer)
             }
             Rule::PrebuiltCxxLibrary(lib) => {
-                out.write_all(
-                    serde_starlark::function_call(&config.prebuilt_cxx_library, &lib)?.as_bytes(),
-                )?;
+                FunctionCall::new(&config.prebuilt_cxx_library, lib).serialize(Serializer)
             }
-        };
-        out.write_all(b"\n")
+        }?;
+        out.write_all(serialized.as_bytes())?;
+        Ok(())
     }
 }
 
@@ -852,7 +838,7 @@ pub fn write_buckfile<'a>(
     config: &BuckConfig,
     rules: impl Iterator<Item = &'a Rule>,
     out: &mut impl Write,
-) -> Result<(), Error> {
+) -> Result<()> {
     out.write_all(config.generated_file_header.as_bytes())?;
     if !config.generated_file_header.is_empty() {
         out.write_all(b"\n")?;
