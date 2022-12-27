@@ -13,7 +13,6 @@ use std::fmt::Display;
 
 use nom::error::convert_error;
 use nom::error::VerboseError;
-use serde::de::Deserializer;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -43,23 +42,15 @@ pub fn platform_names_for_expr<'config>(
 // This platform just has common `deps` deps (not `platform_deps`)
 const DEFAULT_PLATFORM: &str = "DEFAULT";
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-#[derive(Serialize)]
 /// A name of a platform, as used in Config.
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct PlatformName(String);
 
 impl PlatformName {
     pub fn is_default(&self) -> bool {
         self.0 == DEFAULT_PLATFORM
-    }
-}
-
-impl<'de> Deserialize<'de> for PlatformName {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        String::deserialize(deserializer).map(PlatformName)
     }
 }
 
@@ -72,21 +63,13 @@ impl Display for PlatformName {
 /// A Cargo-style platform predicate expression
 /// such as `cfg(target_arch = "z80")`.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct PlatformExpr(String);
 
 impl From<String> for PlatformExpr {
     fn from(s: String) -> Self {
         PlatformExpr(s)
-    }
-}
-
-impl<'de> Deserialize<'de> for PlatformExpr {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        String::deserialize(deserializer).map(PlatformExpr)
     }
 }
 
