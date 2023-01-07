@@ -25,6 +25,7 @@ use crate::cargo::ManifestTarget;
 use crate::cargo::Metadata;
 use crate::cargo::Node;
 use crate::cargo::NodeDep;
+use crate::cargo::NodeDepKind;
 use crate::cargo::PkgId;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformPredicate;
@@ -93,6 +94,7 @@ pub struct ResolvedDep<'meta> {
     pub package: &'meta Manifest,
     pub platform: Option<PlatformExpr>,
     pub rename: &'meta str,
+    pub dep_kind: &'meta NodeDepKind,
 }
 
 impl<'meta> Index<'meta> {
@@ -156,7 +158,7 @@ impl<'meta> Index<'meta> {
         // anything in top_levels, or first-order dependencies of root_pkg.
         let public_set = tmp
             .resolved_deps(tmp.root_pkg)
-            .map(|(rename, pkg)| (&pkg.id, dep_renamed.get(rename).cloned()))
+            .map(|(rename, _dep_kind, pkg)| (&pkg.id, dep_renamed.get(rename).cloned()))
             .chain(top_levels.iter().map(|pkgid| (*pkgid, None)))
             .collect();
 
@@ -252,15 +254,27 @@ impl<'meta> Index<'meta> {
     fn resolved_deps(
         &self,
         pkg: &Manifest,
-    ) -> impl Iterator<Item = (&'meta str, &'meta Manifest)> + '_ {
+    ) -> impl Iterator<Item = (&'meta str, &'meta NodeDepKind, &'meta Manifest)> + '_ {
         self.pkgid_to_node
             .get(&pkg.id)
             .unwrap()
             .deps
             .iter()
-            .map(|NodeDep { name, pkg, .. }| {
-                (name.as_str(), self.pkgid_to_pkg.get(pkg).cloned().unwrap())
-            })
+            .flat_map(
+                |NodeDep {
+                     pkg,
+                     name,
+                     dep_kinds,
+                 }| {
+                    dep_kinds.iter().map(|dep_kind| {
+                        (
+                            name.as_deref().or(dep_kind.extern_name.as_deref()).unwrap(),
+                            dep_kind,
+                            self.pkgid_to_pkg.get(pkg).copied().unwrap(),
+                        )
+                    })
+                },
+            )
     }
 
     /// Return the set of (unresolved) dependencies for a particular target.
@@ -299,40 +313,42 @@ impl<'meta> Index<'meta> {
         }
 
         // Resolved dependencies filtered by deps for target
-        self.resolved_deps(pkg).filter_map(move |(rename, dep)| {
-            let mdeps = deps.get(dep.name.as_str())?;
+        self.resolved_deps(pkg)
+            .filter_map(move |(rename, dep_kind, dep)| {
+                let mdeps = deps.get(dep.name.as_str())?;
 
-            let mut platforms = vec![]; // empty = unconditional
+                let mut platforms = vec![]; // empty = unconditional
 
-            // If there are multiple manifestdeps then union all the
-            // target predicates, where "unconditional" beats all.
-            // (This is probably very over-engineered because all the times
-            // this happens seem to be unconditional OR condition).
-            for mdep in mdeps {
-                if let Some(plat) = &mdep.target {
-                    match PlatformPredicate::parse(plat) {
-                        Ok(pred) => platforms.push(pred),
-                        Err(err) => {
-                            log::error!("Failed to parse predicate for {}: {}", dep, err);
-                            continue;
+                // If there are multiple manifestdeps then union all the
+                // target predicates, where "unconditional" beats all.
+                // (This is probably very over-engineered because all the times
+                // this happens seem to be unconditional OR condition).
+                for mdep in mdeps {
+                    if let Some(plat) = &mdep.target {
+                        match PlatformPredicate::parse(plat) {
+                            Ok(pred) => platforms.push(pred),
+                            Err(err) => {
+                                log::error!("Failed to parse predicate for {}: {}", dep, err);
+                                continue;
+                            }
                         }
+                    } else {
+                        // No platform condition = unconditional
+                        platforms = vec![];
+                        break;
                     }
-                } else {
-                    // No platform condition = unconditional
-                    platforms = vec![];
-                    break;
                 }
-            }
 
-            Some(ResolvedDep {
-                package: dep,
-                platform: match &*platforms {
-                    [] => None,
-                    [plat] => Some(format!("cfg({})", plat).into()),
-                    _ => Some(format!("cfg({})", PlatformPredicate::Any(platforms)).into()),
-                },
-                rename,
+                Some(ResolvedDep {
+                    package: dep,
+                    platform: match &*platforms {
+                        [] => None,
+                        [plat] => Some(format!("cfg({})", plat).into()),
+                        _ => Some(format!("cfg({})", PlatformPredicate::Any(platforms)).into()),
+                    },
+                    rename,
+                    dep_kind,
+                })
             })
-        })
     }
 }

@@ -41,6 +41,7 @@ use crate::buckify::normalize_dotdot;
 use crate::buckify::relative_path;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
+use crate::cargo::NodeDepKind;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::index::Index;
@@ -615,7 +616,16 @@ impl<'meta> Fixups<'meta> {
     /// depenedencies, or it could add/remove them. This returns the Buck rule reference
     /// and the corresponding package if there is one (so the caller can limit its enumeration
     /// to only targets which were actually used).
-    pub fn compute_deps(&self) -> Result<Vec<(Option<&'meta Manifest>, RuleRef, Option<String>)>> {
+    pub fn compute_deps(
+        &self,
+    ) -> Result<
+        Vec<(
+            Option<&'meta Manifest>,
+            RuleRef,
+            Option<&'meta str>,
+            &'meta NodeDepKind,
+        )>,
+    > {
         let mut ret = vec![];
 
         let mut omits = HashMap::new();
@@ -632,6 +642,7 @@ impl<'meta> Fixups<'meta> {
             package,
             platform,
             rename,
+            dep_kind,
         } in self
             .index
             .resolved_deps_for_target(self.package, self.target)
@@ -655,7 +666,7 @@ impl<'meta> Fixups<'meta> {
 
             let rename = match tgtname {
                 Some(ref tgtname) if tgtname == rename => None,
-                Some(_) | None => Some(rename.to_owned()),
+                Some(_) | None => Some(rename),
             };
 
             if all_omits.contains(original_rename) {
@@ -687,7 +698,8 @@ impl<'meta> Fixups<'meta> {
                         Some(package),
                         RuleRef::from(self.index.private_rule_name(package))
                             .with_platform(Some(&platform_expr)),
-                        rename.clone(),
+                        rename,
+                        dep_kind,
                     ));
 
                     // Since we've already added the platform-excluding rule, skip the generic rule
@@ -702,6 +714,7 @@ impl<'meta> Fixups<'meta> {
                 RuleRef::from(self.index.private_rule_name(package))
                     .with_platform(platform.as_ref()),
                 rename,
+                dep_kind,
             ))
         }
 
@@ -711,6 +724,7 @@ impl<'meta> Fixups<'meta> {
                     None,
                     RuleRef::new(dep.to_string()).with_platform(platform),
                     None,
+                    &NodeDepKind::ORDINARY,
                 )
             }));
             for buildscript in &config.buildscript {
@@ -732,6 +746,7 @@ impl<'meta> Fixups<'meta> {
                         ))
                         .with_platform(platform),
                         None,
+                        &NodeDepKind::ORDINARY,
                     ));
                 }
                 if let BuildscriptFixup::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup {
@@ -755,7 +770,8 @@ impl<'meta> Fixups<'meta> {
                             ))
                             .with_platform(platform),
                             None,
-                        ))
+                            &NodeDepKind::ORDINARY,
+                        ));
                     }
                 }
             }

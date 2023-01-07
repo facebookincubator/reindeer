@@ -133,6 +133,11 @@ target_arch = ["x86_64"]
 # lots packages being managed.
 versioned_dirs = true
 
+# Support Cargo's unstable "artifact dependencies" functionality, RFC 3028.
+# This requires a version of Cargo containing
+# https://github.com/rust-lang/cargo/pull/11550.
+# bindeps = false
+
 # Configuration for generated BUCK file
 [buck]
 # Name of the generated file

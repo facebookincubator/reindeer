@@ -82,12 +82,18 @@ pub(crate) fn run_cargo(
     args: &Args,
     opts: &[&str],
 ) -> Result<Vec<u8>> {
-    let cmdline: Vec<_> = args
+    let mut cmdline: Vec<_> = args
         .cargo_options
         .iter()
         .map(String::as_str)
         .chain(opts.iter().cloned())
         .collect();
+    let mut envs = Vec::new();
+    if config.cargo.bindeps {
+        cmdline.push("-Zbindeps");
+        envs.push(("RUSTC_BOOTSTRAP", "1"));
+    }
+
     let debug = args.debug;
 
     log::debug!(
@@ -115,6 +121,7 @@ pub(crate) fn run_cargo(
     cargo_command
         .current_dir(current_dir)
         .args(&cmdline)
+        .envs(envs)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -346,6 +353,9 @@ pub struct ManifestDep {
     /// Set of (additional) features
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub features: BTreeSet<String>,
+    /// An "artifact dependency" for depending on a binary instead of (or in
+    /// addition to) a package's library crate
+    pub artifact: Option<ArtifactDep>,
     /// Target platform for target-specific dependencies
     pub target: Option<PlatformExpr>,
     /// Registry this dependency is from
@@ -368,6 +378,21 @@ impl Default for DepKind {
     fn default() -> Self {
         DepKind::Normal
     }
+}
+
+#[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ArtifactDep {
+    kinds: Vec<ArtifactKind>,
+    lib: bool,
+    target: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy)]
+#[serde(rename_all = "kebab-case")]
+pub enum ArtifactKind {
+    Bin,
+    Staticlib,
+    Cdylib,
 }
 
 /// Package build target
@@ -496,18 +521,57 @@ pub struct Node {
 pub struct NodeDep {
     /// Package id for dependency
     pub pkg: PkgId,
-    /// Local name for dependency (local name for crate)
-    pub name: String,
+    /// Local manifest's name for the dependency. Deprecated -- if using `-Z
+    /// bindeps`, use the `extern_name` from `NodeDepKind` instead of this.
+    #[serde(deserialize_with = "deserialize_empty_string_as_none")]
+    pub name: Option<String>,
     #[serde(default)]
     pub dep_kinds: Vec<NodeDepKind>,
+}
+
+fn deserialize_empty_string_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let string = String::deserialize(deserializer)?;
+
+    // Cargo metadata contains "name":"" for artifact dependencies.
+    if string.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(string))
+    }
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
 pub struct NodeDepKind {
     #[serde(deserialize_with = "deserialize_default_from_null")]
-    kind: DepKind,
+    pub kind: DepKind,
     /// Platform config
-    target: Option<PlatformExpr>,
+    pub target: Option<PlatformExpr>,
+
+    // vvvvv The fields below are introduced for `-Z bindeps`.
+    /// Artifact's crate type, e.g. staticlib, cdylib, bin...
+    pub artifact: Option<ArtifactKind>,
+    /// What the manifest calls the crate.
+    pub extern_name: Option<String>,
+    /// Equivalent to `{ target = "..." }` in an artifact dependency requirement.
+    pub compile_target: Option<String>,
+    /// Executable name for an artifact binary dependency.
+    pub bin_name: Option<String>,
+    // ^^^^^ The fields above are introduced for `-Z bindeps`.
+}
+
+impl NodeDepKind {
+    // The dep_kind assumed for `extra_deps` fixups.
+    pub const ORDINARY: Self = NodeDepKind {
+        kind: DepKind::Normal,
+        target: None,
+        artifact: None,
+        extern_name: None,
+        compile_target: None,
+        bin_name: None,
+    };
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq)]

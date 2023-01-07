@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::Mutex;
 
+use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
 use rayon::prelude::*;
@@ -37,6 +38,7 @@ use crate::buck::RustCommon;
 use crate::buck::RustLibrary;
 use crate::buck::Visibility;
 use crate::cargo::cargo_get_metadata;
+use crate::cargo::ArtifactKind;
 use crate::cargo::Edition;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
@@ -347,7 +349,25 @@ fn generate_target_rules<'scope>(
     // Compute set of dependencies any rule we generate here will need. They will only
     // be emitted if we actually emit some rules below.
     let mut dep_pkgs = Vec::new();
-    for (deppkg, dep, rename) in fixups.compute_deps()? {
+    for (deppkg, dep, rename, dep_kind) in fixups.compute_deps()? {
+        match dep_kind.artifact {
+            None => {}
+            Some(ArtifactKind::Bin) => {
+                if dep_kind.bin_name.is_none() {
+                    bail!("missing bin_name for artifact dependency {dep:?}");
+                }
+            }
+            Some(kind @ (ArtifactKind::Staticlib | ArtifactKind::Cdylib)) => {
+                bail!("unsupported artifact kind {kind:?} for dependency {dep:?}");
+            }
+        }
+        if let Some(compile_target) = &dep_kind.compile_target {
+            // Compile_target is not implemented yet.
+            //
+            // For example artifact dependencies allow a crate to depend on a
+            // binary built for a different architecture.
+            bail!("unsupported compile_target {compile_target:?} for dependency {dep:?}");
+        }
         if dep.has_platform() {
             // If this is a platform-specific dependency, find the
             // matching supported platform(s) and insert it into the appropriate
@@ -369,25 +389,23 @@ fn generate_target_rules<'scope>(
                 if dep.filter(platform)? {
                     let dep = dep.clone();
 
-                    #[allow(clippy::collapsible_else_if)]
-                    if let Some(rename) = rename.clone() {
-                        if is_default {
-                            // Just use normal deps
-                            base.named_deps.insert(rename, dep);
-                        } else {
-                            perplat
-                                .entry(name.clone())
-                                .or_default()
-                                .named_deps
-                                .insert(rename, dep);
-                        }
+                    let recipient = if is_default {
+                        // Just use normal deps
+                        &mut base
                     } else {
-                        if is_default {
-                            // Normal deps
-                            base.deps.insert(dep);
-                        } else {
-                            perplat.entry(name.clone()).or_default().deps.insert(dep);
-                        }
+                        perplat.entry(name.clone()).or_default()
+                    };
+
+                    if dep_kind.artifact == Some(ArtifactKind::Bin) {
+                        let target_name = dep.target.strip_prefix(':').unwrap();
+                        let bin_name = dep_kind.bin_name.as_ref().unwrap();
+                        let env = format!("{}-{}", target_name, bin_name);
+                        let location = format!("$(location {}-{})", dep.target, bin_name);
+                        recipient.env.insert(env, location);
+                    } else if let Some(rename) = rename {
+                        recipient.named_deps.insert(rename.to_owned(), dep);
+                    } else {
+                        recipient.deps.insert(dep);
                     }
                     dep_pkgs.extend(deppkg);
                 }
@@ -395,8 +413,14 @@ fn generate_target_rules<'scope>(
         } else {
             // Otherwise this is not platform-specific and can go into the
             // generic dependencies.
-            if let Some(rename) = rename {
-                base.named_deps.insert(rename, dep);
+            if dep_kind.artifact == Some(ArtifactKind::Bin) {
+                let target_name = dep.target.strip_prefix(':').unwrap();
+                let bin_name = dep_kind.bin_name.as_ref().unwrap();
+                let env = format!("{}-{}", target_name, bin_name);
+                let location = format!("$(location {}-{})", dep.target, bin_name);
+                base.env.insert(env, location);
+            } else if let Some(rename) = rename {
+                base.named_deps.insert(rename.to_owned(), dep);
             } else {
                 base.deps.insert(dep);
             }
