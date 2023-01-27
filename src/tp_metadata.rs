@@ -15,6 +15,8 @@ use std::io::BufWriter;
 use std::io::Write as _;
 
 use anyhow::Result;
+use serde::ser::SerializeMap as _;
+use serde::ser::SerializeSeq as _;
 use serde::Serialize;
 use serde::Serializer;
 
@@ -23,17 +25,42 @@ use crate::cargo::Source;
 use crate::config::BuckConfig;
 use crate::index::ExtraMetadata;
 
-#[derive(Serialize)]
 struct TpMetadata<'a> {
     licenses: Vec<License>,
     maintainers: Vec<&'a str>,
     name: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
     owner: Option<&'a str>,
     upstream_address: &'a str,
     upstream_hash: &'a str,
     upstream_type: &'a str,
     version: &'a semver::Version,
+}
+
+impl Serialize for TpMetadata<'_> {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let TpMetadata {
+            licenses,
+            maintainers,
+            name,
+            owner,
+            upstream_address,
+            upstream_hash,
+            upstream_type,
+            version,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("licenses", &OneLineList(licenses))?;
+        map.serialize_entry("maintainers", &OneLineList(maintainers))?;
+        if let Some(owner) = owner {
+            map.serialize_entry("owner", owner)?;
+        }
+        map.serialize_entry("name", name)?;
+        map.serialize_entry("upstream_address", upstream_address)?;
+        map.serialize_entry("upstream_hash", upstream_hash)?;
+        map.serialize_entry("upstream_type", upstream_type)?;
+        map.serialize_entry("version", version)?;
+        map.end()
+    }
 }
 
 pub fn write(
@@ -100,11 +127,8 @@ pub fn write(
         out.write_all(b"\n")?;
     }
 
-    out.write_all(b"METADATA = ")?;
-    let json_formatter = PrettyWithTrailingCommasFormatter::new();
-    let mut serializer = serde_json::Serializer::with_formatter(&mut out, json_formatter);
-    metadata.serialize(&mut serializer)?;
-    out.write_all(b"\n")?;
+    let metadata_assignment = serde_starlark::Assignment::new("METADATA", metadata);
+    write!(out, "{}", serde_starlark::to_string(&metadata_assignment)?)?;
 
     out.flush()?;
     Ok(())
@@ -235,93 +259,14 @@ fn split_spdx_license_list(spdx: &str) -> Vec<License> {
     }
 }
 
-/// Passthrough to `serde_json::ser::PrettyFormatter`,
-/// but add trailing commas in arrays and objects.
-struct PrettyWithTrailingCommasFormatter {
-    formatter: serde_json::ser::PrettyFormatter<'static>,
-    has_value: bool,
-}
+struct OneLineList<'a, T: Serialize>(&'a [T]);
 
-impl PrettyWithTrailingCommasFormatter {
-    fn new() -> Self {
-        PrettyWithTrailingCommasFormatter {
-            formatter: serde_json::ser::PrettyFormatter::with_indent(b"    "),
-            has_value: false,
+impl<T: Serialize> Serialize for OneLineList<'_, T> {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let mut seq = ser.serialize_seq(Some(serde_starlark::ONELINE))?;
+        for element in self.0 {
+            seq.serialize_element(element)?;
         }
-    }
-}
-
-impl serde_json::ser::Formatter for PrettyWithTrailingCommasFormatter {
-    fn begin_array<W>(&mut self, writer: &mut W) -> io::Result<()>
-    where
-        W: ?Sized + io::Write,
-    {
-        self.has_value = false;
-        self.formatter.begin_array(writer)
-    }
-
-    fn end_array<W>(&mut self, writer: &mut W) -> io::Result<()>
-    where
-        W: ?Sized + io::Write,
-    {
-        if self.has_value {
-            writer.write_all(b",")?;
-        }
-        self.formatter.end_array(writer)
-    }
-
-    fn begin_array_value<W>(&mut self, writer: &mut W, first: bool) -> io::Result<()>
-    where
-        W: ?Sized + io::Write,
-    {
-        self.formatter.begin_array_value(writer, first)
-    }
-
-    fn end_array_value<W>(&mut self, writer: &mut W) -> io::Result<()>
-    where
-        W: ?Sized + io::Write,
-    {
-        self.has_value = true;
-        self.formatter.end_array_value(writer)
-    }
-
-    fn begin_object<W>(&mut self, writer: &mut W) -> io::Result<()>
-    where
-        W: ?Sized + io::Write,
-    {
-        self.has_value = false;
-        self.formatter.begin_object(writer)
-    }
-
-    fn end_object<W>(&mut self, writer: &mut W) -> io::Result<()>
-    where
-        W: ?Sized + io::Write,
-    {
-        if self.has_value {
-            writer.write_all(b",")?;
-        }
-        self.formatter.end_object(writer)
-    }
-
-    fn begin_object_key<W>(&mut self, writer: &mut W, first: bool) -> io::Result<()>
-    where
-        W: ?Sized + io::Write,
-    {
-        self.formatter.begin_object_key(writer, first)
-    }
-
-    fn begin_object_value<W>(&mut self, writer: &mut W) -> io::Result<()>
-    where
-        W: ?Sized + io::Write,
-    {
-        self.formatter.begin_object_value(writer)
-    }
-
-    fn end_object_value<W>(&mut self, writer: &mut W) -> io::Result<()>
-    where
-        W: ?Sized + io::Write,
-    {
-        self.has_value = true;
-        self.formatter.end_object_value(writer)
+        seq.end()
     }
 }
