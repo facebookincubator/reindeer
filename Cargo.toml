@@ -13,7 +13,7 @@ dunce = "1.0.2"
 env_logger = "0.7"
 globset = "0.4.7"
 ignore = "0.4"
-indexmap = { version = "1.9.1", features = ["rayon", "serde-1"] }
+indexmap = { version = "1.9.2", features = ["arbitrary", "rayon", "serde-1"] }
 itertools = "0.10.3"
 log = { version = "0.4.17", features = ["kv_unstable", "kv_unstable_std"] }
 measure_time = "0.8.2"
