@@ -139,15 +139,16 @@ impl PartialOrd for BuckPath {
 pub enum Visibility {
     Public,
     Private,
+    Custom(Vec<String>),
 }
 
 impl Serialize for Visibility {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        let buck_visibility: &[&str] = match self {
-            Visibility::Public => &["PUBLIC"],
-            Visibility::Private => &[],
-        };
-        buck_visibility.serialize(ser)
+        match self {
+            Visibility::Public => ["PUBLIC"].as_slice().serialize(ser),
+            Visibility::Private => (&[] as &[&str]).serialize(ser),
+            Visibility::Custom(custom_visiblity) => custom_visiblity.serialize(ser),
+        }
     }
 }
 

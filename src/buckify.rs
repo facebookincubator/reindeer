@@ -488,7 +488,7 @@ fn generate_target_rules<'scope>(
             rules.push(Rule::Alias(Alias {
                 name: index.public_rule_name(pkg),
                 actual: index.private_rule_name(pkg),
-                visibility: Visibility::Public,
+                visibility: fixups.public_visibility(),
             }));
         }
 
@@ -558,7 +558,7 @@ fn generate_target_rules<'scope>(
             rules.push(Rule::Alias(Alias {
                 name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
                 actual: actual.clone(),
-                visibility: Visibility::Public,
+                visibility: fixups.public_visibility(),
             }));
         }
 

@@ -125,6 +125,13 @@ impl<'meta> Fixups<'meta> {
             fixup
         };
 
+        if fixup_config.custom_visibility.is_some() && !index.is_public(package) {
+            return Err(anyhow!(
+                "only public packages can have a fixup `visibility`."
+            ))
+            .with_context(|| format!("package {package} is private."));
+        }
+
         Ok(Fixups {
             third_party_dir: paths.third_party_dir.to_path_buf(),
             cell_dir: paths.cell_dir.to_path_buf(),
@@ -152,6 +159,13 @@ impl<'meta> Fixups<'meta> {
                 self.target.kind.contains(kind)
                     && name.as_ref().map_or(true, |name| &self.target.name == name)
             }),
+        }
+    }
+
+    pub fn public_visibility(&self) -> Visibility {
+        match self.fixup_config.custom_visibility.as_deref() {
+            Some(visibility) => Visibility::Custom(visibility.to_vec()),
+            None => Visibility::Public,
         }
     }
 
@@ -355,7 +369,7 @@ impl<'meta> Fixups<'meta> {
                                 name,
                             )),
                             actual: actual.clone(),
-                            visibility: Visibility::Public,
+                            visibility: self.public_visibility(),
                         });
                         res.push(rule);
                     }
@@ -473,7 +487,7 @@ impl<'meta> Fixups<'meta> {
                                     static_lib.file_name().unwrap().to_string_lossy(),
                                 )),
                                 actual: actual.clone(),
-                                visibility: Visibility::Public,
+                                visibility: self.public_visibility(),
                             });
                             res.push(rule);
                         }

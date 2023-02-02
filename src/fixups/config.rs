@@ -30,6 +30,13 @@ use crate::platform::PlatformExpr;
 #[derive(Debug, Deserialize, Default, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixupConfigFile {
+    /// Limit an exposed crate's `alias`'s `visibility` to this.
+    /// This only has an effect for top-level crates. Exposed crates
+    /// by default get `visibility = ["PUBLIC"]`. Sometimes you want to
+    /// discourage use of some crate by limiting its visibility.
+    #[serde(default, rename = "visibility")]
+    pub custom_visibility: Option<Vec<String>>,
+
     /// Omit a target
     #[serde(default)]
     pub omit_targets: BTreeSet<String>,
