@@ -55,7 +55,7 @@ pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) 
     };
     let report = Report::generate(&db, &lockfile, &settings);
 
-    let mut fixer = Fixer::new(&cargo_toml).context("initializing fixer")?;
+    let mut fixer = Fixer::new(cargo_toml).context("initializing fixer")?;
 
     for v in &report.vulnerabilities.list {
         let adv = &v.advisory;

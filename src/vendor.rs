@@ -120,7 +120,7 @@ fn filter_checksum_files(
         gitignore
     );
 
-    for entry in fs::read_dir(&third_party_dir.join(vendordir))? {
+    for entry in fs::read_dir(third_party_dir.join(vendordir))? {
         let entry = entry?;
         let path = entry.path(); // full/path/to/vendor/foo-1.2.3
         let checksum = path.join(".cargo-checksum.json"); // full/path/to/vendor/foo-1.2.3/.cargo-checksum.json
