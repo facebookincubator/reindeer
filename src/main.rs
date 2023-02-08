@@ -29,6 +29,7 @@ mod audit_sec;
 mod buck;
 mod buckify;
 mod cargo;
+mod cfg;
 mod collection;
 mod config;
 mod fixups;
