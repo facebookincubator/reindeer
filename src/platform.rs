@@ -175,8 +175,10 @@ mod parser {
     use nom::character::complete::char;
     use nom::character::complete::multispace0;
     use nom::character::complete::one_of;
+    use nom::character::complete::satisfy;
     use nom::combinator::cut;
     use nom::combinator::map;
+    use nom::combinator::not;
     use nom::combinator::opt;
     use nom::error::context;
     use nom::error::ContextError;
@@ -188,6 +190,7 @@ mod parser {
     use nom::sequence::terminated;
     use nom::AsChar;
     use nom::IResult;
+    use unicode_ident::is_xid_continue;
 
     use super::PlatformPredicate;
 
@@ -227,7 +230,10 @@ mod parser {
     fn keyword<'a, E: ParseError<&'a str>>(
         kw: &'static str,
     ) -> impl FnMut(&'a str) -> IResult<&'a str, (), E> {
-        map(preceded(sp, tag(kw)), |_| ())
+        map(
+            preceded(sp, terminated(tag(kw), not(satisfy(is_xid_continue)))),
+            |_| (),
+        )
     }
 
     fn atom<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
@@ -330,6 +336,21 @@ mod parser {
             let res = parse_cfg::<(_, nom::error::ErrorKind)>("cfg(  foobar  )");
             println!("res = {:?}", res);
             assert_eq!(res, Ok(("", Bool { key: "foobar" })))
+        }
+
+        #[test]
+        fn test_atom_with_keyword_prefix() {
+            let res = parse_cfg::<(_, nom::error::ErrorKind)>("cfg(windows_raw_dylib)");
+            println!("res = {:?}", res);
+            assert_eq!(
+                res,
+                Ok((
+                    "",
+                    Bool {
+                        key: "windows_raw_dylib"
+                    }
+                ))
+            )
         }
 
         #[test]
