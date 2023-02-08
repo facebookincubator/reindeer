@@ -178,19 +178,23 @@ mod parser {
     use nom::character::complete::satisfy;
     use nom::combinator::cut;
     use nom::combinator::map;
-    use nom::combinator::not;
     use nom::combinator::opt;
+    use nom::combinator::recognize;
+    use nom::combinator::verify;
     use nom::error::context;
     use nom::error::ContextError;
     use nom::error::ParseError;
+    use nom::multi::many0_count;
     use nom::multi::separated_list0;
+    use nom::multi::separated_list1;
     use nom::sequence::delimited;
+    use nom::sequence::pair;
     use nom::sequence::preceded;
     use nom::sequence::separated_pair;
     use nom::sequence::terminated;
-    use nom::AsChar;
     use nom::IResult;
     use unicode_ident::is_xid_continue;
+    use unicode_ident::is_xid_start;
 
     use super::PlatformPredicate;
 
@@ -230,17 +234,24 @@ mod parser {
     fn keyword<'a, E: ParseError<&'a str>>(
         kw: &'static str,
     ) -> impl FnMut(&'a str) -> IResult<&'a str, (), E> {
-        map(
-            preceded(sp, terminated(tag(kw), not(satisfy(is_xid_continue)))),
-            |_| (),
-        )
+        map(verify(atom, move |s: &str| s == kw), |_| ())
     }
 
+    // Parse an atom comprising one or more hyphen-separated words. Each word
+    // has a first character that satisfies is_xid_start and the rest satisfy
+    // is_xid_continue.
+    //
+    // For example `target_os` or `x86_64-unknown-linux-gnu`
     fn atom<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
-        let extras = "-_";
         preceded(
             sp,
-            take_while1(move |c: char| c.is_alphanum() || extras.contains(c)),
+            recognize(separated_list1(
+                tag("-"),
+                pair(
+                    satisfy(|ch| is_xid_start(ch) || ch == '_'),
+                    many0_count(satisfy(is_xid_continue)),
+                ),
+            )),
         )(i)
     }
 
@@ -340,16 +351,20 @@ mod parser {
 
         #[test]
         fn test_atom_with_keyword_prefix() {
-            let res = parse_cfg::<(_, nom::error::ErrorKind)>("cfg(windows_raw_dylib)");
+            let res =
+                parse_cfg::<(_, nom::error::ErrorKind)>("cfg(any(windows_raw_dylib, windows-xp))");
             println!("res = {:?}", res);
             assert_eq!(
                 res,
                 Ok((
                     "",
-                    Bool {
-                        key: "windows_raw_dylib"
-                    }
-                ))
+                    Any(vec![
+                        Bool {
+                            key: "windows_raw_dylib",
+                        },
+                        Bool { key: "windows-xp" },
+                    ]),
+                )),
             )
         }
 
