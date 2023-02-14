@@ -509,6 +509,7 @@ pub struct BuildscriptGenrule {
     pub cfgs: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub path_env: BTreeMap<String, String>,
+    pub args_env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -530,12 +531,16 @@ impl Serialize for BuildscriptGenruleArgs {
                     cfgs,
                     env,
                     path_env,
+                    args_env,
                 },
             outfile,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
         map.serialize_entry("package_name", package_name)?;
+        if !args_env.is_empty() {
+            map.serialize_entry("args_env", args_env)?;
+        }
         map.serialize_entry("buildscript_rule", &NameAsLabel(buildscript_rule))?;
         if !cfgs.is_empty() {
             map.serialize_entry("cfgs", cfgs)?;
@@ -575,6 +580,7 @@ impl Serialize for BuildscriptGenruleSrcs {
                     cfgs,
                     env,
                     path_env,
+                    args_env,
                 },
             files,
             srcs,
@@ -584,6 +590,9 @@ impl Serialize for BuildscriptGenruleSrcs {
         map.serialize_entry("package_name", package_name)?;
         if !srcs.is_empty() {
             map.serialize_entry("srcs", srcs)?;
+        }
+        if !args_env.is_empty() {
+            map.serialize_entry("args_env", args_env)?;
         }
         map.serialize_entry("buildscript_rule", &NameAsLabel(buildscript_rule))?;
         if !cfgs.is_empty() {

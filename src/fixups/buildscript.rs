@@ -113,6 +113,18 @@ pub struct GenSrcs {
     // Runtime environment for paths that's made absolute
     #[serde(default)]
     pub path_env: BTreeMap<String, String>,
+    // Runtime environment for something like CFLAGS, space-separated arguments
+    // in which some of them may be paths.
+    //
+    // The value is split by spaces and anything in the form of $VARIABLE is
+    // interpolated out of path_env.
+    //
+    // Example:
+    //
+    //     path_env = { _LIBVIRT_INCLUDE = "$(location //path/to/libvirt:include)" }
+    //     args_env = { BINDGEN_EXTRA_CLANG_ARGS = "-I $_LIBVIRT_INCLUDE" }
+    #[serde(default)]
+    pub args_env: BTreeMap<String, String>,
     // Generated files
     #[serde(default)]
     pub files: BTreeSet<String>,

@@ -288,6 +288,7 @@ impl<'meta> Fixups<'meta> {
                             cfgs: vec![],
                             env: env.clone(),
                             path_env: path_env.clone(),
+                            args_env: BTreeMap::new(),
                         },
                         outfile: "args.txt".to_string(),
                     }))
@@ -301,6 +302,7 @@ impl<'meta> Fixups<'meta> {
                     mapped,     // outputs mapped to a different path
                     env,        // env set while running
                     path_env,   // env pointing to pathnames set while running
+                    args_env,   // space-separated args like CFLAGS
                     ..
                 }) => {
                     // Emit the build script itself
@@ -328,6 +330,7 @@ impl<'meta> Fixups<'meta> {
                             cfgs: vec![],
                             env: env.clone(),
                             path_env: path_env.clone(),
+                            args_env: args_env.clone(),
                         },
                         files: files
                             .clone()
