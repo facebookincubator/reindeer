@@ -149,8 +149,10 @@ fn filter_checksum_files(
 
         checksums.files.retain(|k, _| {
             log::trace!("{}: checking {}", checksum.display(), k);
-            let del =
-                remove_globs.is_match(k) || gitignore.matched(pkgdir.join(k), false).is_ignore();
+            let del = remove_globs.is_match(k)
+                || gitignore
+                    .matched_path_or_any_parents(pkgdir.join(k), false)
+                    .is_ignore();
             if del {
                 log::debug!("{}: removing {}", checksum.display(), k);
                 changed = true;
