@@ -363,21 +363,16 @@ pub struct ManifestDep {
 }
 
 /// Kind of dependency
-#[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Default, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[serde(rename_all = "kebab-case")]
 pub enum DepKind {
     /// Normal dependency
+    #[default]
     Normal,
     /// Dev dependency
     Dev,
     /// Build dependency
     Build,
-}
-
-impl Default for DepKind {
-    fn default() -> Self {
-        DepKind::Normal
-    }
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash)]
