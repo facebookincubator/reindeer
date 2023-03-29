@@ -1,0 +1,3 @@
+[submodule "example/prelude"]
+	path = example/prelude
+	url = git@github.com:facebook/buck2-prelude.git

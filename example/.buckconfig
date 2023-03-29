@@ -1,4 +1,16 @@
-[rust]
-default_edition = 2018
-remap_src_paths = yes
-rustc_check_flags = --cap-lints=warn
+[repositories]
+root = .
+prelude = prelude
+toolchains = toolchains
+none = none
+
+[repository_aliases]
+fbsource = none
+fbcode = none
+config = prelude
+fbnative = prelude
+ovr_config = prelude
+buck = none
+
+[parser]
+target_platform_detector_spec = target:root//...->prelude//platforms:default
