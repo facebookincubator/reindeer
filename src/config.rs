@@ -137,10 +137,12 @@ pub struct BuckConfig {
     /// Rule name for prebuilt_cxx_library
     #[serde(default = "default_prebuilt_cxx_library")]
     pub prebuilt_cxx_library: String,
-    /// Rust name for buildscript_genrule producing args
+    /// Rule name for the rust_binary of a build script
+    pub buildscript_binary: Option<String>,
+    /// Rule name for buildscript_genrule producing args
     #[serde(default = "default_buildscript_genrule_args")]
     pub buildscript_genrule_args: String,
-    /// Rust name for buildscript_genrule producing arfs
+    /// Rule name for buildscript_genrule producing arfs
     #[serde(default = "default_buildscript_genrule_srcs")]
     pub buildscript_genrule_srcs: String,
 }
@@ -209,6 +211,7 @@ impl Default for BuckConfig {
             rust_binary: "rust_binary".to_string(),
             cxx_library: "cxx_library".to_string(),
             prebuilt_cxx_library: "prebuilt_cxx_library".to_string(),
+            buildscript_binary: None,
             buildscript_genrule_args: "buildscript_args".to_string(),
             buildscript_genrule_srcs: "buildscript_srcs".to_string(),
         }

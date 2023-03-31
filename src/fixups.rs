@@ -268,13 +268,13 @@ impl<'meta> Fixups<'meta> {
         for fix in fixes {
             match fix {
                 // Just emit a build rule for it, but don't otherwise do anything
-                BuildscriptFixup::Build => res.push(Rule::Binary(buildscript.clone())),
+                BuildscriptFixup::Build => res.push(Rule::BuildscriptBinary(buildscript.clone())),
 
                 // Build and run it, and filter the output for --cfg options
                 // for the main target's rustc command line
                 BuildscriptFixup::RustcFlags(RustcFlags { env, path_env, .. }) => {
                     // Emit the build script itself
-                    res.push(Rule::Binary(buildscript.clone()));
+                    res.push(Rule::BuildscriptBinary(buildscript.clone()));
 
                     // Emit rule to get its stdout and filter it into args
                     res.push(Rule::BuildscriptGenruleArgs(BuildscriptGenruleArgs {
@@ -306,7 +306,7 @@ impl<'meta> Fixups<'meta> {
                     ..
                 }) => {
                     // Emit the build script itself
-                    res.push(Rule::Binary(buildscript.clone()));
+                    res.push(Rule::BuildscriptBinary(buildscript.clone()));
 
                     let srcs = self
                         .manifestwalk(

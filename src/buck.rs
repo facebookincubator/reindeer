@@ -718,6 +718,7 @@ pub enum Rule {
     Alias(Alias),
     Binary(RustBinary),
     Library(RustLibrary),
+    BuildscriptBinary(RustBinary),
     BuildscriptGenruleSrcs(BuildscriptGenruleSrcs),
     BuildscriptGenruleArgs(BuildscriptGenruleArgs),
     CxxLibrary(CxxLibrary),
@@ -745,6 +746,7 @@ fn rule_sort_key(rule: &Rule) -> (&Name, usize) {
         Rule::Alias(Alias { actual, .. }) => (actual, 0),
         Rule::Binary(_)
         | Rule::Library(_)
+        | Rule::BuildscriptBinary(_)
         | Rule::BuildscriptGenruleSrcs(_)
         | Rule::BuildscriptGenruleArgs(_)
         | Rule::CxxLibrary(_)
@@ -778,6 +780,14 @@ impl Rule {
                     },
                 ..
             })
+            | Rule::BuildscriptBinary(RustBinary {
+                common:
+                    RustCommon {
+                        common: Common { name, .. },
+                        ..
+                    },
+                ..
+            })
             | Rule::BuildscriptGenruleSrcs(BuildscriptGenruleSrcs {
                 base: BuildscriptGenrule { name, .. },
                 ..
@@ -804,6 +814,13 @@ impl Rule {
             Rule::Binary(bin) => FunctionCall::new(&config.rust_binary, bin).serialize(Serializer),
             Rule::Library(lib) => {
                 FunctionCall::new(&config.rust_library, lib).serialize(Serializer)
+            }
+            Rule::BuildscriptBinary(bin) => {
+                let buildscript_binary = config
+                    .buildscript_binary
+                    .as_ref()
+                    .unwrap_or(&config.rust_binary);
+                FunctionCall::new(buildscript_binary, bin).serialize(Serializer)
             }
             Rule::BuildscriptGenruleArgs(lib) => {
                 FunctionCall::new(&config.buildscript_genrule_args, lib).serialize(Serializer)
