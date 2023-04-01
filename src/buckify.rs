@@ -400,7 +400,7 @@ fn generate_target_rules<'scope>(
                         let target_name = dep.target.strip_prefix(':').unwrap();
                         let bin_name = dep_kind.bin_name.as_ref().unwrap();
                         let env = format!("{}-{}", target_name, bin_name);
-                        let location = format!("$(location {}-{})", dep.target, bin_name);
+                        let location = format!("$(location {}-{}#check)", dep.target, bin_name);
                         recipient.env.insert(env, location);
                     } else if let Some(rename) = rename {
                         recipient.named_deps.insert(rename.to_owned(), dep);
@@ -417,7 +417,7 @@ fn generate_target_rules<'scope>(
                 let target_name = dep.target.strip_prefix(':').unwrap();
                 let bin_name = dep_kind.bin_name.as_ref().unwrap();
                 let env = format!("{}-{}", target_name, bin_name);
-                let location = format!("$(location {}-{})", dep.target, bin_name);
+                let location = format!("$(location {}-{}#check)", dep.target, bin_name);
                 base.env.insert(env, location);
             } else if let Some(rename) = rename {
                 base.named_deps.insert(rename.to_owned(), dep);
