@@ -102,11 +102,7 @@ impl<'meta> Index<'meta> {
     /// Construct an index for a set of Cargo metadata to allow convenient and efficient
     /// queries. The metadata represents a top level package and all its transitive
     /// dependencies.
-    pub fn new(
-        root_is_real: bool,
-        extra_top_levels: bool,
-        metadata: &'meta Metadata,
-    ) -> Index<'meta> {
+    pub fn new(root_is_real: bool, metadata: &'meta Metadata) -> Index<'meta> {
         let pkgid_to_pkg: HashMap<_, _> = metadata.packages.iter().map(|m| (&m.id, m)).collect();
 
         let root_pkg: &Manifest = pkgid_to_pkg
@@ -116,26 +112,6 @@ impl<'meta> Index<'meta> {
         let mut top_levels = HashSet::new();
         if root_is_real {
             top_levels.insert(&root_pkg.id);
-        }
-        if extra_top_levels {
-            for pkg in &metadata.packages {
-                // If the package doesn't have any dependable targets (rlib/dylib or proc_maco)
-                // but it does have a cdylib or binary then add it to the top levels.
-                // (Ignored: tests, benchmarks, examples, build scripts, staticlib)
-                if pkg != root_pkg
-                    && !pkg
-                        .targets
-                        .iter()
-                        .any(|tgt| tgt.kind_lib() || tgt.kind_proc_macro())
-                    && pkg
-                        .targets
-                        .iter()
-                        .any(|tgt| tgt.kind_cdylib() || tgt.kind_bin())
-                {
-                    log::info!("Extra top level {}", &pkg.id);
-                    top_levels.insert(&pkg.id);
-                }
-            }
         }
 
         let tmp = Index {
@@ -160,24 +136,14 @@ impl<'meta> Index<'meta> {
         let public_set = tmp
             .resolved_deps(tmp.root_pkg)
             .flat_map(|(rename, dep_kind, pkg)| {
+                let target_kind = match dep_kind.artifact {
+                    None => TargetKind::Lib,
+                    Some(ArtifactKind::Bin) => TargetKind::Bin,
+                    Some(ArtifactKind::Staticlib) => TargetKind::Staticlib,
+                    Some(ArtifactKind::Cdylib) => TargetKind::Cdylib,
+                };
                 let opt_rename = dep_renamed.get(rename).cloned();
-                if extra_top_levels {
-                    // In the crates that Cargo.toml depends directly on, make
-                    // all their bins public too, even if an artifact dependency
-                    // is not declared.
-                    vec![
-                        ((&pkg.id, TargetKind::Lib), opt_rename),
-                        ((&pkg.id, TargetKind::Bin), opt_rename),
-                    ]
-                } else {
-                    let target_kind = match dep_kind.artifact {
-                        None => TargetKind::Lib,
-                        Some(ArtifactKind::Bin) => TargetKind::Bin,
-                        Some(ArtifactKind::Staticlib) => TargetKind::Staticlib,
-                        Some(ArtifactKind::Cdylib) => TargetKind::Cdylib,
-                    };
-                    vec![((&pkg.id, target_kind), opt_rename)]
-                }
+                vec![((&pkg.id, target_kind), opt_rename)]
             })
             .chain(top_levels.iter().flat_map(|pkgid| {
                 [

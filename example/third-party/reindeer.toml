@@ -37,10 +37,6 @@ fixup_templates = true
 # targets, so that you can to a test/check build.
 include_top_level = true
 
-# Include targets for binary and cdylib-only packages (that is packages which
-# can't directly be depended-on by Rust)
-extra_top_levels = true
-
 # Configuration for vendoring
 [vendor]
 # Exclude files listed in the .gitignore in this directory

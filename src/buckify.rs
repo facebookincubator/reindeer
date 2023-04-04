@@ -598,7 +598,7 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
         log::trace!("Metadata {:#?}", metadata);
     }
 
-    let index = index::Index::new(config.include_top_level, config.extra_top_levels, &metadata);
+    let index = index::Index::new(config.include_top_level, &metadata);
 
     let context = &RuleContext {
         config,

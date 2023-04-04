@@ -66,12 +66,6 @@ pub struct Config {
     #[serde(default)]
     pub include_top_level: bool,
 
-    /// Include extra top-level targets for things like binary and cdylib-only
-    /// packages, even ones which Cargo.toml has no artifact dependency on.
-    // TODO(dtolnay): superseded by artifact dependencies, delete ASAP after third-party/rust sets to false
-    #[serde(default)]
-    pub extra_top_levels: bool,
-
     /// Emit metadata for each crate into Buck rules
     #[serde(default)]
     pub emit_metadata: bool,
