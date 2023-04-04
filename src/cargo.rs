@@ -598,7 +598,8 @@ pub enum CrateType {
     Eq,
     PartialEq,
     Ord,
-    PartialOrd
+    PartialOrd,
+    Hash
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum TargetKind {

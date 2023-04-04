@@ -18,6 +18,7 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::buck::Name;
+use crate::cargo::ArtifactKind;
 use crate::cargo::DepKind;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestDep;
@@ -27,6 +28,7 @@ use crate::cargo::Node;
 use crate::cargo::NodeDep;
 use crate::cargo::NodeDepKind;
 use crate::cargo::PkgId;
+use crate::cargo::TargetKind;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformPredicate;
 
@@ -40,9 +42,8 @@ pub struct Index<'meta> {
     root_pkg: &'meta Manifest,
     /// Set of public targets. These consist of:
     /// - root_pkg, if it is being made public (aka "real", and not just a pseudo package)
-    /// - first-order dependencies of root_pkg
-    /// - any extra top-levels (binary and cdylib only packages)
-    public_set: BTreeMap<&'meta PkgId, Option<&'meta str>>,
+    /// - first-order dependencies of root_pkg, including artifact dependencies
+    public_set: BTreeMap<(&'meta PkgId, TargetKind), Option<&'meta str>>,
 }
 
 /// Extra per-package metadata to be kept in sync with the package list
@@ -158,8 +159,32 @@ impl<'meta> Index<'meta> {
         // anything in top_levels, or first-order dependencies of root_pkg.
         let public_set = tmp
             .resolved_deps(tmp.root_pkg)
-            .map(|(rename, _dep_kind, pkg)| (&pkg.id, dep_renamed.get(rename).cloned()))
-            .chain(top_levels.iter().map(|pkgid| (*pkgid, None)))
+            .flat_map(|(rename, dep_kind, pkg)| {
+                let opt_rename = dep_renamed.get(rename).cloned();
+                if extra_top_levels {
+                    // In the crates that Cargo.toml depends directly on, make
+                    // all their bins public too, even if an artifact dependency
+                    // is not declared.
+                    vec![
+                        ((&pkg.id, TargetKind::Lib), opt_rename),
+                        ((&pkg.id, TargetKind::Bin), opt_rename),
+                    ]
+                } else {
+                    let target_kind = match dep_kind.artifact {
+                        None => TargetKind::Lib,
+                        Some(ArtifactKind::Bin) => TargetKind::Bin,
+                        Some(ArtifactKind::Staticlib) => TargetKind::Staticlib,
+                        Some(ArtifactKind::Cdylib) => TargetKind::Cdylib,
+                    };
+                    vec![((&pkg.id, target_kind), opt_rename)]
+                }
+            })
+            .chain(top_levels.iter().flat_map(|pkgid| {
+                [
+                    ((*pkgid, TargetKind::Lib), None),
+                    ((*pkgid, TargetKind::Bin), None),
+                ]
+            }))
             .collect();
 
         Index { public_set, ..tmp }
@@ -171,15 +196,15 @@ impl<'meta> Index<'meta> {
     }
 
     /// Test if a package is public
-    pub fn is_public(&self, pkg: &Manifest) -> bool {
-        self.public_set.contains_key(&pkg.id)
+    pub fn is_public(&self, pkg: &Manifest, target_kind: TargetKind) -> bool {
+        self.public_set.contains_key(&(&pkg.id, target_kind))
     }
 
     /// Return all public packages
     pub fn public_packages(&self) -> impl Iterator<Item = &'meta Manifest> + '_ {
         self.public_set
             .keys()
-            .map(|id| *self.pkgid_to_pkg.get(id).expect("missing pkgid"))
+            .map(|id| *self.pkgid_to_pkg.get(id.0).expect("missing pkgid"))
     }
 
     /// Returns the transitive closure of dependencies of public packages.
@@ -189,7 +214,7 @@ impl<'meta> Index<'meta> {
 
     /// Return the private package rule name.
     pub fn private_rule_name(&self, pkg: &Manifest) -> Name {
-        Name(match self.public_set.get(&pkg.id) {
+        Name(match self.public_set.get(&(&pkg.id, TargetKind::Lib)) {
             Some(None) | None => pkg.to_string(), // Full version info
             Some(Some(rename)) => format!("{}-{}", pkg, rename), // Rename
         })
@@ -197,7 +222,7 @@ impl<'meta> Index<'meta> {
 
     /// Return the package public rule name.
     pub fn public_rule_name(&self, pkg: &'meta Manifest) -> Name {
-        Name(match self.public_set.get(&pkg.id) {
+        Name(match self.public_set.get(&(&pkg.id, TargetKind::Lib)) {
             Some(None) | None => pkg.name.to_owned(), // Package name
             Some(&Some(rename)) => rename.to_owned(), // Rename
         })
