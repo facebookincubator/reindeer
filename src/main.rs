@@ -159,7 +159,7 @@ fn try_main() -> Result<()> {
 }
 
 fn main() {
-    env_logger::from_env(env_logger::Env::default().default_filter_or("warn"))
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
         .format_timestamp(None)
         .init();
 
