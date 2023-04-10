@@ -503,8 +503,6 @@ pub struct Resolve {
 pub struct Node {
     /// Package
     pub id: PkgId,
-    /// Bare package dependencies (without rename information)
-    pub dependencies: BTreeSet<PkgId>,
     /// Dependencies with rename information
     pub deps: BTreeSet<NodeDep>,
     /// Features selected for package
