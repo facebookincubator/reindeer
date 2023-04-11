@@ -651,8 +651,8 @@ impl<'meta> Fixups<'meta> {
         // added by the base, we need to filter it from the base and add it to all other platforms.
         for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
             let platform_omits = omits.entry(platform).or_insert_with(HashSet::new);
-            platform_omits.extend(fixup.filter_deps.iter().map(String::as_str));
-            all_omits.extend(fixup.filter_deps.iter().map(String::as_str));
+            platform_omits.extend(fixup.omit_deps.iter().map(String::as_str));
+            all_omits.extend(fixup.omit_deps.iter().map(String::as_str));
         }
 
         for ResolvedDep {

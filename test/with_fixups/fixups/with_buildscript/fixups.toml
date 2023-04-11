@@ -8,10 +8,10 @@
 
 extra_deps = ["fbsource//third-party/rust:lazy_static"]
 
-# Rust dependencies to be filtered. They are the local name (the new name for
+# Rust dependencies to be omitted. They are the local name (the new name for
 # renamed dependencies) being used for the dependency, without any versioning
 # information.
-filter_deps = ["simple"]
+omit_deps = ["simple"]
 
 # Additional command line options
 cfgs = ["foo", "bar"]

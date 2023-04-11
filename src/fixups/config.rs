@@ -156,7 +156,7 @@ pub struct FixupConfig {
     pub extra_deps: BTreeSet<String>,
     /// Omit Cargo dependencies - just bare crate name
     #[serde(default)]
-    pub filter_deps: BTreeSet<String>,
+    pub omit_deps: BTreeSet<String>,
     /// Add Cargo environment
     #[serde(default)]
     pub cargo_env: bool,
