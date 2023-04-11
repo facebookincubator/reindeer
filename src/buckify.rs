@@ -43,7 +43,7 @@ use crate::cargo::Edition;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
 use crate::cargo::PkgId;
-use crate::cargo::TargetKind;
+use crate::cargo::TargetReq;
 use crate::config::Config;
 use crate::fixups::Fixups;
 use crate::index;
@@ -116,7 +116,7 @@ struct RuleContext<'meta> {
     config: &'meta Config,
     paths: &'meta Paths,
     index: index::Index<'meta>,
-    done: Mutex<HashSet<(&'meta PkgId, TargetKind)>>,
+    done: Mutex<HashSet<(&'meta PkgId, TargetReq<'meta>)>>,
 }
 
 /// Generate rules for a set of dependencies
@@ -126,14 +126,14 @@ fn generate_dep_rules<'scope>(
     context: &'scope RuleContext<'scope>,
     scope: &rayon::Scope<'scope>,
     rule_tx: mpsc::Sender<Result<Rule>>,
-    pkg_deps: impl IntoIterator<Item = (&'scope Manifest, TargetKind)>,
+    pkg_deps: impl IntoIterator<Item = (&'scope Manifest, TargetReq<'scope>)>,
 ) {
     let mut done = context.done.lock().unwrap();
-    for (pkg, target_kind) in pkg_deps {
-        if done.insert((&pkg.id, target_kind)) {
+    for (pkg, target_req) in pkg_deps {
+        if done.insert((&pkg.id, target_req)) {
             let rule_tx = rule_tx.clone();
             scope.spawn(move |scope| {
-                generate_rules(context, scope, rule_tx, pkg, target_kind);
+                generate_rules(context, scope, rule_tx, pkg, target_req);
             })
         }
     }
@@ -145,12 +145,16 @@ fn generate_rules<'scope>(
     scope: &rayon::Scope<'scope>,
     rule_tx: mpsc::Sender<Result<Rule>>,
     pkg: &'scope Manifest,
-    required_kind: TargetKind,
+    target_req: TargetReq<'scope>,
 ) {
     for tgt in &pkg.targets {
-        let matching_kind = match required_kind {
-            TargetKind::Lib => tgt.kind_lib() || tgt.kind_proc_macro() || tgt.kind_cdylib(),
-            _ => tgt.kind.contains(&required_kind),
+        let matching_kind = match target_req {
+            TargetReq::Lib => tgt.kind_lib() || tgt.kind_proc_macro() || tgt.kind_cdylib(),
+            TargetReq::Bin(required_bin) => tgt.kind_bin() && tgt.name == required_bin,
+            TargetReq::EveryBin => tgt.kind_bin(),
+            TargetReq::BuildScript => tgt.kind_custom_build(),
+            TargetReq::Staticlib => tgt.kind_staticlib(),
+            TargetReq::Cdylib => tgt.kind_cdylib(),
         };
         if !matching_kind {
             continue;
@@ -185,7 +189,7 @@ fn generate_target_rules<'scope>(
     context: &'scope RuleContext<'scope>,
     pkg: &'scope Manifest,
     tgt: &'scope ManifestTarget,
-) -> Result<(Vec<Rule>, Vec<(&'scope Manifest, TargetKind)>)> {
+) -> Result<(Vec<Rule>, Vec<(&'scope Manifest, TargetReq<'scope>)>)> {
     let RuleContext {
         config,
         paths,
@@ -359,18 +363,11 @@ fn generate_target_rules<'scope>(
     // be emitted if we actually emit some rules below.
     let mut dep_pkgs = Vec::new();
     for (deppkg, dep, rename, dep_kind) in fixups.compute_deps()? {
-        let target_kind = match dep_kind.artifact {
-            None => TargetKind::Lib,
-            Some(ArtifactKind::Bin) => {
-                if dep_kind.bin_name.is_none() {
-                    bail!("missing bin_name for artifact dependency {dep:?}");
-                }
-                TargetKind::Bin
-            }
-            Some(kind @ (ArtifactKind::Staticlib | ArtifactKind::Cdylib)) => {
-                bail!("unsupported artifact kind {kind:?} for dependency {dep:?}");
-            }
-        };
+        let target_req = dep_kind.target_req();
+        if let TargetReq::Staticlib | TargetReq::Cdylib = target_req {
+            let artifact = &dep_kind.artifact;
+            bail!("unsupported artifact kind {artifact:?} for dependency {dep:?}");
+        }
         if let Some(compile_target) = &dep_kind.compile_target {
             // Compile_target is not implemented yet.
             //
@@ -418,7 +415,7 @@ fn generate_target_rules<'scope>(
                         recipient.deps.insert(dep);
                     }
                     if let Some(deppkg) = deppkg {
-                        dep_pkgs.push((deppkg, target_kind));
+                        dep_pkgs.push((deppkg, target_req));
                     }
                 }
             }
@@ -437,7 +434,7 @@ fn generate_target_rules<'scope>(
                 base.deps.insert(dep);
             }
             if let Some(deppkg) = deppkg {
-                dep_pkgs.push((deppkg, target_kind));
+                dep_pkgs.push((deppkg, target_req));
             }
         }
     }
@@ -498,7 +495,7 @@ fn generate_target_rules<'scope>(
 
         // The root package is public but we don't expose it via
         // an alias. The root package library is exposed directly.
-        if index.is_public_target(pkg, TargetKind::Lib) && !index.is_root_package(pkg) {
+        if index.is_public_target(pkg, TargetReq::Lib) && !index.is_root_package(pkg) {
             rules.push(Rule::Alias(Alias {
                 name: index.public_rule_name(pkg),
                 actual: index.private_rule_name(pkg),
@@ -531,7 +528,7 @@ fn generate_target_rules<'scope>(
             proc_macro: tgt.crate_proc_macro(),
             dlopen_enable: tgt.kind_cdylib() && fixups.python_ext().is_none(),
             python_ext: fixups.python_ext().map(str::to_string),
-            linkable_alias: if index.is_public_target(pkg, TargetKind::Lib)
+            linkable_alias: if index.is_public_target(pkg, TargetReq::Lib)
                 && (tgt.kind_cdylib() || fixups.python_ext().is_some())
             {
                 Some(index.public_rule_name(pkg).0)
@@ -541,7 +538,7 @@ fn generate_target_rules<'scope>(
         }));
 
         // Library depends on the build script (if there is one).
-        dep_pkgs.push((pkg, TargetKind::CustomBuild));
+        dep_pkgs.push((pkg, TargetReq::BuildScript));
 
         rules
     } else if tgt.crate_bin() && tgt.kind_custom_build() {
@@ -571,7 +568,7 @@ fn generate_target_rules<'scope>(
         let mut rules = vec![];
         let actual = Name(format!("{}-{}", index.private_rule_name(pkg), tgt.name));
 
-        if index.is_public_target(pkg, TargetKind::Bin) {
+        if index.is_public_target(pkg, TargetReq::Bin(&tgt.name)) {
             rules.push(Rule::Alias(Alias {
                 name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
                 actual: actual.clone(),
@@ -597,8 +594,8 @@ fn generate_target_rules<'scope>(
 
         // Binary depends on the library (if there is one) and build script (if
         // there is one).
-        dep_pkgs.push((pkg, TargetKind::Lib));
-        dep_pkgs.push((pkg, TargetKind::CustomBuild));
+        dep_pkgs.push((pkg, TargetReq::Lib));
+        dep_pkgs.push((pkg, TargetReq::BuildScript));
 
         rules
     } else {

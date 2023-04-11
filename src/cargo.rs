@@ -451,7 +451,6 @@ impl ManifestTarget {
         self.kind.contains(&TargetKind::Example)
     }
 
-    #[allow(dead_code)]
     pub fn kind_staticlib(&self) -> bool {
         self.kind.contains(&TargetKind::Staticlib)
     }
@@ -565,6 +564,31 @@ impl NodeDepKind {
         compile_target: None,
         bin_name: None,
     };
+
+    pub fn target_req(&self) -> TargetReq {
+        match self.artifact {
+            None => TargetReq::Lib,
+            Some(ArtifactKind::Bin) => {
+                if let Some(bin_name) = &self.bin_name {
+                    TargetReq::Bin(bin_name)
+                } else {
+                    panic!("missing bin_name for artifact dependency {self:?}");
+                }
+            }
+            Some(ArtifactKind::Staticlib) => TargetReq::Staticlib,
+            Some(ArtifactKind::Cdylib) => TargetReq::Cdylib,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum TargetReq<'a> {
+    Lib,
+    Bin(&'a str),
+    EveryBin,
+    BuildScript,
+    Staticlib,
+    Cdylib,
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq)]

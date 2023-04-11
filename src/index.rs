@@ -18,7 +18,6 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::buck::Name;
-use crate::cargo::ArtifactKind;
 use crate::cargo::DepKind;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestDep;
@@ -28,7 +27,7 @@ use crate::cargo::Node;
 use crate::cargo::NodeDep;
 use crate::cargo::NodeDepKind;
 use crate::cargo::PkgId;
-use crate::cargo::TargetKind;
+use crate::cargo::TargetReq;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformPredicate;
 
@@ -45,7 +44,7 @@ pub struct Index<'meta> {
     /// Set of public targets. These consist of:
     /// - root_pkg, if it is being made public (aka "real", and not just a pseudo package)
     /// - first-order dependencies of root_pkg, including artifact dependencies
-    public_targets: BTreeMap<(&'meta PkgId, TargetKind), Option<&'meta str>>,
+    public_targets: BTreeMap<(&'meta PkgId, TargetReq<'meta>), Option<&'meta str>>,
 }
 
 /// Extra per-package metadata to be kept in sync with the package list
@@ -139,19 +138,14 @@ impl<'meta> Index<'meta> {
         let public_targets = tmp
             .resolved_deps(tmp.root_pkg)
             .flat_map(|(rename, dep_kind, pkg)| {
-                let target_kind = match dep_kind.artifact {
-                    None => TargetKind::Lib,
-                    Some(ArtifactKind::Bin) => TargetKind::Bin,
-                    Some(ArtifactKind::Staticlib) => TargetKind::Staticlib,
-                    Some(ArtifactKind::Cdylib) => TargetKind::Cdylib,
-                };
+                let target_req = dep_kind.target_req();
                 let opt_rename = dep_renamed.get(rename).cloned();
-                vec![((&pkg.id, target_kind), opt_rename)]
+                vec![((&pkg.id, target_req), opt_rename)]
             })
             .chain(top_levels.iter().flat_map(|pkgid| {
                 [
-                    ((*pkgid, TargetKind::Lib), None),
-                    ((*pkgid, TargetKind::Bin), None),
+                    ((*pkgid, TargetReq::Lib), None),
+                    ((*pkgid, TargetReq::EveryBin), None),
                 ]
             }))
             .collect::<BTreeMap<_, _>>();
@@ -177,15 +171,15 @@ impl<'meta> Index<'meta> {
     }
 
     /// Test if a specific target from a package is public
-    pub fn is_public_target(&self, pkg: &Manifest, target_kind: TargetKind) -> bool {
-        self.public_targets.contains_key(&(&pkg.id, target_kind))
+    pub fn is_public_target(&self, pkg: &Manifest, target_req: TargetReq) -> bool {
+        self.public_targets.contains_key(&(&pkg.id, target_req))
     }
 
     /// Return all public packages
-    pub fn public_targets(&self) -> impl Iterator<Item = (&'meta Manifest, TargetKind)> + '_ {
+    pub fn public_targets(&self) -> impl Iterator<Item = (&'meta Manifest, TargetReq<'meta>)> + '_ {
         self.public_targets
             .keys()
-            .map(|(id, kind)| (*self.pkgid_to_pkg.get(id).expect("missing pkgid"), *kind))
+            .map(|(id, req)| (*self.pkgid_to_pkg.get(id).expect("missing pkgid"), *req))
     }
 
     /// Returns the transitive closure of dependencies of public packages.
@@ -195,7 +189,7 @@ impl<'meta> Index<'meta> {
 
     /// Return the private package rule name.
     pub fn private_rule_name(&self, pkg: &Manifest) -> Name {
-        Name(match self.public_targets.get(&(&pkg.id, TargetKind::Lib)) {
+        Name(match self.public_targets.get(&(&pkg.id, TargetReq::Lib)) {
             Some(None) | None => pkg.to_string(), // Full version info
             Some(Some(rename)) => format!("{}-{}", pkg, rename), // Rename
         })
@@ -203,7 +197,7 @@ impl<'meta> Index<'meta> {
 
     /// Return the package public rule name.
     pub fn public_rule_name(&self, pkg: &'meta Manifest) -> Name {
-        Name(match self.public_targets.get(&(&pkg.id, TargetKind::Lib)) {
+        Name(match self.public_targets.get(&(&pkg.id, TargetReq::Lib)) {
             Some(None) | None => pkg.name.to_owned(), // Package name
             Some(&Some(rename)) => rename.to_owned(), // Rename
         })
