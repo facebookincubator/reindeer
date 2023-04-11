@@ -498,7 +498,7 @@ fn generate_target_rules<'scope>(
 
         // The root package is public but we don't expose it via
         // an alias. The root package library is exposed directly.
-        if index.is_public(pkg, TargetKind::Lib) && !index.is_root_package(pkg) {
+        if index.is_public_target(pkg, TargetKind::Lib) && !index.is_root_package(pkg) {
             rules.push(Rule::Alias(Alias {
                 name: index.public_rule_name(pkg),
                 actual: index.private_rule_name(pkg),
@@ -531,7 +531,7 @@ fn generate_target_rules<'scope>(
             proc_macro: tgt.crate_proc_macro(),
             dlopen_enable: tgt.kind_cdylib() && fixups.python_ext().is_none(),
             python_ext: fixups.python_ext().map(str::to_string),
-            linkable_alias: if index.is_public(pkg, TargetKind::Lib)
+            linkable_alias: if index.is_public_target(pkg, TargetKind::Lib)
                 && (tgt.kind_cdylib() || fixups.python_ext().is_some())
             {
                 Some(index.public_rule_name(pkg).0)
@@ -571,7 +571,7 @@ fn generate_target_rules<'scope>(
         let mut rules = vec![];
         let actual = Name(format!("{}-{}", index.private_rule_name(pkg), tgt.name));
 
-        if index.is_public(pkg, TargetKind::Bin) {
+        if index.is_public_target(pkg, TargetKind::Bin) {
             rules.push(Rule::Alias(Alias {
                 name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
                 actual: actual.clone(),
@@ -632,7 +632,7 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
 
     let (tx, rx) = mpsc::channel();
 
-    let packages = context.index.public_packages();
+    let packages = context.index.public_targets();
 
     {
         measure_time::trace_time!("generate_dep_rules");

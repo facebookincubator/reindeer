@@ -40,10 +40,12 @@ pub struct Index<'meta> {
     pkgid_to_node: HashMap<&'meta PkgId, &'meta Node>,
     /// Represents the Cargo.toml itself
     root_pkg: &'meta Manifest,
+    /// Set of packages from which at least one target is public.
+    public_packages: BTreeSet<&'meta PkgId>,
     /// Set of public targets. These consist of:
     /// - root_pkg, if it is being made public (aka "real", and not just a pseudo package)
     /// - first-order dependencies of root_pkg, including artifact dependencies
-    public_set: BTreeMap<(&'meta PkgId, TargetKind), Option<&'meta str>>,
+    public_targets: BTreeMap<(&'meta PkgId, TargetKind), Option<&'meta str>>,
 }
 
 /// Extra per-package metadata to be kept in sync with the package list
@@ -114,11 +116,12 @@ impl<'meta> Index<'meta> {
             top_levels.insert(&root_pkg.id);
         }
 
-        let tmp = Index {
+        let mut tmp = Index {
             pkgid_to_pkg,
             pkgid_to_node: metadata.resolve.nodes.iter().map(|n| (&n.id, n)).collect(),
             root_pkg,
-            public_set: BTreeMap::new(),
+            public_packages: BTreeSet::new(),
+            public_targets: BTreeMap::new(),
         };
 
         // Keep an index of renamed crates, mapping from _ normalized name to actual name
@@ -133,7 +136,7 @@ impl<'meta> Index<'meta> {
 
         // Compute public set, with pkgid mapped to rename if it has one. Public set is
         // anything in top_levels, or first-order dependencies of root_pkg.
-        let public_set = tmp
+        let public_targets = tmp
             .resolved_deps(tmp.root_pkg)
             .flat_map(|(rename, dep_kind, pkg)| {
                 let target_kind = match dep_kind.artifact {
@@ -151,9 +154,16 @@ impl<'meta> Index<'meta> {
                     ((*pkgid, TargetKind::Bin), None),
                 ]
             }))
-            .collect();
+            .collect::<BTreeMap<_, _>>();
 
-        Index { public_set, ..tmp }
+        for (pkg, _kind) in public_targets.keys() {
+            tmp.public_packages.insert(pkg);
+        }
+
+        Index {
+            public_targets,
+            ..tmp
+        }
     }
 
     /// Test if a package is the root package
@@ -161,14 +171,19 @@ impl<'meta> Index<'meta> {
         self.root_pkg.id == pkg.id
     }
 
-    /// Test if a package is public
-    pub fn is_public(&self, pkg: &Manifest, target_kind: TargetKind) -> bool {
-        self.public_set.contains_key(&(&pkg.id, target_kind))
+    /// Test if there is any target from the package which is public
+    pub fn is_public_package(&self, pkg: &Manifest) -> bool {
+        self.public_packages.contains(&pkg.id)
+    }
+
+    /// Test if a specific target from a package is public
+    pub fn is_public_target(&self, pkg: &Manifest, target_kind: TargetKind) -> bool {
+        self.public_targets.contains_key(&(&pkg.id, target_kind))
     }
 
     /// Return all public packages
-    pub fn public_packages(&self) -> impl Iterator<Item = (&'meta Manifest, TargetKind)> + '_ {
-        self.public_set
+    pub fn public_targets(&self) -> impl Iterator<Item = (&'meta Manifest, TargetKind)> + '_ {
+        self.public_targets
             .keys()
             .map(|(id, kind)| (*self.pkgid_to_pkg.get(id).expect("missing pkgid"), *kind))
     }
@@ -180,7 +195,7 @@ impl<'meta> Index<'meta> {
 
     /// Return the private package rule name.
     pub fn private_rule_name(&self, pkg: &Manifest) -> Name {
-        Name(match self.public_set.get(&(&pkg.id, TargetKind::Lib)) {
+        Name(match self.public_targets.get(&(&pkg.id, TargetKind::Lib)) {
             Some(None) | None => pkg.to_string(), // Full version info
             Some(Some(rename)) => format!("{}-{}", pkg, rename), // Rename
         })
@@ -188,7 +203,7 @@ impl<'meta> Index<'meta> {
 
     /// Return the package public rule name.
     pub fn public_rule_name(&self, pkg: &'meta Manifest) -> Name {
-        Name(match self.public_set.get(&(&pkg.id, TargetKind::Lib)) {
+        Name(match self.public_targets.get(&(&pkg.id, TargetKind::Lib)) {
             Some(None) | None => pkg.name.to_owned(), // Package name
             Some(&Some(rename)) => rename.to_owned(), // Rename
         })
