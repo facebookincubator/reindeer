@@ -167,10 +167,10 @@ impl<'meta> Index<'meta> {
     }
 
     /// Return all public packages
-    pub fn public_packages(&self) -> impl Iterator<Item = &'meta Manifest> + '_ {
+    pub fn public_packages(&self) -> impl Iterator<Item = (&'meta Manifest, TargetKind)> + '_ {
         self.public_set
             .keys()
-            .map(|id| *self.pkgid_to_pkg.get(id.0).expect("missing pkgid"))
+            .map(|(id, kind)| (*self.pkgid_to_pkg.get(id).expect("missing pkgid"), *kind))
     }
 
     /// Returns the transitive closure of dependencies of public packages.
