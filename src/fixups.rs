@@ -533,7 +533,7 @@ impl<'meta> Fixups<'meta> {
         Ok(res)
     }
 
-    /// Return the set of features to enable, which is the union of the cargo-reso=lved ones
+    /// Return the set of features to enable, which is the union of the cargo-resolved ones
     /// and additional ones defined in the fixup.
     pub fn compute_features(&self) -> Vec<(Option<PlatformExpr>, BTreeSet<String>)> {
         let mut ret = vec![];

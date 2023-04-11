@@ -137,7 +137,7 @@ pub struct BuckConfig {
     /// Rule name for buildscript_genrule producing args
     #[serde(default = "default_buildscript_genrule_args")]
     pub buildscript_genrule_args: String,
-    /// Rule name for buildscript_genrule producing arfs
+    /// Rule name for buildscript_genrule producing sources
     #[serde(default = "default_buildscript_genrule_srcs")]
     pub buildscript_genrule_srcs: String,
 }
