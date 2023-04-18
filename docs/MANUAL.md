@@ -58,7 +58,7 @@ crates.io. What do you do?
 2. Run `reindeer --third-party-dir third-party vendor`. This will resolve the
    new dependencies (creating or updating `Cargo.lock`), vendor all the new code
    in the `third-party/vendor` directory (also deleting unused code)
-3. Run `reindeer --third-party-dir buckify`. This will analyze the Cargo
+3. Run `reindeer --third-party-dir third-party buckify`. This will analyze the Cargo
    dependencies and (re)generate the BUCK file accordingly. If this succeeds
    silently then there's a good chance that nothing more is needed.
 4. Do a test build with `buck build //third-party:new-package#check` to make
