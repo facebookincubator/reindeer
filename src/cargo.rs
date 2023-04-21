@@ -33,12 +33,18 @@ use serde::Deserializer;
 use serde::Serialize;
 
 use crate::config::Config;
+use crate::lockfile::Lockfile;
 use crate::platform::PlatformExpr;
 use crate::remap::write_remap_all_sources;
 use crate::Args;
 use crate::Paths;
 
-pub fn cargo_get_metadata(config: &Config, args: &Args, paths: &Paths) -> Result<Metadata> {
+pub fn cargo_get_metadata(
+    config: &Config,
+    args: &Args,
+    paths: &Paths,
+    lockfile: &Lockfile,
+) -> Result<Metadata> {
     let cargo_home;
     let current_dir;
     if paths.cargo_home.join("config").exists() {
@@ -49,7 +55,7 @@ pub fn cargo_get_metadata(config: &Config, args: &Args, paths: &Paths) -> Result
         let temp_dir = env::temp_dir().join("reindeer");
         let dot_cargo_dir = temp_dir.join(".cargo");
         let cargo_config = dot_cargo_dir.join("config");
-        write_remap_all_sources(&cargo_config, &paths.third_party_dir)?;
+        write_remap_all_sources(&cargo_config, &paths.third_party_dir, lockfile)?;
         current_dir = Cow::Owned(temp_dir);
     };
 
@@ -589,6 +595,7 @@ pub enum TargetReq<'a> {
     BuildScript,
     Staticlib,
     Cdylib,
+    Sources,
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq)]
@@ -674,7 +681,7 @@ impl Display for Edition {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Source {
     CratesIo,
     Git {
@@ -685,7 +692,7 @@ pub enum Source {
     Unrecognized(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum GitRef {
     /// ?rev=
     Revision,

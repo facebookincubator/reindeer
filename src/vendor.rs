@@ -67,7 +67,9 @@ pub(crate) fn cargo_vendor(
 
     fs::write(configdir.join("config"), cargoconfig)?;
 
-    filter_checksum_files(&paths.third_party_dir, vendordir, &config.vendor)?;
+    if let Some(vendor_config) = &config.vendor {
+        filter_checksum_files(&paths.third_party_dir, vendordir, vendor_config)?;
+    }
 
     if audit_sec {
         crate::audit_sec::audit_sec(config, paths, no_fetch, false).context("doing audit_sec")?;

@@ -1048,7 +1048,12 @@ impl<'meta> Fixups<'meta> {
             return ret;
         }
 
-        let srcdir = relative_path(&self.third_party_dir, &self.manifest_dir.join(srcdir));
+        let srcdir = if self.config.vendor.is_some() {
+            relative_path(&self.third_party_dir, &self.manifest_dir.join(srcdir))
+        } else {
+            let http_archive = format!("{}-{}.crate", self.package.name, self.package.version);
+            PathBuf::from(http_archive).join(srcdir)
+        };
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
             let mut map = BTreeMap::new();

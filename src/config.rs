@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -18,6 +19,10 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use anyhow::Result;
+use serde::de::value::MapAccessDeserializer;
+use serde::de::Deserializer;
+use serde::de::MapAccess;
+use serde::de::Visitor;
 use serde::Deserialize;
 
 use crate::platform::PlatformConfig;
@@ -80,8 +85,11 @@ pub struct Config {
     #[serde(default)]
     pub buck: BuckConfig,
 
-    #[serde(default)]
-    pub vendor: VendorConfig,
+    #[serde(
+        default = "default_vendor_config",
+        deserialize_with = "deserialize_vendor_config"
+    )]
+    pub vendor: Option<VendorConfig>,
 
     #[serde(default)]
     pub audit: AuditConfig,
@@ -120,6 +128,9 @@ pub struct BuckConfig {
     /// Rule name for alias
     #[serde(default = "default_alias")]
     pub alias: String,
+    /// Rule name for http_archive
+    #[serde(default = "default_http_archive")]
+    pub http_archive: String,
     /// Rule name for rust_library
     #[serde(default = "default_rust_library")]
     pub rust_library: String,
@@ -170,6 +181,10 @@ fn default_alias() -> String {
     BuckConfig::default().alias
 }
 
+fn default_http_archive() -> String {
+    BuckConfig::default().http_archive
+}
+
 fn default_rust_library() -> String {
     BuckConfig::default().rust_library
 }
@@ -194,6 +209,43 @@ fn default_buildscript_genrule_srcs() -> String {
     BuckConfig::default().buildscript_genrule_srcs
 }
 
+fn default_vendor_config() -> Option<VendorConfig> {
+    Some(VendorConfig::default())
+}
+
+fn deserialize_vendor_config<'de, D>(deserializer: D) -> Result<Option<VendorConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct VendorConfigVisitor;
+
+    impl<'de> Visitor<'de> for VendorConfigVisitor {
+        type Value = Option<VendorConfig>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("[vendor] section, or `vendor = false`")
+        }
+
+        fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            // `vendor = true`: default configuration with vendoring.
+            // `vendor = false`: do not vendor.
+            Ok(value.then(VendorConfig::default))
+        }
+
+        fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            VendorConfig::deserialize(MapAccessDeserializer::new(map)).map(Some)
+        }
+    }
+
+    deserializer.deserialize_any(VendorConfigVisitor)
+}
+
 impl Default for BuckConfig {
     fn default() -> Self {
         BuckConfig {
@@ -202,6 +254,7 @@ impl Default for BuckConfig {
             buckfile_imports: String::new(),
 
             alias: "alias".to_string(),
+            http_archive: "http_archive".to_string(),
             rust_library: "rust_library".to_string(),
             rust_binary: "rust_binary".to_string(),
             cxx_library: "cxx_library".to_string(),

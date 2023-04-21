@@ -50,20 +50,18 @@ struct RemapSource {
 /// [source.vendored-sources]
 /// directory = "/path/to/third-party-dir/vendor"
 /// ```
-pub fn write_remap_all_sources(cargo_config: &Path, third_party_dir: &Path) -> Result<()> {
-    let cargo_lock_path = third_party_dir.join("Cargo.lock");
-    let cargo_lock_content = fs::read(&cargo_lock_path)
-        .with_context(|| format!("Failed to load {}", cargo_lock_path.display()))?;
-    let lockfile: Lockfile = toml::from_slice(&cargo_lock_content)
-        .with_context(|| format!("Failed to parse {}", cargo_lock_path.display()))?;
-
+pub fn write_remap_all_sources(
+    cargo_config: &Path,
+    third_party_dir: &Path,
+    lockfile: &Lockfile,
+) -> Result<()> {
     let mut sources = Map::new();
-    for pkg in lockfile.packages {
+    for pkg in &lockfile.packages {
         let mut remap_source = RemapSource {
             replace_with: Some("vendored-sources"),
             ..RemapSource::default()
         };
-        let key = match pkg.source {
+        let key = match &pkg.source {
             Some(Source::CratesIo) => "crates-io".to_owned(),
             Some(Source::Git {
                 repo,
@@ -72,12 +70,12 @@ pub fn write_remap_all_sources(cargo_config: &Path, third_party_dir: &Path) -> R
             }) => {
                 remap_source.git = Some(repo.clone());
                 match reference {
-                    GitRef::Revision => remap_source.rev = Some(commit_hash),
-                    GitRef::Branch(branch) => remap_source.branch = Some(branch),
-                    GitRef::Tag(tag) => remap_source.tag = Some(tag),
+                    GitRef::Revision => remap_source.rev = Some(commit_hash.clone()),
+                    GitRef::Branch(branch) => remap_source.branch = Some(branch.clone()),
+                    GitRef::Tag(tag) => remap_source.tag = Some(tag.clone()),
                     GitRef::Head => {}
                 }
-                repo
+                repo.clone()
             }
             None | Some(Source::Unrecognized(_)) => continue,
         };

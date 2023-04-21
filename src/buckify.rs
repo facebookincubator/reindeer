@@ -29,6 +29,7 @@ use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::Common;
+use crate::buck::HttpArchive;
 use crate::buck::Name;
 use crate::buck::PlatformRustCommon;
 use crate::buck::Rule;
@@ -43,10 +44,12 @@ use crate::cargo::Edition;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
 use crate::cargo::PkgId;
+use crate::cargo::Source;
 use crate::cargo::TargetReq;
 use crate::config::Config;
 use crate::fixups::Fixups;
 use crate::index;
+use crate::lockfile::Lockfile;
 use crate::platform::platform_names_for_expr;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
@@ -116,6 +119,7 @@ struct RuleContext<'meta> {
     config: &'meta Config,
     paths: &'meta Paths,
     index: index::Index<'meta>,
+    lockfile: Lockfile,
     done: Mutex<HashSet<(&'meta PkgId, TargetReq<'meta>)>>,
 }
 
@@ -147,6 +151,10 @@ fn generate_rules<'scope>(
     pkg: &'scope Manifest,
     target_req: TargetReq<'scope>,
 ) {
+    if let TargetReq::Sources = target_req {
+        let _ = rule_tx.send(generate_http_archive(context, pkg));
+        return;
+    }
     for tgt in &pkg.targets {
         let matching_kind = match target_req {
             TargetReq::Lib => tgt.kind_lib() || tgt.kind_proc_macro() || tgt.kind_cdylib(),
@@ -155,6 +163,7 @@ fn generate_rules<'scope>(
             TargetReq::BuildScript => tgt.kind_custom_build(),
             TargetReq::Staticlib => tgt.kind_staticlib(),
             TargetReq::Cdylib => tgt.kind_cdylib(),
+            TargetReq::Sources => unreachable!(),
         };
         if !matching_kind {
             continue;
@@ -164,9 +173,12 @@ fn generate_rules<'scope>(
                 // Don't generate rules for dependencies if we're not emitting
                 // any rules for this target.
             }
-            Ok((rules, deps)) => {
+            Ok((rules, mut deps)) => {
                 for rule in rules {
                     let _ = rule_tx.send(Ok(rule));
+                }
+                if context.config.vendor.is_none() {
+                    deps.push((pkg, TargetReq::Sources));
                 }
                 generate_dep_rules(context, scope, rule_tx.clone(), deps);
             }
@@ -181,6 +193,62 @@ fn generate_rules<'scope>(
             }
         }
     }
+}
+
+fn generate_http_archive<'scope>(
+    context: &'scope RuleContext<'scope>,
+    pkg: &'scope Manifest,
+) -> Result<Rule> {
+    let lockfile_package = match context.lockfile.find(pkg) {
+        Some(lockfile_package) => lockfile_package,
+        None => {
+            // This would be unexpected, because `cargo metadata` just got run,
+            // which should have updated this lockfile.
+            bail!(
+                "Package \"{}\" {} not found in lockfile {}",
+                pkg.name,
+                pkg.version,
+                context.paths.lockfile_path.display(),
+            );
+        }
+    };
+
+    match lockfile_package.source {
+        Some(Source::CratesIo) => {}
+        _ => {
+            bail!(
+                "`vendor = false` mode is supported only with exclusively crates.io dependencies. \"{}\" {} is coming from some source other than crates.io",
+                pkg.name,
+                pkg.version,
+            );
+        }
+    }
+
+    let sha256 = match &lockfile_package.checksum {
+        Some(checksum) => checksum.clone(),
+        None => {
+            // Dependencies from Source::CratesIo should almost certainly be
+            // associated with a checksum so a failure here is not expected.
+            bail!(
+                "No sha256 checksum available for \"{}\" {} in lockfile {}",
+                pkg.name,
+                pkg.version,
+                context.paths.lockfile_path.display(),
+            );
+        }
+    };
+
+    Ok(Rule::HttpArchive(HttpArchive {
+        name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
+        sha256,
+        strip_prefix: format!("{}-{}", pkg.name, pkg.version),
+        urls: vec![format!(
+            "https://crates.io/api/v1/crates/{}/{}/download",
+            pkg.name, pkg.version,
+        )],
+        visibility: Visibility::Private,
+        sort_key: Name(format!("{}-{}", pkg.name, pkg.version)),
+    }))
 }
 
 /// Generate rules for a target. Returns the rules, and the
@@ -207,7 +275,13 @@ fn generate_target_rules<'scope>(
 
     log::debug!("pkg {} target {} fixups {:#?}", pkg, tgt.name, fixups);
 
-    let rootmod = relative_path(&paths.third_party_dir, &tgt.src_path);
+    let rootmod = if context.config.vendor.is_some() {
+        relative_path(&paths.third_party_dir, &tgt.src_path)
+    } else {
+        let http_archive = format!("{}-{}.crate", pkg.name, pkg.version);
+        let path_within_crate = relative_path(pkg.manifest_dir(), &tgt.src_path);
+        PathBuf::from(http_archive).join(path_within_crate)
+    };
     let edition = tgt.edition.unwrap_or(pkg.edition);
     let licenses: BTreeSet<_> = fixups
         .manifestwalk(&config.license_patterns, iter::empty::<&str>(), false)?
@@ -229,25 +303,26 @@ fn generate_target_rules<'scope>(
     // filename, or a list of globs.
     // If we're configured to get precise sources and we're using 2018+ edition source, then
     // parse the crate to see what files are actually used.
-    let mut srcs = if fixups.precise_srcs() && edition >= Edition::Rust2018 {
-        measure_time::trace_time!("srcfiles for {}", pkg);
-        match srcfiles::crate_srcfiles(&tgt.src_path) {
-            Ok(srcs) => {
-                let srcs = srcs
-                    .into_iter()
-                    .map(|src| normalize_dotdot(&src.path))
-                    .collect::<Vec<_>>();
-                log::debug!("crate_srcfiles returned {:#?}", srcs);
-                srcs
+    let mut srcs =
+        if config.vendor.is_some() && fixups.precise_srcs() && edition >= Edition::Rust2018 {
+            measure_time::trace_time!("srcfiles for {}", pkg);
+            match srcfiles::crate_srcfiles(&tgt.src_path) {
+                Ok(srcs) => {
+                    let srcs = srcs
+                        .into_iter()
+                        .map(|src| normalize_dotdot(&src.path))
+                        .collect::<Vec<_>>();
+                    log::debug!("crate_srcfiles returned {:#?}", srcs);
+                    srcs
+                }
+                Err(err) => {
+                    log::info!("crate_srcfiles failed: {}", err);
+                    vec![]
+                }
             }
-            Err(err) => {
-                log::info!("crate_srcfiles failed: {}", err);
-                vec![]
-            }
-        }
-    } else {
-        vec![]
-    };
+        } else {
+            vec![]
+        };
 
     if srcs.is_empty() {
         // If that didn't work out, get srcs the globby way
@@ -279,17 +354,23 @@ fn generate_target_rules<'scope>(
     )
     .context("rustc_flags")?;
 
-    unzip_platform(
-        config,
-        &mut base,
-        &mut perplat,
-        |rule, srcs| {
-            log::debug!("pkg {} target {}: adding srcs {:?}", pkg, tgt.name, srcs);
-            rule.srcs.extend(srcs.into_iter().map(BuckPath))
-        },
-        fixups.compute_srcs(srcs)?,
-    )
-    .context("srcs")?;
+    if config.vendor.is_some() {
+        unzip_platform(
+            config,
+            &mut base,
+            &mut perplat,
+            |rule, srcs| {
+                log::debug!("pkg {} target {}: adding srcs {:?}", pkg, tgt.name, srcs);
+                rule.srcs.extend(srcs.into_iter().map(BuckPath))
+            },
+            fixups.compute_srcs(srcs)?,
+        )
+        .context("srcs")?;
+    } else {
+        let http_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
+        base.srcs
+            .insert(BuckPath(PathBuf::from(http_archive_target)));
+    }
 
     unzip_platform(
         config,
@@ -610,9 +691,11 @@ fn generate_target_rules<'scope>(
 }
 
 pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool) -> Result<()> {
+    let lockfile = Lockfile::load(paths)?;
+
     let metadata = {
         measure_time::trace_time!("Get cargo metadata");
-        cargo_get_metadata(config, args, paths)?
+        cargo_get_metadata(config, args, paths, &lockfile)?
     };
 
     if args.debug {
@@ -625,6 +708,7 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
         config,
         paths,
         index,
+        lockfile,
         done: Mutex::new(HashSet::new()),
     };
 

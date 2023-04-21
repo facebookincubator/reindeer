@@ -183,6 +183,36 @@ impl Serialize for NameAsLabel<'_> {
     }
 }
 
+#[derive(Debug)]
+pub struct HttpArchive {
+    pub name: Name,
+    pub sha256: String,
+    pub strip_prefix: String,
+    pub urls: Vec<String>,
+    pub visibility: Visibility,
+    pub sort_key: Name,
+}
+
+impl Serialize for HttpArchive {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            name,
+            sha256,
+            strip_prefix,
+            urls,
+            visibility,
+            sort_key: _,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("name", name)?;
+        map.serialize_entry("sha256", sha256)?;
+        map.serialize_entry("strip_prefix", strip_prefix)?;
+        map.serialize_entry("urls", urls)?;
+        map.serialize_entry("visibility", visibility)?;
+        map.end()
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Common {
     pub name: Name,
@@ -716,6 +746,7 @@ impl Serialize for PrebuiltCxxLibrary {
 #[derive(Debug)]
 pub enum Rule {
     Alias(Alias),
+    HttpArchive(HttpArchive),
     Binary(RustBinary),
     Library(RustLibrary),
     BuildscriptBinary(RustBinary),
@@ -744,13 +775,14 @@ fn rule_sort_key(rule: &Rule) -> (&Name, usize) {
         // Make the alias rule come before the actual rule. Note that aliases
         // emitted by reindeer are always to a target within the same package.
         Rule::Alias(Alias { actual, .. }) => (actual, 0),
+        Rule::HttpArchive(HttpArchive { sort_key, .. }) => (sort_key, 1),
         Rule::Binary(_)
         | Rule::Library(_)
         | Rule::BuildscriptBinary(_)
         | Rule::BuildscriptGenruleSrcs(_)
         | Rule::BuildscriptGenruleArgs(_)
         | Rule::CxxLibrary(_)
-        | Rule::PrebuiltCxxLibrary(_) => (rule.get_name(), 1),
+        | Rule::PrebuiltCxxLibrary(_) => (rule.get_name(), 2),
     }
 }
 
@@ -764,6 +796,7 @@ impl Rule {
     pub fn get_name(&self) -> &Name {
         match self {
             Rule::Alias(Alias { name, .. })
+            | Rule::HttpArchive(HttpArchive { name, .. })
             | Rule::Binary(RustBinary {
                 common:
                     RustCommon {
@@ -811,6 +844,9 @@ impl Rule {
         use serde_starlark::Serializer;
         let serialized = match self {
             Rule::Alias(alias) => FunctionCall::new(&config.alias, alias).serialize(Serializer),
+            Rule::HttpArchive(http_archive) => {
+                FunctionCall::new(&config.http_archive, http_archive).serialize(Serializer)
+            }
             Rule::Binary(bin) => FunctionCall::new(&config.rust_binary, bin).serialize(Serializer),
             Rule::Library(lib) => {
                 FunctionCall::new(&config.rust_library, lib).serialize(Serializer)

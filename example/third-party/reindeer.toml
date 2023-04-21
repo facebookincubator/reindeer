@@ -38,6 +38,10 @@ fixup_templates = true
 include_top_level = true
 
 # Configuration for vendoring
+#
+# You can instead set `vendor = false` to make Reindeer-generated targets not
+# build from the vendored sources, but instead download sources from crates.io
+# at build time.
 [vendor]
 # Exclude files listed in the .gitignore in this directory
 gitignore_checksum_exclude = [".gitignore"]

@@ -99,6 +99,7 @@ enum SubCommand {
 pub struct Paths {
     third_party_dir: PathBuf,
     manifest_path: PathBuf,
+    lockfile_path: PathBuf,
     cargo_home: PathBuf,
     /// Path of the Buck cell root
     cell_dir: PathBuf,
@@ -117,6 +118,7 @@ fn try_main() -> Result<()> {
         }
         Paths {
             manifest_path: third_party_dir.join("Cargo.toml"),
+            lockfile_path: third_party_dir.join("Cargo.lock"),
             cargo_home: third_party_dir.join(".cargo"),
             third_party_dir,
             cell_dir,
