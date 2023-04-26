@@ -39,45 +39,63 @@ use crate::remap::write_remap_all_sources;
 use crate::Args;
 use crate::Paths;
 
-pub fn cargo_get_metadata(
+pub fn cargo_get_lockfile_and_metadata(
     config: &Config,
     args: &Args,
     paths: &Paths,
-    lockfile: &Lockfile,
-) -> Result<Metadata> {
+) -> Result<(Lockfile, Metadata)> {
+    let mut cargo_flags = vec![
+        "metadata",
+        "--format-version",
+        "1",
+        "--manifest-path",
+        paths.manifest_path.to_str().unwrap(),
+    ];
+
     let cargo_home;
     let current_dir;
-    if paths.cargo_home.join("config").exists() {
-        cargo_home = Some(paths.cargo_home.as_path());
-        current_dir = Cow::Borrowed(&paths.third_party_dir);
-    } else {
+    let lockfile;
+    if config.vendor.is_none() {
         cargo_home = None;
-        let temp_dir = env::temp_dir().join("reindeer");
-        let dot_cargo_dir = temp_dir.join(".cargo");
-        let cargo_config = dot_cargo_dir.join("config");
-        write_remap_all_sources(&cargo_config, &paths.third_party_dir, lockfile)?;
-        current_dir = Cow::Owned(temp_dir);
+        current_dir = Cow::Borrowed(&paths.third_party_dir);
+
+        // Whether or not there is a Cargo.lock already, do not read it yet.
+        // Read it after the `cargo metadata` invocation. In non-vendoring mode
+        // we allow `reindeer buckify` to make changes to the lockfile. In
+        // vendoring mode `reindeer vendor` would have done the same changes.
+        lockfile = None;
+    } else {
+        // The Cargo.lock should already have been updated by the vendor step.
+        // We must not change it during buckify or else we'd be generating Buck
+        // targets for not the same crate versions that were put in the vendor
+        // directory.
+        cargo_flags.extend(["--frozen", "--locked", "--offline"]);
+
+        if paths.cargo_home.join("config").exists() {
+            cargo_home = Some(paths.cargo_home.as_path());
+            current_dir = Cow::Borrowed(&paths.third_party_dir);
+            lockfile = Some(Lockfile::load(paths)?);
+        } else {
+            cargo_home = None;
+            let temp_dir = env::temp_dir().join("reindeer");
+            let dot_cargo_dir = temp_dir.join(".cargo");
+            let cargo_config = dot_cargo_dir.join("config");
+            let the_lockfile = Lockfile::load(paths)?;
+            write_remap_all_sources(&cargo_config, &paths.third_party_dir, &the_lockfile)?;
+            current_dir = Cow::Owned(temp_dir);
+            lockfile = Some(the_lockfile);
+        }
     };
 
-    let metadata: Metadata = run_cargo_json(
-        config,
-        cargo_home,
-        &current_dir,
-        args,
-        &[
-            "metadata",
-            "--format-version",
-            "1",
-            "--frozen",
-            "--locked",
-            "--offline",
-            "--manifest-path",
-            paths.manifest_path.to_str().unwrap(),
-        ],
-    )
-    .context("parsing metadata")?;
+    let metadata: Metadata = run_cargo_json(config, cargo_home, &current_dir, args, &cargo_flags)
+        .context("parsing metadata")?;
 
-    Ok(metadata)
+    let lockfile = match lockfile {
+        Some(existing_lockfile) => existing_lockfile,
+        None => Lockfile::load(paths)?,
+    };
+
+    Ok((lockfile, metadata))
 }
 
 // Run a cargo command

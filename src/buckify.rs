@@ -38,7 +38,7 @@ use crate::buck::RustBinary;
 use crate::buck::RustCommon;
 use crate::buck::RustLibrary;
 use crate::buck::Visibility;
-use crate::cargo::cargo_get_metadata;
+use crate::cargo::cargo_get_lockfile_and_metadata;
 use crate::cargo::ArtifactKind;
 use crate::cargo::Edition;
 use crate::cargo::Manifest;
@@ -691,11 +691,9 @@ fn generate_target_rules<'scope>(
 }
 
 pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool) -> Result<()> {
-    let lockfile = Lockfile::load(paths)?;
-
-    let metadata = {
+    let (lockfile, metadata) = {
         measure_time::trace_time!("Get cargo metadata");
-        cargo_get_metadata(config, args, paths, &lockfile)?
+        cargo_get_lockfile_and_metadata(config, args, paths)?
     };
 
     if args.debug {
