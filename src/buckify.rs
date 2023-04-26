@@ -283,16 +283,29 @@ fn generate_target_rules<'scope>(
         PathBuf::from(http_archive).join(path_within_crate)
     };
     let edition = tgt.edition.unwrap_or(pkg.edition);
-    let licenses: BTreeSet<_> = fixups
-        .manifestwalk(&config.license_patterns, iter::empty::<&str>(), false)?
-        .chain(
-            pkg.license_file
-                .as_ref()
-                .map(|file| relative_path(&paths.third_party_dir, pkg.manifest_dir()).join(file))
-                .into_iter(),
-        )
-        .map(BuckPath)
-        .collect();
+
+    let licenses = if config.vendor.is_none() {
+        // The `licenses` attribute takes `attrs.source()` which is the file
+        // containing the custom license text. For `vendor = false` mode, we
+        // don't have such a file on disk, and we don't have a Buck label either
+        // that could refer to the right generated location following download
+        // because `http_archive` does not expose subtargets for each of the
+        // individual contained files.
+        BTreeSet::new()
+    } else {
+        fixups
+            .manifestwalk(&config.license_patterns, iter::empty::<&str>(), false)?
+            .chain(
+                pkg.license_file
+                    .as_ref()
+                    .map(|file| {
+                        relative_path(&paths.third_party_dir, pkg.manifest_dir()).join(file)
+                    })
+                    .into_iter(),
+            )
+            .map(BuckPath)
+            .collect()
+    };
 
     let global_rustc_flags = config.rustc_flags.clone();
     let global_platform_rustc_flags = config.platform_rustc_flags.clone();
