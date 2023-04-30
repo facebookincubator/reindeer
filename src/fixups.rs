@@ -686,7 +686,13 @@ impl<'meta> Fixups<'meta> {
                 Some(_) | None => Some(rename),
             };
 
-            if all_omits.contains(original_rename) {
+            if omits
+                .get(&None)
+                .map_or(false, |omits| omits.contains(original_rename))
+            {
+                // Dependency is unconditionally omitted on all platforms.
+                continue;
+            } else if all_omits.contains(original_rename) {
                 // If the dependency is for a particular platform and that has it excluded,
                 // skip it.
                 if let Some(platform_omits) = omits.get(&platform.as_ref()) {
