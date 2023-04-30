@@ -68,11 +68,11 @@ def _make_preamble(out_dir, package_name, version, features, cfgs, env, target_o
 # environment variables. `filters` is a shell command which takes the
 # output of the build script and filters appropriately. It is given the
 # final output file path on its commandline.
-def rust_buildscript_genrule_args(name, buildscript_rule, outfile, package_name, version, filter, features = [], cfgs = [], env = {}, target = None):
+def rust_buildscript_genrule_args(name, buildscript_rule, package_name, version, filter, features = [], cfgs = [], env = {}, target = None):
     pre = _make_preamble("\\$(dirname $OUT)", package_name, version, features, cfgs, env, target)
     fb_native.cxx_genrule(
         name = name,
-        out = outfile,
+        out = "args.txt",
         cmd = pre + "$(exe {buildscript}) | {filter} > $OUT".format(
             buildscript = buildscript_rule,
             filter = filter,

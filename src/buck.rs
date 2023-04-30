@@ -545,7 +545,6 @@ pub struct BuildscriptGenrule {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct BuildscriptGenruleArgs {
     pub base: BuildscriptGenrule,
-    pub outfile: String,
 }
 
 impl Serialize for BuildscriptGenruleArgs {
@@ -563,7 +562,6 @@ impl Serialize for BuildscriptGenruleArgs {
                     path_env,
                     args_env,
                 },
-            outfile,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
@@ -581,7 +579,6 @@ impl Serialize for BuildscriptGenruleArgs {
         if !features.is_empty() {
             map.serialize_entry("features", features)?;
         }
-        map.serialize_entry("outfile", outfile)?;
         if !path_env.is_empty() {
             map.serialize_entry("path_env", path_env)?;
         }

@@ -282,7 +282,6 @@ impl<'meta> Fixups<'meta> {
                             path_env: path_env.clone(),
                             args_env: BTreeMap::new(),
                         },
-                        outfile: "args.txt".to_string(),
                     }))
                 }
 
