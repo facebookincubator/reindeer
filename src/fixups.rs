@@ -289,24 +289,13 @@ impl<'meta> Fixups<'meta> {
                 // Generated source files - given a list, set up rules to extract them from
                 // the buildscript.
                 BuildscriptFixup::GenSrcs(GenSrcs {
-                    input_srcs, // input file globs
-                    env,        // env set while running
-                    path_env,   // env pointing to pathnames set while running
-                    args_env,   // space-separated args like CFLAGS
+                    env,      // env set while running
+                    path_env, // env pointing to pathnames set while running
+                    args_env, // space-separated args like CFLAGS
                     ..
                 }) => {
                     // Emit the build script itself
                     res.push(Rule::BuildscriptBinary(buildscript.clone()));
-
-                    let srcs = self
-                        .manifestwalk(
-                            input_srcs.iter().map(String::as_str),
-                            iter::empty::<&str>(),
-                            self.config.strict_globs,
-                        )
-                        .context("generated file inputs")?
-                        .map(BuckPath)
-                        .collect();
 
                     // Emit rules to extract generated sources
                     res.push(Rule::BuildscriptGenruleSrcs(BuildscriptGenruleSrcs {
@@ -322,7 +311,6 @@ impl<'meta> Fixups<'meta> {
                             path_env: path_env.clone(),
                             args_env: args_env.clone(),
                         },
-                        srcs,
                     }))
                 }
 
