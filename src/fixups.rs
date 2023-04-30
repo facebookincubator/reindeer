@@ -29,8 +29,6 @@ use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::BuildscriptGenrule;
-use crate::buck::BuildscriptGenruleArgs;
-use crate::buck::BuildscriptGenruleSrcs;
 use crate::buck::Common;
 use crate::buck::Name;
 use crate::buck::Rule;
@@ -190,18 +188,20 @@ impl<'meta> Fixups<'meta> {
             .find(|tgt| tgt.kind_custom_build())
     }
 
-    fn buildscript_rustc_flags_rulename(&self) -> Name {
-        Name(format!(
-            "{}-args",
-            self.buildscript_rule_name().expect("no buildscript")
-        ))
-    }
-
-    pub fn buildscript_gen_srcs_rulename(&self) -> Name {
-        Name(format!(
-            "{}-srcs",
-            self.buildscript_rule_name().expect("no buildscript")
-        ))
+    pub fn buildscript_genrule_name(&self) -> Name {
+        let mut name = self.buildscript_rule_name().expect("no buildscript");
+        // Cargo names the build script target after the filename of the build
+        // script's crate root. In the overwhelmingly common case of a build
+        // script located in build.rs, this is build-script-build, and we name
+        // the genrule build-script-run. Some crates such as typenum have a
+        // build/main.rs such that the build script target ends up being named
+        // build-script-main, and in this case we use build-script-main-run for
+        // the genrule.
+        if name.0.ends_with("-build-script-build") {
+            name.0.truncate(name.0.len() - 6);
+        }
+        name.0.push_str("-run");
+        name
     }
 
     fn buildscript_rule_name(&self) -> Option<Name> {
@@ -257,6 +257,19 @@ impl<'meta> Fixups<'meta> {
             .configs(&self.package.version)
             .flat_map(|(_platform, fixup)| fixup.buildscript.iter());
 
+        let mut buildscript_run = None;
+        let default_genrule = || BuildscriptGenrule {
+            name: self.buildscript_genrule_name(),
+            buildscript_rule: buildscript_rule_name.clone(),
+            package_name: self.package.name.clone(),
+            version: self.package.version.clone(),
+            features: features.clone(),
+            cfgs: Vec::new(),
+            env: BTreeMap::new(),
+            path_env: BTreeMap::new(),
+            args_env: BTreeMap::new(),
+        };
+
         for fix in fixes {
             match fix {
                 // Just emit a build rule for it, but don't otherwise do anything
@@ -269,20 +282,9 @@ impl<'meta> Fixups<'meta> {
                     res.push(Rule::BuildscriptBinary(buildscript.clone()));
 
                     // Emit rule to get its stdout and filter it into args
-                    res.push(Rule::BuildscriptGenruleArgs(BuildscriptGenruleArgs {
-                        base: BuildscriptGenrule {
-                            name: self.buildscript_rustc_flags_rulename(),
-
-                            buildscript_rule: buildscript_rule_name.clone(),
-                            package_name: self.package.name.clone(),
-                            version: self.package.version.clone(),
-                            features: features.clone(),
-                            cfgs: vec![],
-                            env: env.clone(),
-                            path_env: path_env.clone(),
-                            args_env: BTreeMap::new(),
-                        },
-                    }))
+                    let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
+                    buildscript_run.env.extend(env.clone());
+                    buildscript_run.path_env.extend(path_env.clone());
                 }
 
                 // Generated source files - given a list, set up rules to extract them from
@@ -297,20 +299,10 @@ impl<'meta> Fixups<'meta> {
                     res.push(Rule::BuildscriptBinary(buildscript.clone()));
 
                     // Emit rules to extract generated sources
-                    res.push(Rule::BuildscriptGenruleSrcs(BuildscriptGenruleSrcs {
-                        base: BuildscriptGenrule {
-                            name: self.buildscript_gen_srcs_rulename(),
-
-                            buildscript_rule: buildscript_rule_name.clone(),
-                            package_name: self.package.name.clone(),
-                            version: self.package.version.clone(),
-                            features: features.clone(),
-                            cfgs: vec![],
-                            env: env.clone(),
-                            path_env: path_env.clone(),
-                            args_env: args_env.clone(),
-                        },
-                    }))
+                    let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
+                    buildscript_run.env.extend(env.clone());
+                    buildscript_run.path_env.extend(path_env.clone());
+                    buildscript_run.args_env.extend(args_env.clone());
                 }
 
                 // Emit a C++ library build rule (elsewhere - add a dependency to it)
@@ -502,6 +494,10 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
+        if let Some(buildscript_run) = buildscript_run {
+            res.push(Rule::BuildscriptGenrule(buildscript_run));
+        }
+
         Ok(res)
     }
 
@@ -567,8 +563,8 @@ impl<'meta> Fixups<'meta> {
                 }
                 if let BuildscriptFixup::RustcFlags(_) = buildscript {
                     flags.push(format!(
-                        "@$(location :{})",
-                        self.buildscript_rustc_flags_rulename()
+                        "@$(location :{}[rustc_flags])",
+                        self.buildscript_genrule_name()
                     ))
                 }
             }

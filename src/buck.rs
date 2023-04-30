@@ -542,71 +542,18 @@ pub struct BuildscriptGenrule {
     pub args_env: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct BuildscriptGenruleArgs {
-    pub base: BuildscriptGenrule,
-}
-
-impl Serialize for BuildscriptGenruleArgs {
+impl Serialize for BuildscriptGenrule {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         let Self {
-            base:
-                BuildscriptGenrule {
-                    name,
-                    buildscript_rule,
-                    package_name,
-                    version,
-                    features,
-                    cfgs,
-                    env,
-                    path_env,
-                    args_env,
-                },
-        } = self;
-        let mut map = ser.serialize_map(None)?;
-        map.serialize_entry("name", name)?;
-        map.serialize_entry("package_name", package_name)?;
-        if !args_env.is_empty() {
-            map.serialize_entry("args_env", args_env)?;
-        }
-        map.serialize_entry("buildscript_rule", &NameAsLabel(buildscript_rule))?;
-        if !cfgs.is_empty() {
-            map.serialize_entry("cfgs", cfgs)?;
-        }
-        if !env.is_empty() {
-            map.serialize_entry("env", env)?;
-        }
-        if !features.is_empty() {
-            map.serialize_entry("features", features)?;
-        }
-        if !path_env.is_empty() {
-            map.serialize_entry("path_env", path_env)?;
-        }
-        map.serialize_entry("version", version)?;
-        map.end()
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct BuildscriptGenruleSrcs {
-    pub base: BuildscriptGenrule,
-}
-
-impl Serialize for BuildscriptGenruleSrcs {
-    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        let Self {
-            base:
-                BuildscriptGenrule {
-                    name,
-                    buildscript_rule,
-                    package_name,
-                    version,
-                    features,
-                    cfgs,
-                    env,
-                    path_env,
-                    args_env,
-                },
+            name,
+            buildscript_rule,
+            package_name,
+            version,
+            features,
+            cfgs,
+            env,
+            path_env,
+            args_env,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
@@ -739,8 +686,7 @@ pub enum Rule {
     Binary(RustBinary),
     Library(RustLibrary),
     BuildscriptBinary(RustBinary),
-    BuildscriptGenruleSrcs(BuildscriptGenruleSrcs),
-    BuildscriptGenruleArgs(BuildscriptGenruleArgs),
+    BuildscriptGenrule(BuildscriptGenrule),
     CxxLibrary(CxxLibrary),
     PrebuiltCxxLibrary(PrebuiltCxxLibrary),
 }
@@ -768,8 +714,7 @@ fn rule_sort_key(rule: &Rule) -> (&Name, usize) {
         Rule::Binary(_)
         | Rule::Library(_)
         | Rule::BuildscriptBinary(_)
-        | Rule::BuildscriptGenruleSrcs(_)
-        | Rule::BuildscriptGenruleArgs(_)
+        | Rule::BuildscriptGenrule(_)
         | Rule::CxxLibrary(_)
         | Rule::PrebuiltCxxLibrary(_) => (rule.get_name(), 2),
     }
@@ -810,14 +755,7 @@ impl Rule {
                     },
                 ..
             })
-            | Rule::BuildscriptGenruleSrcs(BuildscriptGenruleSrcs {
-                base: BuildscriptGenrule { name, .. },
-                ..
-            })
-            | Rule::BuildscriptGenruleArgs(BuildscriptGenruleArgs {
-                base: BuildscriptGenrule { name, .. },
-                ..
-            })
+            | Rule::BuildscriptGenrule(BuildscriptGenrule { name, .. })
             | Rule::CxxLibrary(CxxLibrary {
                 common: Common { name, .. },
                 ..
@@ -847,11 +785,8 @@ impl Rule {
                     .unwrap_or(&config.rust_binary);
                 FunctionCall::new(buildscript_binary, bin).serialize(Serializer)
             }
-            Rule::BuildscriptGenruleArgs(lib) => {
-                FunctionCall::new(&config.buildscript_genrule_args, lib).serialize(Serializer)
-            }
-            Rule::BuildscriptGenruleSrcs(lib) => {
-                FunctionCall::new(&config.buildscript_genrule_srcs, lib).serialize(Serializer)
+            Rule::BuildscriptGenrule(lib) => {
+                FunctionCall::new(&config.buildscript_genrule, lib).serialize(Serializer)
             }
             Rule::CxxLibrary(lib) => {
                 FunctionCall::new(&config.cxx_library, lib).serialize(Serializer)

@@ -145,12 +145,9 @@ pub struct BuckConfig {
     pub prebuilt_cxx_library: String,
     /// Rule name for the rust_binary of a build script
     pub buildscript_binary: Option<String>,
-    /// Rule name for buildscript_genrule producing args
-    #[serde(default = "default_buildscript_genrule_args")]
-    pub buildscript_genrule_args: String,
-    /// Rule name for buildscript_genrule producing sources
-    #[serde(default = "default_buildscript_genrule_srcs")]
-    pub buildscript_genrule_srcs: String,
+    /// Rule name for a build script invocation
+    #[serde(default = "default_buildscript_genrule")]
+    pub buildscript_genrule: String,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -201,12 +198,8 @@ fn default_prebuilt_cxx_library() -> String {
     BuckConfig::default().prebuilt_cxx_library
 }
 
-fn default_buildscript_genrule_args() -> String {
-    BuckConfig::default().buildscript_genrule_args
-}
-
-fn default_buildscript_genrule_srcs() -> String {
-    BuckConfig::default().buildscript_genrule_srcs
+fn default_buildscript_genrule() -> String {
+    BuckConfig::default().buildscript_genrule
 }
 
 fn default_vendor_config() -> Option<VendorConfig> {
@@ -260,8 +253,7 @@ impl Default for BuckConfig {
             cxx_library: "cxx_library".to_string(),
             prebuilt_cxx_library: "prebuilt_cxx_library".to_string(),
             buildscript_binary: None,
-            buildscript_genrule_args: "buildscript_args".to_string(),
-            buildscript_genrule_srcs: "buildscript_srcs".to_string(),
+            buildscript_genrule: "buildscript_run".to_string(),
         }
     }
 }

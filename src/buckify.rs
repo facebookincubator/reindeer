@@ -399,7 +399,10 @@ fn generate_target_rules<'scope>(
             );
             rule.env.insert(
                 "OUT_DIR".to_owned(),
-                format!("$(location :{})", fixups.buildscript_gen_srcs_rulename()),
+                format!(
+                    "$(location :{}[out_dir])",
+                    fixups.buildscript_genrule_name(),
+                ),
             );
         },
         fixups.compute_gen_srcs(),
