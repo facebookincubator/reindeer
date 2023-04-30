@@ -174,11 +174,15 @@ fn generate_rules<'scope>(
                 // any rules for this target.
             }
             Ok((rules, mut deps)) => {
-                for rule in rules {
-                    let _ = rule_tx.send(Ok(rule));
-                }
-                if context.config.vendor.is_none() {
-                    deps.push((pkg, TargetReq::Sources));
+                let is_private_root_pkg =
+                    context.index.is_root_package(pkg) && !context.index.is_public_package(pkg);
+                if !is_private_root_pkg {
+                    for rule in rules {
+                        let _ = rule_tx.send(Ok(rule));
+                    }
+                    if context.config.vendor.is_none() {
+                        deps.push((pkg, TargetReq::Sources));
+                    }
                 }
                 generate_dep_rules(context, scope, rule_tx.clone(), deps);
             }
@@ -725,12 +729,18 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
 
     let (tx, rx) = mpsc::channel();
 
-    let packages = context.index.public_targets();
-
     {
         measure_time::trace_time!("generate_dep_rules");
         rayon::scope(move |scope| {
-            generate_dep_rules(context, scope, tx, packages);
+            generate_dep_rules(
+                context,
+                scope,
+                tx,
+                [
+                    (context.index.root_pkg, TargetReq::Lib),
+                    (context.index.root_pkg, TargetReq::EveryBin),
+                ],
+            );
         });
     }
 

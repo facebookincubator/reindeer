@@ -38,7 +38,7 @@ pub struct Index<'meta> {
     /// Map a PkgId to a Node (ie all the details of a resolve dependency)
     pkgid_to_node: HashMap<&'meta PkgId, &'meta Node>,
     /// Represents the Cargo.toml itself
-    root_pkg: &'meta Manifest,
+    pub root_pkg: &'meta Manifest,
     /// Set of packages from which at least one target is public.
     public_packages: BTreeSet<&'meta PkgId>,
     /// Set of public targets. These consist of:
@@ -173,13 +173,6 @@ impl<'meta> Index<'meta> {
     /// Test if a specific target from a package is public
     pub fn is_public_target(&self, pkg: &Manifest, target_req: TargetReq) -> bool {
         self.public_targets.contains_key(&(&pkg.id, target_req))
-    }
-
-    /// Return all public packages
-    pub fn public_targets(&self) -> impl Iterator<Item = (&'meta Manifest, TargetReq<'meta>)> + '_ {
-        self.public_targets
-            .keys()
-            .map(|(id, req)| (*self.pkgid_to_pkg.get(id).expect("missing pkgid"), *req))
     }
 
     /// Returns the transitive closure of dependencies of public packages.
