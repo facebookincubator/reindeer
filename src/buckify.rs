@@ -314,8 +314,6 @@ fn generate_target_rules<'scope>(
     let global_rustc_flags = config.rustc_flags.clone();
     let global_platform_rustc_flags = config.platform_rustc_flags.clone();
 
-    let srcdir = relative_path(pkg.manifest_dir(), tgt.src_path.parent().unwrap());
-
     // Get a list of the most obvious sources for the crate. This is either a list of
     // filename, or a list of globs.
     // If we're configured to get precise sources and we're using 2018+ edition source, then
@@ -393,21 +391,20 @@ fn generate_target_rules<'scope>(
         config,
         &mut base,
         &mut perplat,
-        |rule, map| {
+        |rule, ()| {
             log::debug!(
-                "pkg {} target {}: adding mapped_srcs(gen_srcs) {:?}",
+                "pkg {} target {}: adding OUT_DIR for gen_srcs",
                 pkg,
                 tgt.name,
-                map
             );
-            let targets = map
-                .into_iter()
-                .map(|(name, path)| (format!(":{name}"), BuckPath(path)));
-            rule.mapped_srcs.extend(targets);
+            rule.env.insert(
+                "OUT_DIR".to_owned(),
+                format!("$(location :{})", fixups.buildscript_gen_srcs_rulename()),
+            );
         },
-        fixups.compute_gen_srcs(&srcdir),
+        fixups.compute_gen_srcs(),
     )
-    .context("mapped_srcs(gen_srcs)")?;
+    .context("OUT_DIR for gen_srcs")?;
 
     unzip_platform(
         config,

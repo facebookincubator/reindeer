@@ -80,7 +80,7 @@ def rust_buildscript_genrule_args(name, buildscript_rule, outfile, package_name,
     )
 
 # Invoke a build script for its generated sources.
-def rust_buildscript_genrule_srcs(name, buildscript_rule, files, package_name, version, features = [], cfgs = [], env = {}, target = None, srcs = []):
+def rust_buildscript_genrule_srcs(name, buildscript_rule, package_name, version, features = [], cfgs = [], env = {}, target = None, srcs = []):
     pre = _make_preamble("$OUT", package_name, version, features, cfgs, env, target)
     cxx_genrule(
         name = name,
@@ -88,7 +88,7 @@ def rust_buildscript_genrule_srcs(name, buildscript_rule, files, package_name, v
         cmd = pre + "$(exe {buildscript})".format(
             buildscript = buildscript_rule,
         ),
-        outs = {file: [file] for file in files},
+        out = "OUT_DIR",
     )
 
 # Add platform-specific args to args for a given platform. This assumes there's some static configuration

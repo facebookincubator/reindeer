@@ -1,6 +1,5 @@
 [[buildscript]]
 [buildscript.gen_srcs]
-files = ["op.rs", "consts.rs"]
 
 [env]
 # [sic] - the buildscript swaps this, but it doesn't really matter

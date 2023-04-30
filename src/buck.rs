@@ -593,7 +593,6 @@ impl Serialize for BuildscriptGenruleArgs {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct BuildscriptGenruleSrcs {
     pub base: BuildscriptGenrule,
-    pub files: BTreeSet<String>,
     pub srcs: BTreeSet<BuckPath>,
 }
 
@@ -612,7 +611,6 @@ impl Serialize for BuildscriptGenruleSrcs {
                     path_env,
                     args_env,
                 },
-            files,
             srcs,
         } = self;
         let mut map = ser.serialize_map(None)?;
@@ -634,7 +632,6 @@ impl Serialize for BuildscriptGenruleSrcs {
         if !features.is_empty() {
             map.serialize_entry("features", features)?;
         }
-        map.serialize_entry("files", files)?;
         if !path_env.is_empty() {
             map.serialize_entry("path_env", path_env)?;
         }

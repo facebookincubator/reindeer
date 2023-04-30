@@ -197,19 +197,11 @@ impl<'meta> Fixups<'meta> {
         ))
     }
 
-    fn buildscript_gen_srcs_rulename(&self, file: Option<&str>) -> Name {
-        if let Some(file) = file {
-            Name(format!(
-                "{}-srcs[{}]",
-                self.buildscript_rule_name().expect("no buildscript"),
-                file
-            ))
-        } else {
-            Name(format!(
-                "{}-srcs",
-                self.buildscript_rule_name().expect("no buildscript")
-            ))
-        }
+    pub fn buildscript_gen_srcs_rulename(&self) -> Name {
+        Name(format!(
+            "{}-srcs",
+            self.buildscript_rule_name().expect("no buildscript")
+        ))
     }
 
     fn buildscript_rule_name(&self) -> Option<Name> {
@@ -298,8 +290,6 @@ impl<'meta> Fixups<'meta> {
                 // the buildscript.
                 BuildscriptFixup::GenSrcs(GenSrcs {
                     input_srcs, // input file globs
-                    files,      // output files
-                    mapped,     // outputs mapped to a different path
                     env,        // env set while running
                     path_env,   // env pointing to pathnames set while running
                     args_env,   // space-separated args like CFLAGS
@@ -321,7 +311,7 @@ impl<'meta> Fixups<'meta> {
                     // Emit rules to extract generated sources
                     res.push(Rule::BuildscriptGenruleSrcs(BuildscriptGenruleSrcs {
                         base: BuildscriptGenrule {
-                            name: self.buildscript_gen_srcs_rulename(None),
+                            name: self.buildscript_gen_srcs_rulename(),
 
                             buildscript_rule: buildscript_rule_name.clone(),
                             package_name: self.package.name.clone(),
@@ -332,11 +322,6 @@ impl<'meta> Fixups<'meta> {
                             path_env: path_env.clone(),
                             args_env: args_env.clone(),
                         },
-                        files: files
-                            .clone()
-                            .into_iter()
-                            .chain(mapped.keys().cloned())
-                            .collect(),
                         srcs,
                     }))
                 }
@@ -1043,10 +1028,7 @@ impl<'meta> Fixups<'meta> {
     }
 
     /// Return mapping from rules of generated source to local name.
-    pub fn compute_gen_srcs(
-        &self,
-        srcdir: &Path,
-    ) -> Vec<(Option<PlatformExpr>, BTreeMap<Name, PathBuf>)> {
+    pub fn compute_gen_srcs(&self) -> Vec<(Option<PlatformExpr>, ())> {
         let mut ret = vec![];
 
         if self.buildscript_rule_name().is_none() {
@@ -1054,37 +1036,13 @@ impl<'meta> Fixups<'meta> {
             return ret;
         }
 
-        let srcdir = if self.config.vendor.is_some() {
-            relative_path(&self.third_party_dir, &self.manifest_dir.join(srcdir))
-        } else {
-            let http_archive = format!("{}-{}.crate", self.package.name, self.package.version);
-            PathBuf::from(http_archive).join(srcdir)
-        };
-
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            let mut map = BTreeMap::new();
-
-            for fix in &config.buildscript {
-                if !self.target_match(fix) {
-                    continue;
-                }
-                if let BuildscriptFixup::GenSrcs(GenSrcs { files, mapped, .. }) = fix {
-                    for file in files {
-                        map.insert(
-                            self.buildscript_gen_srcs_rulename(Some(file)),
-                            srcdir.join(file),
-                        );
-                    }
-                    for (file, path) in mapped {
-                        map.insert(
-                            self.buildscript_gen_srcs_rulename(Some(file)),
-                            srcdir.join(path),
-                        );
-                    }
-                }
-            }
-            if !map.is_empty() {
-                ret.push((platform.cloned(), map));
+            if config
+                .buildscript
+                .iter()
+                .any(|fix| self.target_match(fix) && matches!(fix, BuildscriptFixup::GenSrcs(_)))
+            {
+                ret.push((platform.cloned(), ()));
             }
         }
 

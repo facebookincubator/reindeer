@@ -6,7 +6,6 @@
  */
 
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
@@ -125,12 +124,6 @@ pub struct GenSrcs {
     //     args_env = { BINDGEN_EXTRA_CLANG_ARGS = "-I $_LIBVIRT_INCLUDE" }
     #[serde(default)]
     pub args_env: BTreeMap<String, String>,
-    // Generated files
-    #[serde(default)]
-    pub files: BTreeSet<String>,
-    // Generated files, mapped to a location in the crate's namespace
-    #[serde(default)]
-    pub mapped: BTreeMap<String, String>,
     // Code generator's inputs
     #[serde(default)]
     pub input_srcs: Vec<String>,
