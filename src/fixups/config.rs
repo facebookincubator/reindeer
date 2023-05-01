@@ -84,7 +84,7 @@ impl FixupConfigFile {
             let _ = write!(&mut msg, "\n    {}", package);
         }
 
-        let buildscript = vec![BuildscriptFixup::Build, BuildscriptFixup::Unresolved(msg)];
+        let buildscript = vec![BuildscriptFixup::Unresolved(msg)];
 
         FixupConfigFile {
             base: FixupConfig {

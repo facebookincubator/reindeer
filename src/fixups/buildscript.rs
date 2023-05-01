@@ -55,8 +55,6 @@ impl Deref for BuildscriptFixups {
 pub enum BuildscriptFixup {
     /// Unresolved build script (string with helpful message)
     Unresolved(String),
-    /// Emit the rule for it anyway (not otherwise used)
-    Build,
     /// Run the buildscript and extact command line args. Linker -l/-L args ignored so in
     /// practice this is just --cfg options.
     RustcFlags(RustcFlags),
@@ -77,7 +75,7 @@ impl BuildscriptFixup {
             BuildscriptFixup::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup { targets, .. }) => {
                 targets
             }
-            BuildscriptFixup::Unresolved(_) | BuildscriptFixup::Build => return None,
+            BuildscriptFixup::Unresolved(_) => return None,
         };
 
         Some(&targets[..])
@@ -186,7 +184,7 @@ pub struct PrebuiltCxxLibraryFixup {
     pub compatible_with: Vec<String>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 struct Empty {}
 
 impl Serialize for BuildscriptFixup {
@@ -198,7 +196,6 @@ impl Serialize for BuildscriptFixup {
         let mut map = serializer.serialize_map(Some(len))?;
         match self {
             BuildscriptFixup::Unresolved(msg) => map.serialize_entry("unresolved", msg)?,
-            BuildscriptFixup::Build => map.serialize_entry("build", &Empty {})?,
             BuildscriptFixup::RustcFlags(rustc_flags) => {
                 map.serialize_entry("rustc_flags", rustc_flags)?
             }
@@ -219,18 +216,6 @@ impl<'de> Visitor<'de> for BuildscriptFixupVisitor<'de> {
 
     fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "BuildscriptFixup enum")
-    }
-
-    fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
-    where
-        E: DeError,
-    {
-        // Unit enum variants represented as strings
-        let res = match s {
-            "build" => BuildscriptFixup::Build,
-            bad => return Err(E::custom(format!("Unknown BuildscriptFixup \"{}\"", bad))),
-        };
-        Ok(res)
     }
 
     fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
