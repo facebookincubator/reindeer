@@ -45,12 +45,10 @@ pub(crate) fn cargo_vendor(
         "--manifest-path",
         paths.manifest_path.to_str().unwrap(),
         vendordir.to_str().unwrap(),
+        "--versioned-dirs",
     ];
     if no_delete {
         cmdline.push("--no-delete");
-    }
-    if config.cargo.versioned_dirs {
-        cmdline.push("--versioned-dirs");
     }
 
     let configdir = paths.third_party_dir.join(".cargo");
