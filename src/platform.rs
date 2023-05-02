@@ -137,18 +137,17 @@ impl<'a> PlatformPredicate<'a> {
             Not(pred) => !pred.eval(config),
             Any(preds) => preds.iter().any(|pred| pred.eval(config)),
             All(preds) => preds.iter().all(|pred| pred.eval(config)),
-            Unix => self.target_family_bool("unix", config),
-            Windows => self.target_family_bool("windows", config),
-        }
-    }
-
-    fn target_family_bool(&self, family: &str, config: &PlatformConfig) -> bool {
-        PlatformPredicate::Bool { key: family }.eval(config)
-            || PlatformPredicate::Value {
+            Unix => PlatformPredicate::Value {
                 key: "target_family",
-                value: family,
+                value: "unix",
             }
-            .eval(config)
+            .eval(config),
+            Windows => PlatformPredicate::Value {
+                key: "target_family",
+                value: "windows",
+            }
+            .eval(config),
+        }
     }
 }
 
