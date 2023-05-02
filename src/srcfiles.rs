@@ -20,6 +20,7 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
+use proc_macro2 as _; // To autocargo with our features (namely `span-locations`)
 use syn::visit::Visit;
 
 #[allow(dead_code)]
