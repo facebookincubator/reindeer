@@ -223,11 +223,17 @@ impl<'de, T> Deserialize<'de> for StringWithDefault<T> {
     where
         D: Deserializer<'de>,
     {
-        Ok(StringWithDefault {
-            value: String::deserialize(deserializer)?,
+        String::deserialize(deserializer).map(Self::from)
+    }
+}
+
+impl<T> From<String> for StringWithDefault<T> {
+    fn from(value: String) -> Self {
+        StringWithDefault {
+            value,
             is_default: false,
             default: PhantomData,
-        })
+        }
     }
 }
 
@@ -284,7 +290,28 @@ where
 pub fn read_config(dir: &Path) -> Result<Config> {
     let reindeer_toml = dir.join("reindeer.toml");
     let mut config = try_read_config(&reindeer_toml)?;
+
     config.config_path = dir.to_path_buf();
+
+    if config.buck.buckfile_imports.is_default {
+        // Fill in some prelude imports so Reindeer generates working targets
+        // out of the box.
+        let mut buckfile_imports = String::new();
+
+        if config.buck.buildscript_genrule.is_default {
+            buckfile_imports
+                .push_str("load(\"@prelude//rust:cargo_buildscript.bzl\", \"buildscript_run\")\n");
+        }
+
+        if config.buck.rust_library.is_default && config.buck.rust_binary.is_default {
+            buckfile_imports.push_str("load(\"@prelude//rust:cargo_package.bzl\", \"cargo\")\n");
+            config.buck.rust_library = "cargo.rust_library".to_owned().into();
+            config.buck.rust_binary = "cargo.rust_binary".to_owned().into();
+        }
+
+        config.buck.buckfile_imports = buckfile_imports.into();
+    }
+
     Ok(config)
 }
 
