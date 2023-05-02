@@ -133,6 +133,10 @@ impl<'a> PlatformPredicate<'a> {
 
         match self {
             Bool { key } => config.0.contains_key(*key),
+            Value { key: "feature", .. } => {
+                // [target.'cfg(feature = "...")'.dependencies] never get applied by Cargo
+                false
+            }
             Value { key, value } => config.0.get(*key).map_or(true, |set| set.contains(*value)),
             Not(pred) => !pred.eval(config),
             Any(preds) => preds.iter().any(|pred| pred.eval(config)),
