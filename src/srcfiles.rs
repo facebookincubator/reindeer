@@ -198,10 +198,12 @@ impl SourceFinder<'_> {
 }
 
 fn parse_possible_path(attr: &syn::Attribute) -> Option<String> {
-    if attr.path.is_ident("path") {
-        if let Ok(syn::Meta::NameValue(meta)) = &attr.parse_meta() {
-            if let syn::Lit::Str(lit_str) = &meta.lit {
-                return Some(lit_str.value());
+    if attr.path().is_ident("path") {
+        if let syn::Meta::NameValue(meta) = &attr.meta {
+            if let syn::Expr::Lit(expr) = &meta.value {
+                if let syn::Lit::Str(lit_str) = &expr.lit {
+                    return Some(lit_str.value());
+                }
             }
         }
     }
@@ -367,23 +369,13 @@ struct CfgIf {
 
 impl syn::parse::Parse for CfgIf {
     fn parse(input: syn::parse::ParseStream) -> Result<Self, syn::Error> {
-        let if_token: syn::Token![if] = input.parse()?;
-        let cfg_attrs = input.call(syn::Attribute::parse_outer)?;
-        match &*cfg_attrs {
-            [] => {
-                return Err(syn::Error::new(
-                    if_token.span,
-                    "expected one attr in cfg_if! condition, but found none",
-                ));
-            }
-            [_] => {}
-            [_, attr, ..] => {
-                return Err(syn::Error::new(
-                    attr.pound_token.span,
-                    "expected one attr in cfg_if! condition, but found multiple",
-                ));
-            }
-        }
+        let _: syn::Token![if] = input.parse()?;
+
+        // Exactly one attribute.
+        let _: syn::Token![#] = input.parse()?;
+        let meta;
+        syn::bracketed!(meta in input);
+        let _: syn::Meta = meta.parse()?;
 
         Ok(CfgIf {
             then_branch: input.parse()?,
@@ -644,13 +636,10 @@ mod tests {
                 .iter()
                 .map(|x| x.strip_prefix(&dir).unwrap())
                 .collect::<HashSet<_>>(),
-            [
-                "src/lib.rs",
-                // "src/../README.md", FIXME!!
-            ]
-            .into_iter()
-            .map(Path::new)
-            .collect::<HashSet<_>>(),
+            ["src/lib.rs", "src/../README.md"]
+                .into_iter()
+                .map(Path::new)
+                .collect::<HashSet<_>>(),
         );
 
         assert_eq!(
