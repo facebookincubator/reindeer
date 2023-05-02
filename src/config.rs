@@ -94,7 +94,7 @@ pub struct Config {
     #[serde(default)]
     pub audit: AuditConfig,
 
-    #[serde(default)]
+    #[serde(default = "default_platforms")]
     pub platform: HashMap<PlatformName, PlatformConfig>,
 }
 
@@ -201,6 +201,19 @@ fn default_buildscript_genrule() -> String {
 
 fn default_vendor_config() -> Option<VendorConfig> {
     Some(VendorConfig::default())
+}
+
+fn default_platforms() -> HashMap<PlatformName, PlatformConfig> {
+    const DEFAULT_PLATFORMS_TOML: &str = include_str!("default_platforms.toml");
+
+    #[derive(Deserialize)]
+    struct DefaultConfig {
+        platform: HashMap<PlatformName, PlatformConfig>,
+    }
+
+    toml::from_str::<DefaultConfig>(DEFAULT_PLATFORMS_TOML)
+        .unwrap()
+        .platform
 }
 
 fn deserialize_vendor_config<'de, D>(deserializer: D) -> Result<Option<VendorConfig>, D::Error>
