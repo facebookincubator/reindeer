@@ -36,3 +36,7 @@ walkdir = "2.3"
 
 [dev-dependencies]
 tempfile = "3.5"
+
+[features]
+vendored-libgit2 = ["rustsec/vendored-libgit2"]
+vendored-openssl = ["rustsec/vendored-openssl"]
