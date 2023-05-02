@@ -53,6 +53,7 @@ use crate::lockfile::Lockfile;
 use crate::platform::platform_names_for_expr;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
+use crate::srcfiles::crate_srcfiles;
 use crate::tp_metadata;
 use crate::Args;
 use crate::Paths;
@@ -321,19 +322,18 @@ fn generate_target_rules<'scope>(
     let mut srcs =
         if config.vendor.is_some() && fixups.precise_srcs() && edition >= Edition::Rust2018 {
             measure_time::trace_time!("srcfiles for {}", pkg);
-            match srcfiles::crate_srcfiles(&tgt.src_path) {
-                Ok(srcs) => {
-                    let srcs = srcs
-                        .into_iter()
-                        .map(|src| normalize_dotdot(&src.path))
-                        .collect::<Vec<_>>();
-                    log::debug!("crate_srcfiles returned {:#?}", srcs);
-                    srcs
-                }
-                Err(err) => {
-                    log::info!("crate_srcfiles failed: {}", err);
-                    vec![]
-                }
+            let sources = crate_srcfiles(&tgt.src_path);
+            if sources.errors.is_empty() {
+                let srcs = sources
+                    .files
+                    .into_iter()
+                    .map(|src| normalize_dotdot(&src))
+                    .collect::<Vec<_>>();
+                log::debug!("crate_srcfiles returned {:#?}", srcs);
+                srcs
+            } else {
+                log::info!("crate_srcfiles failed: {:?}", sources.errors);
+                vec![]
             }
         } else {
             vec![]
