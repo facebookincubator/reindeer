@@ -12,18 +12,24 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
+use std::fmt::Display;
+use std::fmt::Write as _;
 use std::fs;
 use std::io::ErrorKind;
+use std::marker::PhantomData;
+use std::ops::Deref;
 use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
 use anyhow::Result;
+use monostate::MustBe;
 use serde::de::value::MapAccessDeserializer;
 use serde::de::Deserializer;
 use serde::de::MapAccess;
 use serde::de::Visitor;
 use serde::Deserialize;
+use serde::Serialize;
 
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
@@ -109,42 +115,42 @@ pub struct CargoConfig {
     pub bindeps: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BuckConfig {
     /// Name of BUCK file
-    #[serde(default = "default_buck_file_name")]
-    pub file_name: String,
+    #[serde(default)]
+    pub file_name: StringWithDefault<MustBe!("BUCK")>,
     /// Banner for the top of all generated bzl files, namely BUCK and METADATA.bzl
     #[serde(default)]
-    pub generated_file_header: String,
+    pub generated_file_header: StringWithDefault<MustBe!("")>,
     /// Front matter for the generated BUCK file
     #[serde(default)]
-    pub buckfile_imports: String,
+    pub buckfile_imports: StringWithDefault<MustBe!("")>,
 
     /// Rule name for alias
-    #[serde(default = "default_alias")]
-    pub alias: String,
+    #[serde(default)]
+    pub alias: StringWithDefault<MustBe!("alias")>,
     /// Rule name for http_archive
-    #[serde(default = "default_http_archive")]
-    pub http_archive: String,
+    #[serde(default)]
+    pub http_archive: StringWithDefault<MustBe!("http_archive")>,
     /// Rule name for rust_library
-    #[serde(default = "default_rust_library")]
-    pub rust_library: String,
+    #[serde(default)]
+    pub rust_library: StringWithDefault<MustBe!("rust_library")>,
     /// Rule name for rust_binary
-    #[serde(default = "default_rust_binary")]
-    pub rust_binary: String,
+    #[serde(default)]
+    pub rust_binary: StringWithDefault<MustBe!("rust_binary")>,
     /// Rule name for cxx_library
-    #[serde(default = "default_cxx_library")]
-    pub cxx_library: String,
+    #[serde(default)]
+    pub cxx_library: StringWithDefault<MustBe!("cxx_library")>,
     /// Rule name for prebuilt_cxx_library
-    #[serde(default = "default_prebuilt_cxx_library")]
-    pub prebuilt_cxx_library: String,
+    #[serde(default)]
+    pub prebuilt_cxx_library: StringWithDefault<MustBe!("prebuilt_cxx_library")>,
     /// Rule name for the rust_binary of a build script
     pub buildscript_binary: Option<String>,
     /// Rule name for a build script invocation
-    #[serde(default = "default_buildscript_genrule")]
-    pub buildscript_genrule: String,
+    #[serde(default)]
+    pub buildscript_genrule: StringWithDefault<MustBe!("buildscript_run")>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -167,36 +173,62 @@ pub struct AuditConfig {
     pub never_autofix: HashSet<String>,
 }
 
-fn default_buck_file_name() -> String {
-    BuckConfig::default().file_name
+#[derive(Debug, Clone)]
+pub struct StringWithDefault<T> {
+    pub value: String,
+    pub is_default: bool,
+    default: PhantomData<T>,
 }
 
-fn default_alias() -> String {
-    BuckConfig::default().alias
+impl<T: Default + Serialize> Default for StringWithDefault<T> {
+    fn default() -> Self {
+        struct DefaultValue<T>(T);
+        impl<T: Serialize> Display for DefaultValue<T> {
+            fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                self.0.serialize(formatter)
+            }
+        }
+
+        let mut value = String::new();
+        write!(value, "{}", DefaultValue(T::default())).unwrap();
+        StringWithDefault {
+            value,
+            is_default: true,
+            default: PhantomData,
+        }
+    }
 }
 
-fn default_http_archive() -> String {
-    BuckConfig::default().http_archive
+impl<T> Deref for StringWithDefault<T> {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
 }
 
-fn default_rust_library() -> String {
-    BuckConfig::default().rust_library
+impl<T> AsRef<Path> for StringWithDefault<T> {
+    fn as_ref(&self) -> &Path {
+        self.value.as_ref()
+    }
 }
 
-fn default_rust_binary() -> String {
-    BuckConfig::default().rust_binary
+impl<T> Display for StringWithDefault<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&self.value, formatter)
+    }
 }
 
-fn default_cxx_library() -> String {
-    BuckConfig::default().cxx_library
-}
-
-fn default_prebuilt_cxx_library() -> String {
-    BuckConfig::default().prebuilt_cxx_library
-}
-
-fn default_buildscript_genrule() -> String {
-    BuckConfig::default().buildscript_genrule
+impl<'de, T> Deserialize<'de> for StringWithDefault<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(StringWithDefault {
+            value: String::deserialize(deserializer)?,
+            is_default: false,
+            default: PhantomData,
+        })
+    }
 }
 
 fn default_vendor_config() -> Option<VendorConfig> {
@@ -247,25 +279,6 @@ where
     }
 
     deserializer.deserialize_any(VendorConfigVisitor)
-}
-
-impl Default for BuckConfig {
-    fn default() -> Self {
-        BuckConfig {
-            file_name: "BUCK".to_string(),
-            generated_file_header: String::new(),
-            buckfile_imports: String::new(),
-
-            alias: "alias".to_string(),
-            http_archive: "http_archive".to_string(),
-            rust_library: "rust_library".to_string(),
-            rust_binary: "rust_binary".to_string(),
-            cxx_library: "cxx_library".to_string(),
-            prebuilt_cxx_library: "prebuilt_cxx_library".to_string(),
-            buildscript_binary: None,
-            buildscript_genrule: "buildscript_run".to_string(),
-        }
-    }
 }
 
 pub fn read_config(dir: &Path) -> Result<Config> {
