@@ -69,10 +69,6 @@ pub struct Config {
     #[serde(default)]
     pub unresolved_fixup_error_message: Option<String>,
 
-    /// Path to buck cell root (if relative, relative to here)
-    #[serde(default)]
-    pub buck_cell_root: Option<PathBuf>,
-
     /// Include root package as top-level public target in Buck file
     #[serde(default)]
     pub include_top_level: bool,

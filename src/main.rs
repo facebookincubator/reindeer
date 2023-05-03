@@ -102,8 +102,6 @@ pub struct Paths {
     manifest_path: PathBuf,
     lockfile_path: PathBuf,
     cargo_home: PathBuf,
-    /// Path of the Buck cell root
-    cell_dir: PathBuf,
 }
 
 fn try_main() -> Result<()> {
@@ -113,16 +111,11 @@ fn try_main() -> Result<()> {
     let config = config::read_config(&third_party_dir)?;
 
     let paths = {
-        let mut cell_dir = third_party_dir.clone();
-        if let Some(x) = &config.buck_cell_root {
-            cell_dir = dunce::canonicalize(cell_dir.join(x))?;
-        }
         Paths {
             manifest_path: third_party_dir.join("Cargo.toml"),
             lockfile_path: third_party_dir.join("Cargo.lock"),
             cargo_home: third_party_dir.join(".cargo"),
             third_party_dir,
-            cell_dir,
         }
     };
 

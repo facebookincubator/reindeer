@@ -62,7 +62,6 @@ use config::FixupConfigFile;
 /// Fixups for a specific package & target
 pub struct Fixups<'meta> {
     config: &'meta Config,
-    cell_dir: PathBuf,
     third_party_dir: PathBuf,
     index: &'meta Index<'meta>,
     package: &'meta Manifest,
@@ -132,7 +131,6 @@ impl<'meta> Fixups<'meta> {
 
         Ok(Fixups {
             third_party_dir: paths.third_party_dir.to_path_buf(),
-            cell_dir: paths.cell_dir.to_path_buf(),
             manifest_dir: package.manifest_dir(),
             index,
             package,
@@ -779,9 +777,13 @@ impl<'meta> Fixups<'meta> {
                 map.extend(vec![
                     (
                         "CARGO_MANIFEST_DIR".to_string(),
-                        relative_path(&self.cell_dir, self.manifest_dir)
-                            .display()
-                            .to_string(),
+                        if self.config.vendor.is_some() {
+                            relative_path(&self.third_party_dir, self.manifest_dir)
+                                .display()
+                                .to_string()
+                        } else {
+                            format!("{}-{}.crate", self.package.name, self.package.version)
+                        },
                     ),
                     (
                         "CARGO_PKG_DESCRIPTION".to_string(),
