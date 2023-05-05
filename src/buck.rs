@@ -135,6 +135,13 @@ impl PartialOrd for BuckPath {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[serde(untagged)]
+pub enum StringOrPath {
+    String(String),
+    Path(BuckPath),
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Visibility {
     Public,
@@ -230,7 +237,7 @@ pub struct PlatformRustCommon {
     pub features: BTreeSet<String>,
     pub deps: BTreeSet<RuleRef>,
     pub named_deps: BTreeMap<String, RuleRef>,
-    pub env: BTreeMap<String, String>,
+    pub env: BTreeMap<String, StringOrPath>,
 
     // This isn't really "common" (Binaries only), but does need to be platform
     pub link_style: Option<String>,

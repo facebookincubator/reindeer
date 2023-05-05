@@ -34,6 +34,7 @@ use crate::buck::Name;
 use crate::buck::Rule;
 use crate::buck::RuleRef;
 use crate::buck::RustBinary;
+use crate::buck::StringOrPath;
 use crate::buck::Visibility;
 use crate::buckify::normalize_dotdot;
 use crate::buckify::relative_path;
@@ -767,45 +768,56 @@ impl<'meta> Fixups<'meta> {
     }
 
     /// Additional environment
-    pub fn compute_env(&self) -> Vec<(Option<PlatformExpr>, BTreeMap<String, String>)> {
+    pub fn compute_env(&self) -> Vec<(Option<PlatformExpr>, BTreeMap<String, StringOrPath>)> {
         let mut ret = vec![];
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            let mut map = config.env.clone();
+            let mut map: BTreeMap<String, StringOrPath> = config
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone())))
+                .collect();
 
             if config.cargo_env {
                 map.extend(vec![
                     (
                         "CARGO_MANIFEST_DIR".to_string(),
                         if self.config.vendor.is_some() {
-                            relative_path(&self.third_party_dir, self.manifest_dir)
-                                .display()
-                                .to_string()
+                            StringOrPath::Path(BuckPath(relative_path(
+                                &self.third_party_dir,
+                                self.manifest_dir,
+                            )))
                         } else {
-                            format!("{}-{}.crate", self.package.name, self.package.version)
+                            StringOrPath::String(format!(
+                                "{}-{}.crate",
+                                self.package.name, self.package.version,
+                            ))
                         },
                     ),
                     (
                         "CARGO_PKG_DESCRIPTION".to_string(),
-                        self.package.description.clone().unwrap_or_default(),
+                        StringOrPath::String(self.package.description.clone().unwrap_or_default()),
                     ),
                     (
                         "CARGO_PKG_VERSION".to_string(),
-                        self.package.version.to_string(),
+                        StringOrPath::String(self.package.version.to_string()),
                     ),
                     (
                         "CARGO_PKG_VERSION_MAJOR".to_string(),
-                        self.package.version.major.to_string(),
+                        StringOrPath::String(self.package.version.major.to_string()),
                     ),
                     (
                         "CARGO_PKG_VERSION_MINOR".to_string(),
-                        self.package.version.minor.to_string(),
+                        StringOrPath::String(self.package.version.minor.to_string()),
                     ),
                     (
                         "CARGO_PKG_VERSION_PATCH".to_string(),
-                        self.package.version.patch.to_string(),
+                        StringOrPath::String(self.package.version.patch.to_string()),
                     ),
-                    ("CARGO_PKG_NAME".to_string(), self.package.name.clone()),
+                    (
+                        "CARGO_PKG_NAME".to_string(),
+                        StringOrPath::String(self.package.name.clone()),
+                    ),
                 ]);
             }
 
