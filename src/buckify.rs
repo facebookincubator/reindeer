@@ -422,7 +422,7 @@ fn generate_target_rules<'scope>(
             );
             let paths = map
                 .into_iter()
-                .map(|(from, to)| (from.display().to_string(), BuckPath(to)));
+                .map(|(from, to)| (BuckPath(from), BuckPath(to)));
             rule.mapped_srcs.extend(paths);
         },
         fixups.compute_mapped_srcs()?,

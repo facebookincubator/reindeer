@@ -225,7 +225,7 @@ pub struct Common {
 #[derive(Debug, Default, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct PlatformRustCommon {
     pub srcs: BTreeSet<BuckPath>,
-    pub mapped_srcs: BTreeMap<String, BuckPath>,
+    pub mapped_srcs: BTreeMap<BuckPath, BuckPath>,
     pub rustc_flags: Vec<String>,
     pub features: BTreeSet<String>,
     pub deps: BTreeSet<RuleRef>,
