@@ -45,3 +45,4 @@ target_os = ["windows"]
 target_arch = ["x86_64"]
 target_env = ["gnu"]
 target_vendor = ["pc"]
+target_abi = [] # not(target_abi = "llvm")
