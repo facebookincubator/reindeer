@@ -221,6 +221,7 @@ pub struct HttpArchive {
     pub name: Name,
     pub sha256: String,
     pub strip_prefix: String,
+    pub sub_targets: BTreeSet<BuckPath>,
     pub urls: Vec<String>,
     pub visibility: Visibility,
     pub sort_key: Name,
@@ -232,6 +233,7 @@ impl Serialize for HttpArchive {
             name,
             sha256,
             strip_prefix,
+            sub_targets,
             urls,
             visibility,
             sort_key: _,
@@ -240,6 +242,9 @@ impl Serialize for HttpArchive {
         map.serialize_entry("name", name)?;
         map.serialize_entry("sha256", sha256)?;
         map.serialize_entry("strip_prefix", strip_prefix)?;
+        if !sub_targets.is_empty() {
+            map.serialize_entry("sub_targets", sub_targets)?;
+        }
         map.serialize_entry("urls", urls)?;
         map.serialize_entry("visibility", visibility)?;
         map.end()

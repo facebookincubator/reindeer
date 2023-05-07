@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::io;
@@ -37,6 +38,7 @@ use crate::buck::RustBinary;
 use crate::buck::RustCommon;
 use crate::buck::RustLibrary;
 use crate::buck::StringOrPath;
+use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
 use crate::cargo::cargo_get_lockfile_and_metadata;
 use crate::cargo::ArtifactKind;
@@ -46,6 +48,7 @@ use crate::cargo::ManifestTarget;
 use crate::cargo::PkgId;
 use crate::cargo::Source;
 use crate::cargo::TargetReq;
+use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::fixups::Fixups;
 use crate::glob::Globs;
@@ -249,6 +252,7 @@ fn generate_http_archive<'scope>(
         name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
         sha256,
         strip_prefix: format!("{}-{}", pkg.name, pkg.version),
+        sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
         urls: vec![format!(
             "https://crates.io/api/v1/crates/{}/{}/download",
             pkg.name, pkg.version,
@@ -745,7 +749,7 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
     }
 
     // Collect rules from channel
-    let rules: BTreeSet<_> = match rx.iter().collect::<Result<_>>() {
+    let mut rules: BTreeSet<_> = match rx.iter().collect::<Result<_>>() {
         Ok(rules) => rules,
         Err(err) => {
             if let Some(custom_err_msg) = config.unresolved_fixup_error_message.as_ref() {
@@ -757,6 +761,47 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
             return Err(err);
         }
     };
+
+    // Fill in all http_archive rules with all the sub_targets which got
+    // mentioned by fixups.
+    if config.vendor.is_none() {
+        let mut need_subtargets = HashMap::<Name, BTreeSet<BuckPath>>::new();
+        let mut insert = |subtarget_or_path: &SubtargetOrPath| {
+            if let SubtargetOrPath::Subtarget(subtarget) = subtarget_or_path {
+                need_subtargets
+                    .entry(subtarget.target.clone())
+                    .or_insert_with(BTreeSet::new)
+                    .insert(subtarget.relative.clone());
+            }
+        };
+
+        for rule in &rules {
+            match rule {
+                Rule::CxxLibrary(rule) => {
+                    rule.srcs.iter().for_each(&mut insert);
+                    rule.headers.iter().for_each(&mut insert);
+                    match &rule.exported_headers {
+                        SetOrMap::Set(set) => set.iter().for_each(&mut insert),
+                        SetOrMap::Map(map) => map.values().for_each(&mut insert),
+                    }
+                }
+                Rule::PrebuiltCxxLibrary(rule) => insert(&rule.static_lib),
+                _ => {}
+            }
+        }
+
+        rules = rules
+            .into_iter()
+            .map(|mut rule| {
+                if let Rule::HttpArchive(rule) = &mut rule {
+                    if let Some(need_subtargets) = need_subtargets.remove(&rule.name) {
+                        rule.sub_targets = need_subtargets;
+                    }
+                }
+                rule
+            })
+            .collect();
+    }
 
     // Emit build rules to stdout
     if stdout {
