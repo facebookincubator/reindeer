@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use semver::Version;
 use serde::ser::SerializeMap;
+use serde::ser::SerializeSeq;
 use serde::ser::Serializer;
 use serde::Serialize;
 use serde_starlark::FunctionCall;
@@ -121,6 +122,12 @@ impl Serialize for BuckPath {
     }
 }
 
+impl Display for BuckPath {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&self.0.to_string_lossy().replace('\\', "/"), formatter)
+    }
+}
+
 impl Ord for BuckPath {
     fn cmp(&self, other: &Self) -> Ordering {
         let this = self.0.to_string_lossy();
@@ -140,6 +147,25 @@ impl PartialOrd for BuckPath {
 pub enum StringOrPath {
     String(String),
     Path(BuckPath),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[serde(untagged)]
+pub enum SubtargetOrPath {
+    Subtarget(Subtarget),
+    Path(BuckPath),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Subtarget {
+    pub target: Name,
+    pub relative: BuckPath,
+}
+
+impl Serialize for Subtarget {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        ser.collect_str(&format_args!(":{}[{}]", self.target, self.relative))
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -589,13 +615,13 @@ impl Serialize for BuildscriptGenrule {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct CxxLibrary {
     pub common: Common,
-    pub srcs: BTreeSet<BuckPath>,
-    pub headers: BTreeSet<BuckPath>,
-    pub exported_headers: SetOrMap<BuckPath>,
+    pub srcs: BTreeSet<SubtargetOrPath>,
+    pub headers: BTreeSet<SubtargetOrPath>,
+    pub exported_headers: SetOrMap<SubtargetOrPath>,
     pub compiler_flags: Vec<String>,
     pub preprocessor_flags: Vec<String>,
     pub header_namespace: Option<String>,
-    pub include_directories: Vec<BuckPath>,
+    pub include_directories: Vec<SubtargetOrPath>,
     pub deps: BTreeSet<RuleRef>,
     pub preferred_linkage: Option<String>,
 }
@@ -637,7 +663,30 @@ impl Serialize for CxxLibrary {
             map.serialize_entry("compiler_flags", compiler_flags)?;
         }
         if !include_directories.is_empty() {
-            map.serialize_entry("include_directories", include_directories)?;
+            // The usual serialization of Subtarget as ":target[relative]" is not
+            // appropriate for a directory. Use "$(location :target)/relative".
+            struct IncludeDirectories<'a>(&'a [SubtargetOrPath]);
+            impl<'a> Serialize for IncludeDirectories<'a> {
+                fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                    let mut array = serializer.serialize_seq(Some(self.0.len()))?;
+                    for element in self.0 {
+                        match element {
+                            SubtargetOrPath::Subtarget(subtarget) => {
+                                array.serialize_element(&format!(
+                                    "$(location :{})/{}",
+                                    subtarget.target, subtarget.relative,
+                                ))?;
+                            }
+                            SubtargetOrPath::Path(path) => array.serialize_element(path)?,
+                        }
+                    }
+                    array.end()
+                }
+            }
+            map.serialize_entry(
+                "include_directories",
+                &IncludeDirectories(include_directories),
+            )?;
         }
         if !licenses.is_empty() {
             map.serialize_entry("licenses", licenses)?;
@@ -657,7 +706,7 @@ impl Serialize for CxxLibrary {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PrebuiltCxxLibrary {
     pub common: Common,
-    pub static_lib: BuckPath,
+    pub static_lib: SubtargetOrPath,
 }
 
 impl Serialize for PrebuiltCxxLibrary {

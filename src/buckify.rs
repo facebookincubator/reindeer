@@ -13,7 +13,6 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::io::Write;
-use std::iter;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
@@ -49,6 +48,8 @@ use crate::cargo::Source;
 use crate::cargo::TargetReq;
 use crate::config::Config;
 use crate::fixups::Fixups;
+use crate::glob::Globs;
+use crate::glob::NO_EXCLUDE;
 use crate::index;
 use crate::lockfile::Lockfile;
 use crate::platform::platform_names_for_expr;
@@ -59,7 +60,7 @@ use crate::tp_metadata;
 use crate::Args;
 use crate::Paths;
 
-// normalize a/../b => a/b
+// normalize a/b/../c => a/c
 pub fn normalize_dotdot(path: &Path) -> PathBuf {
     let mut ret = PathBuf::new();
 
@@ -281,36 +282,33 @@ fn generate_target_rules<'scope>(
 
     log::debug!("pkg {} target {} fixups {:#?}", pkg, tgt.name, fixups);
 
+    let manifest_dir = pkg.manifest_dir();
     let rootmod = if context.config.vendor.is_some() {
         relative_path(&paths.third_party_dir, &tgt.src_path)
     } else {
         let http_archive = format!("{}-{}.crate", pkg.name, pkg.version);
-        let path_within_crate = relative_path(pkg.manifest_dir(), &tgt.src_path);
+        let path_within_crate = relative_path(manifest_dir, &tgt.src_path);
         PathBuf::from(http_archive).join(path_within_crate)
     };
     let edition = tgt.edition.unwrap_or(pkg.edition);
 
-    let licenses = if config.vendor.is_none() {
+    let mut licenses = BTreeSet::new();
+    if config.vendor.is_none() {
         // The `licenses` attribute takes `attrs.source()` which is the file
         // containing the custom license text. For `vendor = false` mode, we
         // don't have such a file on disk, and we don't have a Buck label either
         // that could refer to the right generated location following download
         // because `http_archive` does not expose subtargets for each of the
         // individual contained files.
-        BTreeSet::new()
     } else {
-        fixups
-            .manifestwalk(&config.license_patterns, iter::empty::<&str>(), false)?
-            .chain(
-                pkg.license_file
-                    .as_ref()
-                    .map(|file| {
-                        relative_path(&paths.third_party_dir, pkg.manifest_dir()).join(file)
-                    })
-                    .into_iter(),
-            )
-            .map(BuckPath)
-            .collect()
+        let rel_manifest = relative_path(&paths.third_party_dir, manifest_dir);
+        let mut license_globs = Globs::new(&config.license_patterns, NO_EXCLUDE)?;
+        for path in license_globs.walk(manifest_dir) {
+            licenses.insert(BuckPath(rel_manifest.join(path)));
+        }
+        if let Some(license_file) = &pkg.license_file {
+            licenses.insert(BuckPath(rel_manifest.join(license_file)));
+        }
     };
 
     let global_rustc_flags = config.rustc_flags.clone();
@@ -328,7 +326,7 @@ fn generate_target_rules<'scope>(
                 let srcs = sources
                     .files
                     .into_iter()
-                    .map(|src| normalize_dotdot(&src))
+                    .map(|src| normalize_dotdot(&relative_path(manifest_dir, &src)))
                     .collect::<Vec<_>>();
                 log::debug!("crate_srcfiles returned {:#?}", srcs);
                 srcs
@@ -342,7 +340,8 @@ fn generate_target_rules<'scope>(
 
     if srcs.is_empty() {
         // If that didn't work out, get srcs the globby way
-        srcs = vec![tgt.src_path.parent().unwrap().join("**/*.rs")]
+        let dir_containing_src = tgt.src_path.parent().unwrap();
+        srcs.push(relative_path(manifest_dir, dir_containing_src).join("**/*.rs"));
     }
 
     // Platform-specific rule bits which are common to all platforms

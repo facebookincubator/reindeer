@@ -33,6 +33,7 @@ mod cfg;
 mod collection;
 mod config;
 mod fixups;
+mod glob;
 mod index;
 mod lockfile;
 mod platform;

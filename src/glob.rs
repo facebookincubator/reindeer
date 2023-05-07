@@ -1,0 +1,99 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+use std::collections::HashSet;
+use std::iter;
+use std::iter::Empty;
+use std::path::Path;
+use std::path::PathBuf;
+
+use anyhow::bail;
+use anyhow::Result;
+use globset::GlobBuilder;
+use globset::GlobSet;
+use globset::GlobSetBuilder;
+use walkdir::WalkDir;
+
+pub struct Globs {
+    original_globs: Vec<String>,
+    globset: GlobSet,
+    exceptset: GlobSet,
+    /// Sequence number of every glob pattern that has matched any path so far.
+    globs_used: HashSet<usize>,
+}
+
+pub const NO_EXCLUDE: Empty<&str> = iter::empty();
+
+impl Globs {
+    pub fn new(
+        globs: impl IntoIterator<Item = impl AsRef<str>>,
+        excepts: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> Result<Self> {
+        let globs: Vec<String> = globs.into_iter().map(|g| g.as_ref().to_owned()).collect();
+
+        let mut builder = GlobSetBuilder::new();
+        for glob in &globs {
+            builder.add(GlobBuilder::new(glob).literal_separator(true).build()?);
+        }
+        let globset = builder.build()?;
+
+        let mut builder = GlobSetBuilder::new();
+        for except in excepts {
+            builder.add(
+                GlobBuilder::new(except.as_ref())
+                    .literal_separator(true)
+                    .build()?,
+            );
+        }
+        let exceptset = builder.build()?;
+
+        Ok(Globs {
+            original_globs: globs,
+            globset,
+            exceptset,
+            globs_used: HashSet::new(),
+        })
+    }
+
+    /// Returns relative paths (relative to `dir`) of all the matching files.
+    pub fn walk(&mut self, dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
+        let dir = dir.as_ref();
+        WalkDir::new(dir)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| !entry.file_type().is_dir())
+            .filter_map(move |entry| {
+                let path = entry
+                    .path()
+                    .strip_prefix(dir)
+                    .expect("walkdir produced paths not inside intended dir");
+                let matches = self.globset.matches(path);
+                let found = !matches.is_empty();
+                self.globs_used.extend(matches);
+                if found && !self.exceptset.is_match(path) {
+                    Some(path.to_owned())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    pub fn check_all_globs_used(&self) -> Result<()> {
+        if self.globs_used.len() == self.globset.len() {
+            return Ok(());
+        }
+        let mut unmatched = Vec::new();
+        for (idx, original) in self.original_globs.iter().enumerate() {
+            if !self.globs_used.contains(&idx) {
+                unmatched.push(original);
+            }
+        }
+        bail!("Unmatched globs: {:?}", unmatched);
+    }
+}

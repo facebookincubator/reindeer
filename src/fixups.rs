@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 use std::fs;
-use std::iter;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -21,9 +20,6 @@ use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
-use globset::GlobBuilder;
-use globset::GlobSetBuilder;
-use walkdir::WalkDir;
 
 use crate::buck;
 use crate::buck::Alias;
@@ -35,6 +31,8 @@ use crate::buck::Rule;
 use crate::buck::RuleRef;
 use crate::buck::RustBinary;
 use crate::buck::StringOrPath;
+use crate::buck::Subtarget;
+use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
 use crate::buckify::normalize_dotdot;
 use crate::buckify::relative_path;
@@ -43,6 +41,8 @@ use crate::cargo::ManifestTarget;
 use crate::cargo::NodeDepKind;
 use crate::collection::SetOrMap;
 use crate::config::Config;
+use crate::glob::Globs;
+use crate::glob::NO_EXCLUDE;
 use crate::index::Index;
 use crate::index::ResolvedDep;
 use crate::platform::platform_names_for_expr;
@@ -159,6 +159,24 @@ impl<'meta> Fixups<'meta> {
         }
     }
 
+    fn subtarget_or_path(&self, relative_to_manifest_dir: &Path) -> SubtargetOrPath {
+        if self.config.vendor.is_some() {
+            // Path to vendored file looks like "vendor/foo-1.0.0/src/lib.rs"
+            let manifest_dir = relative_path(&self.third_party_dir, self.manifest_dir);
+            let path = manifest_dir.join(relative_to_manifest_dir);
+            SubtargetOrPath::Path(BuckPath(path))
+        } else {
+            // Subtarget inside an http_archive: ":foo-1.0.0.crate[src/lib.rs]"
+            SubtargetOrPath::Subtarget(Subtarget {
+                target: Name(format!(
+                    "{}-{}.crate",
+                    self.package.name, self.package.version
+                )),
+                relative: BuckPath(relative_to_manifest_dir.to_owned()),
+            })
+        }
+    }
+
     pub fn public_visibility(&self) -> Visibility {
         match self.fixup_config.custom_visibility.as_deref() {
             Some(visibility) => Visibility::Custom(visibility.to_vec()),
@@ -218,7 +236,6 @@ impl<'meta> Fixups<'meta> {
     ) -> Result<Vec<Rule>> {
         let mut res = Vec::new();
 
-        let rel_manifest = relative_path(&self.third_party_dir, self.manifest_dir);
         let rel_fixup = relative_path(&self.third_party_dir, &self.fixup_dir);
 
         let buildscript_rule_name = match self.buildscript_rule_name() {
@@ -349,68 +366,68 @@ impl<'meta> Fixups<'meta> {
                                 .collect(),
                         },
                         // Just collect the sources, excluding things in the exclude list
-                        srcs: self
-                            .manifestwalk(srcs, exclude, self.config.strict_globs)
-                            .context("C++ sources")?
-                            .map(BuckPath)
-                            .collect(),
+                        srcs: {
+                            let mut globs = Globs::new(srcs, exclude).context("C++ sources")?;
+                            let srcs = globs
+                                .walk(self.manifest_dir)
+                                .map(|path| self.subtarget_or_path(&path))
+                                .collect();
+                            if self.config.strict_globs {
+                                globs.check_all_globs_used()?;
+                            }
+                            srcs
+                        },
                         // Collect the nominated headers, plus everything in the fixup include
                         // path(s).
-                        headers: self::globwalk(
-                            &self.third_party_dir,
-                            &[&rel_manifest, &rel_fixup],
-                            headers
-                                .iter()
-                                .map(|path| format!("{}/{}", rel_manifest.display(), path))
-                                .chain(itertools::concat(fixup_include_paths.iter().map(|path| {
-                                    vec!["asm", "h"]
-                                        .iter()
-                                        .map(|ext| {
-                                            format!(
-                                                "{}/**/*.{}",
-                                                rel_fixup.join(path).display(),
-                                                ext
-                                            )
-                                        })
-                                        .collect::<Vec<_>>()
-                                }))),
-                            exclude
-                                .iter()
-                                .map(|path| format!("{}/{}", rel_manifest.display(), path)),
-                            false,
-                        )
-                        .context("C++ headers")?
-                        .map(BuckPath)
-                        .collect(),
-                        exported_headers: match exported_headers {
-                            SetOrMap::Set(exported_headers) => SetOrMap::Set(
-                                self.manifestwalk(
-                                    exported_headers,
-                                    exclude,
-                                    self.config.strict_globs,
-                                )
-                                .context("C++ exported headers")?
-                                .map(BuckPath)
-                                .collect(),
-                            ),
-                            SetOrMap::Map(exported_headers) => {
-                                let rel_manifest =
-                                    relative_path(&self.third_party_dir, self.manifest_dir);
-                                SetOrMap::Map(
-                                    exported_headers
-                                        .iter()
-                                        .map(|(name, path)| {
-                                            (name.clone(), BuckPath(rel_manifest.join(path)))
-                                        })
-                                        .collect(),
-                                )
+                        headers: {
+                            let mut globs = Globs::new(headers, exclude)?;
+                            let mut headers = BTreeSet::new();
+                            for path in globs.walk(self.manifest_dir) {
+                                headers.insert(self.subtarget_or_path(&path));
                             }
+
+                            let mut globs = Globs::new(["**/*.asm", "**/*.h"], NO_EXCLUDE)?;
+                            for fixup_include_path in fixup_include_paths {
+                                for path in globs.walk(self.fixup_dir.join(fixup_include_path)) {
+                                    headers.insert(SubtargetOrPath::Path(BuckPath(
+                                        rel_fixup.join(fixup_include_path).join(path),
+                                    )));
+                                }
+                            }
+
+                            headers
+                        },
+                        exported_headers: match exported_headers {
+                            SetOrMap::Set(exported_headers) => {
+                                let mut exported_header_globs =
+                                    Globs::new(exported_headers, exclude)
+                                        .context("C++ exported headers")?;
+                                let exported_headers = exported_header_globs
+                                    .walk(self.manifest_dir)
+                                    .map(|path| self.subtarget_or_path(&path))
+                                    .collect();
+                                if self.config.strict_globs {
+                                    exported_header_globs.check_all_globs_used()?;
+                                }
+                                SetOrMap::Set(exported_headers)
+                            }
+                            SetOrMap::Map(exported_headers) => SetOrMap::Map(
+                                exported_headers
+                                    .iter()
+                                    .map(|(name, path)| {
+                                        (name.clone(), self.subtarget_or_path(Path::new(path)))
+                                    })
+                                    .collect(),
+                            ),
                         },
                         include_directories: fixup_include_paths
                             .iter()
-                            .map(|path| rel_fixup.join(path))
-                            .chain(include_paths.iter().map(|path| rel_manifest.join(path)))
-                            .map(BuckPath)
+                            .map(|path| SubtargetOrPath::Path(BuckPath(rel_fixup.join(path))))
+                            .chain(
+                                include_paths
+                                    .iter()
+                                    .map(|path| self.subtarget_or_path(path)),
+                            )
                             .collect(),
                         compiler_flags: compiler_flags.clone(),
                         preprocessor_flags: preprocessor_flags.clone(),
@@ -430,10 +447,9 @@ impl<'meta> Fixups<'meta> {
                     compatible_with,
                     ..
                 }) => {
-                    let libs = self
-                        .manifestwalk(static_libs, Vec::<String>::new(), self.config.strict_globs)
-                        .context("Static libraries")?;
-                    for static_lib in libs {
+                    let mut static_lib_globs =
+                        Globs::new(static_libs, NO_EXCLUDE).context("Static libraries")?;
+                    for static_lib in static_lib_globs.walk(self.manifest_dir) {
                         let actual = Name(format!(
                             "{}-{}-{}",
                             self.index.private_rule_name(self.package),
@@ -466,9 +482,12 @@ impl<'meta> Fixups<'meta> {
                                     .map(RuleRef::new)
                                     .collect(),
                             },
-                            static_lib: BuckPath(static_lib.clone()),
+                            static_lib: self.subtarget_or_path(&static_lib),
                         };
                         res.push(Rule::PrebuiltCxxLibrary(rule));
+                    }
+                    if self.config.strict_globs {
+                        static_lib_globs.check_all_globs_used()?;
                     }
                 }
 
@@ -743,10 +762,9 @@ impl<'meta> Fixups<'meta> {
                     ..
                 }) = buildscript
                 {
-                    let libs = self
-                        .manifestwalk(static_libs, Vec::<String>::new(), self.config.strict_globs)
-                        .context("Prebuilt C++ libraries")?;
-                    for static_lib in libs {
+                    let mut static_lib_globs =
+                        Globs::new(static_libs, NO_EXCLUDE).context("Prebuilt C++ libraries")?;
+                    for static_lib in static_lib_globs.walk(self.manifest_dir) {
                         ret.push((
                             None,
                             RuleRef::new(format!(
@@ -828,40 +846,28 @@ impl<'meta> Fixups<'meta> {
         ret
     }
 
-    /// Given a glob for the srcs, walk the filesystem to get the full set. `srcglob` is
-    /// the normal source glob rooted at the package's manifest dir.
+    /// Given a glob for the srcs, walk the filesystem to get the full set.
+    /// `srcs` is the normal source glob rooted at the package's manifest dir.
     pub fn compute_srcs(
         &self,
         srcs: Vec<PathBuf>,
     ) -> Result<Vec<(Option<PlatformExpr>, BTreeSet<PathBuf>)>> {
         let mut ret: Vec<(Option<PlatformExpr>, BTreeSet<PathBuf>)> = vec![];
 
+        // This function is only used in vendoring mode, so it's guaranteed that
+        // manifest_dir is a subdirectory of third_party_dir.
+        assert!(self.config.vendor.is_some());
         let manifest_rel = relative_path(&self.third_party_dir, self.manifest_dir);
 
-        let tp_rel_extra_src_fn = |srcs: &[String]| {
-            srcs.iter()
-                .map(|src| self.manifest_dir.join(src))
-                .map(|src| relative_path(&self.third_party_dir, &src))
-                .map(|src| normalize_dotdot(&src))
-                .map(|src| src.display().to_string())
-                .collect::<Vec<String>>()
-        };
-        let tp_rel_srcs = srcs
+        let srcs_globs: Vec<String> = srcs
             .iter()
-            .map(|src| relative_path(&self.third_party_dir, src))
-            .map(|src| src.display().to_string())
-            .collect::<Vec<String>>();
-        let tp_rel_extra_srcs: Vec<_> = self
-            .fixup_config
-            .base(&self.package.version)
-            .into_iter()
-            .flat_map(|base| tp_rel_extra_src_fn(&base.extra_srcs))
+            .map(|src| src.to_string_lossy().into_owned())
             .collect();
 
         log::info!(
             "pkg {}, srcs {:?}, manifest_rel {}",
             self.package,
-            srcs,
+            srcs_globs,
             manifest_rel.display()
         );
 
@@ -872,42 +878,19 @@ impl<'meta> Fixups<'meta> {
             .filter(|(platform, _)| platform.is_some())
             .any(|(_, config)| config.overlay.is_some());
 
-        // List of directories that srcs may be found in
-        let mut common_src_dirs: Vec<PathBuf> = vec![self.manifest_dir.to_path_buf()];
-        if let Some(base) = self.fixup_config.base(&self.package.version) {
-            common_src_dirs.extend(
-                base.src_referenced_dirs
-                    .iter()
-                    .map(|path| self.manifest_dir.join(path))
-                    .map(|path| normalize_dotdot(&path)),
-            );
-        }
-
         let mut common_files = HashSet::new();
-        // Base sources are not required because they're either computed
-        // precisely or a random guess of globs.
-        common_files.extend(
-            self::globwalk(
-                &self.third_party_dir,
-                common_src_dirs.iter(),
-                tp_rel_srcs.iter(),
-                None::<&str>,
-                false, /* strict_globs */
-            )
-            .context("Srcs")?,
-        );
-
-        // Fixup-specified extra srcs are required (to avoid errors)
-        common_files.extend(
-            self::globwalk(
-                &self.third_party_dir,
-                common_src_dirs.iter(),
-                tp_rel_extra_srcs.iter(),
-                None::<&str>,
-                self.config.strict_globs,
-            )
-            .context("Extra srcs")?,
-        );
+        let mut srcs_globs = Globs::new(srcs_globs, NO_EXCLUDE).context("Srcs")?;
+        for path in srcs_globs.walk(self.manifest_dir) {
+            common_files.insert(manifest_rel.join(path));
+        }
+        if self.config.strict_globs {
+            // Do not check srcs_globs.check_all_globs_used(). Base sources are
+            // not required because they are either computed precisely or a
+            // random guess of globs.
+        }
+        if let Some(base) = self.fixup_config.base(&self.package.version) {
+            common_files.extend(self.compute_extra_srcs(&base.extra_srcs)?);
+        }
 
         let common_overlay_files = match self.fixup_config.base(&self.package.version) {
             Some(base) => base.overlay_files(&self.fixup_dir)?,
@@ -928,25 +911,8 @@ impl<'meta> Fixups<'meta> {
         for (platform, config) in self.fixup_config.platform_configs(&self.package.version) {
             let mut set = BTreeSet::new();
 
-            // Platform-specific sources
-            let mut platform_src_dirs: Vec<PathBuf> = vec![self.manifest_dir.to_path_buf()];
-            platform_src_dirs.extend(
-                config
-                    .src_referenced_dirs
-                    .iter()
-                    .map(|path| self.manifest_dir.join(path))
-                    .map(|path| normalize_dotdot(&path))
-                    .collect::<Vec<PathBuf>>(),
-            );
-            let mut files: HashSet<_> = self::globwalk(
-                &self.third_party_dir,
-                platform_src_dirs.iter(),
-                tp_rel_extra_src_fn(&config.extra_srcs),
-                None::<&str>,
-                self.config.strict_globs,
-            )
-            .context("Platform-specific extra srcs")?
-            .collect();
+            let mut files = HashSet::new();
+            files.extend(self.compute_extra_srcs(&config.extra_srcs)?);
 
             let mut overlay_files = config.overlay_files(&self.fixup_dir)?;
 
@@ -977,6 +943,61 @@ impl<'meta> Fixups<'meta> {
         );
 
         Ok(ret)
+    }
+
+    fn compute_extra_srcs(&self, globs: &[String]) -> Result<HashSet<PathBuf>> {
+        let mut extra_srcs = HashSet::new();
+        let mut unmatched_globs = Vec::new();
+
+        for glob in globs {
+            // The extra_srcs are allowed to be located outside this crate's
+            // manifest dir, i.e. starting with "../". For example libstd refers
+            // to files from portable-simd and stdarch, which are located in
+            // sibling directories. Thus doing a WalkDir over manifest_dir is
+            // not sufficient; here we pick the right directory to walk for this
+            // glob.
+            let mut dir_containing_extra_srcs = self.manifest_dir.to_owned();
+            let mut rest_of_glob = Path::new(glob).components();
+            while let Some(component) = rest_of_glob.as_path().components().next() {
+                if component.as_os_str().to_string_lossy().contains('*') {
+                    // Ready to do globby stuff.
+                    break;
+                } else {
+                    rest_of_glob.next().unwrap();
+                    dir_containing_extra_srcs.push(component);
+                }
+            }
+
+            let len_before = extra_srcs.len();
+            let mut insert = |absolute_path: &Path| {
+                let tp_rel_path = relative_path(&self.third_party_dir, absolute_path);
+                extra_srcs.insert(normalize_dotdot(&tp_rel_path));
+            };
+
+            let rest_of_glob = rest_of_glob.as_path();
+            if rest_of_glob.as_os_str().is_empty() {
+                // None of the components contained glob so this extra_src
+                // refers to a specific file.
+                if dir_containing_extra_srcs.is_file() {
+                    insert(&dir_containing_extra_srcs);
+                }
+            } else {
+                let glob = rest_of_glob.to_string_lossy();
+                for path in Globs::new([glob], NO_EXCLUDE)?.walk(&dir_containing_extra_srcs) {
+                    insert(&dir_containing_extra_srcs.join(path));
+                }
+            }
+
+            if extra_srcs.len() == len_before {
+                unmatched_globs.push(glob);
+            }
+        }
+
+        if unmatched_globs.is_empty() {
+            Ok(extra_srcs)
+        } else {
+            bail!("Unmatched globs in extra_srcs: {:?}", unmatched_globs);
+        }
     }
 
     pub fn compute_mapped_srcs(
@@ -1066,107 +1087,4 @@ impl<'meta> Fixups<'meta> {
 
         ret
     }
-
-    /// Walk from package manifest dir matching a set of globs (which can be literal names).
-    /// The globs are relative to the manifest dir. Results are relative to third_party_dir.
-    pub fn manifestwalk<'a>(
-        &'a self,
-        globs: impl IntoIterator<Item = impl AsRef<str> + 'a> + 'a,
-        excepts: impl IntoIterator<Item = impl AsRef<str> + 'a> + 'a,
-        strict_match: bool,
-    ) -> Result<impl Iterator<Item = PathBuf> + 'a> {
-        let rel_manifest = relative_path(&self.third_party_dir, self.manifest_dir);
-
-        let rel_glob = move |glob: &str| {
-            if rel_manifest.components().next().is_none() {
-                glob.to_string()
-            } else {
-                format!("{}/{}", rel_manifest.display(), glob)
-            }
-        };
-
-        self::globwalk(
-            &self.third_party_dir,
-            iter::once(self.manifest_dir),
-            globs.into_iter().map({
-                let rel_glob = rel_glob.clone();
-                move |glob| rel_glob(glob.as_ref())
-            }),
-            excepts.into_iter().map(move |glob| rel_glob(glob.as_ref())),
-            strict_match,
-        )
-    }
-}
-
-/// Walk from package manifest dir matching a set of globs (which can be literal names).
-/// Parameters:
-/// `base` - base directory for everything. All globs and dirs are relative to this, as are resulting paths
-/// `dirs` - starting directories for walk, relative to base.
-/// `globs` - set of globs to match
-/// `excepts` - globs to exclude from output
-/// `strict_match` - require all globs to be matched (even if they're later excluded by `excepts`)
-fn globwalk<'a>(
-    base: impl Into<PathBuf> + 'a,
-    dirs: impl IntoIterator<Item = impl AsRef<Path> + 'a> + 'a,
-    globs: impl IntoIterator<Item = impl AsRef<str>>,
-    excepts: impl IntoIterator<Item = impl AsRef<str>>,
-    strict_match: bool,
-) -> Result<impl Iterator<Item = PathBuf> + 'a> {
-    let base = base.into();
-
-    let mut fullglobs = Vec::new();
-
-    let mut builder = GlobSetBuilder::new();
-    for glob in globs {
-        let fullglob = format!("{}/{}", base.display(), glob.as_ref());
-        builder.add(
-            GlobBuilder::new(&fullglob)
-                .literal_separator(true)
-                .build()?,
-        );
-        fullglobs.push(fullglob);
-    }
-    let globset = builder.build()?;
-
-    let mut builder = GlobSetBuilder::new();
-    for except in excepts {
-        let fullexcept = format!("{}/{}", base.display(), except.as_ref());
-        builder.add(
-            GlobBuilder::new(&fullexcept)
-                .literal_separator(true)
-                .build()?,
-        );
-    }
-    let exceptset = builder.build()?;
-
-    let mut globs_used = HashSet::new();
-
-    let res: Vec<_> = dirs
-        .into_iter()
-        .flat_map({
-            let base = base.clone();
-            move |dir| WalkDir::new(base.join(dir.as_ref())).into_iter()
-        })
-        .filter_map(|res| res.ok())
-        .filter(|entry| !entry.file_type().is_dir())
-        .filter(|entry| -> bool {
-            let matches = globset.matches(entry.path());
-            let found = !matches.is_empty();
-            globs_used.extend(matches);
-            found && !exceptset.is_match(entry.path())
-        })
-        .map(|entry| relative_path(&base, entry.path()))
-        .collect();
-
-    if strict_match && globs_used.len() != globset.len() {
-        let mut unmatched = Vec::new();
-        for (idx, fglob) in fullglobs.into_iter().enumerate() {
-            if !globs_used.contains(&idx) {
-                unmatched.push(fglob);
-            }
-        }
-        bail!("Unmatched globs: {:?}", unmatched);
-    }
-
-    Ok(res.into_iter())
 }
