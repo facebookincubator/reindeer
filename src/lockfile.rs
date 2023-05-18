@@ -25,10 +25,10 @@ pub struct Lockfile {
 
 impl Lockfile {
     pub fn load(paths: &Paths) -> Result<Self> {
-        let cargo_lock_content = fs::read(&paths.lockfile_path)
+        let cargo_lock_content = fs::read_to_string(&paths.lockfile_path)
             .with_context(|| format!("Failed to load {}", paths.lockfile_path.display()))?;
 
-        let mut lockfile: Lockfile = toml::from_slice(&cargo_lock_content)
+        let mut lockfile: Lockfile = toml::from_str(&cargo_lock_content)
             .with_context(|| format!("Failed to parse {}", paths.lockfile_path.display()))?;
 
         lockfile.packages.sort_by(|a, b| {

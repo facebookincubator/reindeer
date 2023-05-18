@@ -30,7 +30,7 @@ spdx = "0.3"
 structopt = "0.3.23"
 syn = { version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 termcolor = "1.0"
-toml = "=0.5.8"
+toml = "0.7.3"
 unicode-ident = "1.0.6"
 walkdir = "2.3"
 

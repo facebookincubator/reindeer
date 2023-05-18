@@ -97,10 +97,9 @@ impl<'meta> Fixups<'meta> {
         let fixup_dir = paths.third_party_dir.join("fixups").join(&package.name);
         let fixup_path = fixup_dir.join("fixups.toml");
 
-        let fixup_config: FixupConfigFile = if let Ok(file) = fs::read(&fixup_path) {
+        let fixup_config: FixupConfigFile = if let Ok(file) = fs::read_to_string(&fixup_path) {
             log::debug!("read fixups from {}", fixup_path.display());
-            toml::de::from_slice(&file)
-                .context(format!("Failed to parse {}", fixup_path.display()))?
+            toml::from_str(&file).context(format!("Failed to parse {}", fixup_path.display()))?
         } else {
             log::debug!("no fixups at {}", fixup_path.display());
             let fixup = FixupConfigFile::template(&paths.third_party_dir, index, package, target);
@@ -116,7 +115,7 @@ impl<'meta> Fixups<'meta> {
                     fixup_path.display()
                 );
 
-                let file = toml::ser::to_string_pretty(&fixup)?;
+                let file = toml::to_string_pretty(&fixup)?;
                 fs::create_dir_all(fixup_path.parent().unwrap())?;
                 fs::write(&fixup_path, file)?;
             }

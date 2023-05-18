@@ -222,8 +222,8 @@ impl<'de> Visitor<'de> for BuildscriptFixupVisitor<'de> {
     where
         M: MapAccess<'de>,
     {
-        let res = if let Some(key) = access.next_key::<&str>()? {
-            let res = match key {
+        let res = if let Some(key) = access.next_key::<String>()? {
+            let res = match key.as_str() {
                 "unresolved" => BuildscriptFixup::Unresolved(access.next_value()?),
                 "rustc_flags" => BuildscriptFixup::RustcFlags(access.next_value()?),
                 "gen_srcs" => BuildscriptFixup::GenSrcs(access.next_value()?),
@@ -242,7 +242,7 @@ impl<'de> Visitor<'de> for BuildscriptFixupVisitor<'de> {
             return Err(M::Error::custom("Empty BuildscriptFixup map"));
         };
 
-        if let Some(key) = access.next_key::<&str>()? {
+        if let Some(key) = access.next_key::<String>()? {
             Err(M::Error::custom(format!(
                 "Extra BuildscriptFixup map entry: {}",
                 key
