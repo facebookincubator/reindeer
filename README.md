@@ -8,15 +8,26 @@ problem of managing third-party dependencies in a monorepo built with
 [Buck](https://buck.build/), but my hope is that it can be extended to support
 [Bazel](https://bazel.build/) and other similar build systems.
 
+## Installation and Building
+
+Reindeer builds with Cargo in the normal way. It has no unusual build-time
+dependencies. Therefore, you can use Cargo to not only build Reindeer, but to
+install it as well.
+
+```shell
+cargo install --locked --git https://github.com/facebookincubator/reindeer
+```
+
+### Nix
+
+If you are using [Nix](https://nixos.org/), you can install Reindeer from
+[nixpkgs](https://github.com/NixOS/nixpkgs) via the `reindeer` package. This
+package is unofficial and community-maintained.
+
 ## Getting started
 
 There's a complete (but small) [example](example) to get started with. More
 complete documentation is in [docs](docs/MANUAL.md).
-
-## Building
-
-Reindeer builds with Cargo in the normal way. It has no unusual build-time
-dependencies.
 
 ## Contributing
 
