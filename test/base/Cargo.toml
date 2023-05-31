@@ -12,6 +12,7 @@
 # Pseudo-package whose dependencies are exported to fbcode
 name = "rust-third-party"
 version = "0.0.0"
+publish = false
 
 [lib]
 path = "/dev/null"
