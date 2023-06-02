@@ -146,7 +146,7 @@ checksum = "3c4c54d47a4532db3494ef7332c257ab57b02750daae3250d49e01ee55201ce8"
 dependencies = [
  "semver",
  "serde",
- "toml 0.5.8",
+ "toml 0.5.11",
  "url",
 ]
 
@@ -1175,7 +1175,7 @@ dependencies = [
  "semver",
  "serde",
  "thiserror",
- "toml 0.5.8",
+ "toml 0.5.11",
  "url",
 ]
 
@@ -1524,8 +1524,9 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 
 [[package]]
 name = "toml"
-version = "0.5.8"
+version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4f7f0dd8d50a853a531c426359045b1998f04219d88799810762cd4ad314234"
 dependencies = [
  "serde",
 ]
