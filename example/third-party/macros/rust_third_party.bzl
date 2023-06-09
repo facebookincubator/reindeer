@@ -47,7 +47,12 @@ def third_party_rust_library(name, platform = {}, dlopen_enable = False, python_
             kwargs["preferred_linkage"] = "static"
         cxx_binary(name = name + "-so", link_style = "static_pic", linker_flags = linker_flags, deps = [":" + name])
 
-    rust_library(name, **platform_attrs(_get_plat(), platform, kwargs))
+    kwargs = platform_attrs(_get_plat(), platform, kwargs)
+
+    rustc_flags = kwargs.get("rustc_flags", [])
+    kwargs["rustc_flags"] = ["--cap-lints=allow"] + rustc_flags
+
+    rust_library(name, **kwargs)
 
 # `platform` is a map from a platform (defined in reindeer.toml) to the attributes
 # specific to that platform.
@@ -56,7 +61,13 @@ def third_party_rust_binary(name, platform = {}, **kwargs):
     # the sources are mapped_srcs
     if "srcs" not in kwargs:
         kwargs["srcs"] = []
-    rust_binary(name, **platform_attrs(_get_plat(), platform, kwargs))
+
+    kwargs = platform_attrs(_get_plat(), platform, kwargs)
+
+    rustc_flags = kwargs.get("rustc_flags", [])
+    kwargs["rustc_flags"] = ["--cap-lints=allow"] + rustc_flags
+
+    rust_binary(name, **kwargs)
 
 def third_party_rust_cxx_library(name, **kwargs):
     cxx_library(name, **kwargs)
