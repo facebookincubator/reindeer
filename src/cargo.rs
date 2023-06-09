@@ -281,7 +281,7 @@ pub struct Manifest {
     /// Package description
     pub description: Option<String>,
     /// Source registry for package
-    pub source: Option<Source>,
+    pub source: Source,
     /// Package dependencies (unresolved)
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub dependencies: Vec<ManifestDep>,
@@ -701,6 +701,7 @@ impl Display for Edition {
 
 #[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Source {
+    Local,
     CratesIo,
     Git {
         repo: String,
@@ -727,8 +728,11 @@ impl<'de> Deserialize<'de> for Source {
     where
         D: Deserializer<'de>,
     {
-        let source = String::deserialize(deserializer)?;
-        Ok(parse_source(&source).unwrap_or(Source::Unrecognized(source)))
+        let source: Option<String> = Deserialize::deserialize(deserializer)?;
+        Ok(match source {
+            None => Source::Local,
+            Some(source) => parse_source(&source).unwrap_or(Source::Unrecognized(source)),
+        })
     }
 }
 

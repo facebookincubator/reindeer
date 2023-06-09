@@ -62,12 +62,12 @@ pub fn write_remap_all_sources(
             ..RemapSource::default()
         };
         let key = match &pkg.source {
-            Some(Source::CratesIo) => "crates-io".to_owned(),
-            Some(Source::Git {
+            Source::CratesIo => "crates-io".to_owned(),
+            Source::Git {
                 repo,
                 reference,
                 commit_hash,
-            }) => {
+            } => {
                 remap_source.git = Some(repo.clone());
                 match reference {
                     GitRef::Revision => remap_source.rev = Some(commit_hash.clone()),
@@ -77,7 +77,7 @@ pub fn write_remap_all_sources(
                 }
                 repo.clone()
             }
-            None | Some(Source::Unrecognized(_)) => continue,
+            Source::Local | Source::Unrecognized(_) => continue,
         };
         sources.insert(key, remap_source);
     }

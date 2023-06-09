@@ -85,14 +85,14 @@ pub fn write(
     let mut upstream_address = "";
     let mut upstream_hash = "";
     let upstream_type = match &pkg.source {
-        Some(Source::CratesIo) => {
+        Source::CratesIo => {
             cratesio_url = format!("https://crates.io/crates/{}/{}", name, version);
             upstream_address = &cratesio_url;
             "crates.io"
         }
-        Some(Source::Git {
+        Source::Git {
             repo, commit_hash, ..
-        }) => {
+        } => {
             upstream_address = repo.strip_suffix(".git").unwrap_or(repo);
             upstream_hash = commit_hash;
             if repo.starts_with("https://github.com/") {
@@ -105,8 +105,8 @@ pub fn write(
                 ""
             }
         }
-        Some(Source::Unrecognized(source)) => source,
-        None => "",
+        Source::Unrecognized(source) => source,
+        Source::Local => "",
     };
 
     let metadata = TpMetadata {

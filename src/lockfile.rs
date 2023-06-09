@@ -59,7 +59,7 @@ pub struct Hopefully3;
 pub struct LockfilePackage {
     pub name: String,
     pub version: semver::Version,
-    pub source: Option<Source>,
+    pub source: Source,
     pub checksum: Option<String>,
 }
 

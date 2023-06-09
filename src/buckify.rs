@@ -162,7 +162,11 @@ fn generate_rules<'scope>(
     target_req: TargetReq<'scope>,
 ) {
     if let TargetReq::Sources = target_req {
-        let _ = rule_tx.send(generate_nonvendored_sources_archive(context, pkg));
+        if let Some(nonvendored_sources) =
+            generate_nonvendored_sources_archive(context, pkg).transpose()
+        {
+            let _ = rule_tx.send(nonvendored_sources);
+        }
         return;
     }
     for tgt in &pkg.targets {
@@ -212,7 +216,7 @@ fn generate_rules<'scope>(
 fn generate_nonvendored_sources_archive<'scope>(
     context: &'scope RuleContext<'scope>,
     pkg: &'scope Manifest,
-) -> Result<Rule> {
+) -> Result<Option<Rule>> {
     let lockfile_package = match context.lockfile.find(pkg) {
         Some(lockfile_package) => lockfile_package,
         None => {
@@ -228,13 +232,14 @@ fn generate_nonvendored_sources_archive<'scope>(
     };
 
     match &lockfile_package.source {
-        Some(Source::CratesIo) => generate_http_archive(context, pkg, lockfile_package),
-        Some(Source::Git {
+        Source::Local => Ok(None),
+        Source::CratesIo => generate_http_archive(context, pkg, lockfile_package).map(Some),
+        Source::Git {
             repo, commit_hash, ..
-        }) => generate_git_fetch(repo, commit_hash),
-        _ => {
+        } => generate_git_fetch(repo, commit_hash).map(Some),
+        Source::Unrecognized(_) => {
             bail!(
-                "`vendor = false` mode is supported only with exclusively crates.io dependencies. \"{}\" {} is coming from some source other than crates.io",
+                "`vendor = false` mode is supported only with exclusively crates.io and GitHub dependencies. \"{}\" {} is coming from some source other than crates.io or GitHub",
                 pkg.name,
                 pkg.version,
             );
@@ -347,9 +352,9 @@ fn generate_target_rules<'scope>(
     log::debug!("pkg {} target {} fixups {:#?}", pkg, tgt.name, fixups);
 
     let manifest_dir = pkg.manifest_dir();
-    let rootmod = if context.config.vendor.is_some() {
+    let rootmod = if context.config.vendor.is_some() || matches!(pkg.source, Source::Local) {
         relative_path(&paths.third_party_dir, &tgt.src_path)
-    } else if let Some(Source::Git { repo, .. }) = &pkg.source {
+    } else if let Source::Git { repo, .. } = &pkg.source {
         let git_fetch = short_name_for_git_repo(repo)?;
         let repository_root = find_repository_root(manifest_dir)?;
         let path_within_repo = relative_path(repository_root, &tgt.src_path);
@@ -384,25 +389,27 @@ fn generate_target_rules<'scope>(
     // filename, or a list of globs.
     // If we're configured to get precise sources and we're using 2018+ edition source, then
     // parse the crate to see what files are actually used.
-    let mut srcs =
-        if config.vendor.is_some() && fixups.precise_srcs() && edition >= Edition::Rust2018 {
-            measure_time::trace_time!("srcfiles for {}", pkg);
-            let sources = crate_srcfiles(&tgt.src_path);
-            if sources.errors.is_empty() {
-                let srcs = sources
-                    .files
-                    .into_iter()
-                    .map(|src| normalize_dotdot(&relative_path(manifest_dir, &src)))
-                    .collect::<Vec<_>>();
-                log::debug!("crate_srcfiles returned {:#?}", srcs);
-                srcs
-            } else {
-                log::info!("crate_srcfiles failed: {:?}", sources.errors);
-                vec![]
-            }
+    let mut srcs = if (config.vendor.is_some() || matches!(pkg.source, Source::Local))
+        && fixups.precise_srcs()
+        && edition >= Edition::Rust2018
+    {
+        measure_time::trace_time!("srcfiles for {}", pkg);
+        let sources = crate_srcfiles(&tgt.src_path);
+        if sources.errors.is_empty() {
+            let srcs = sources
+                .files
+                .into_iter()
+                .map(|src| normalize_dotdot(&relative_path(manifest_dir, &src)))
+                .collect::<Vec<_>>();
+            log::debug!("crate_srcfiles returned {:#?}", srcs);
+            srcs
         } else {
+            log::info!("crate_srcfiles failed: {:?}", sources.errors);
             vec![]
-        };
+        }
+    } else {
+        vec![]
+    };
 
     if srcs.is_empty() {
         // If that didn't work out, get srcs the globby way
@@ -427,7 +434,7 @@ fn generate_target_rules<'scope>(
     )
     .context("rustc_flags")?;
 
-    if config.vendor.is_some() {
+    if config.vendor.is_some() || matches!(pkg.source, Source::Local) {
         unzip_platform(
             config,
             &mut base,
@@ -439,7 +446,7 @@ fn generate_target_rules<'scope>(
             fixups.compute_srcs(srcs)?,
         )
         .context("srcs")?;
-    } else if let Some(Source::Git { repo, .. }) = &pkg.source {
+    } else if let Source::Git { repo, .. } = &pkg.source {
         let short_name = short_name_for_git_repo(repo)?;
         let git_fetch_target = format!(":{}.git", short_name);
         base.srcs.insert(BuckPath(PathBuf::from(git_fetch_target)));
