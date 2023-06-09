@@ -261,6 +261,31 @@ impl Serialize for HttpArchive {
     }
 }
 
+#[derive(Debug)]
+pub struct GitFetch {
+    pub name: Name,
+    pub repo: String,
+    pub rev: String,
+    pub visibility: Visibility,
+}
+
+impl Serialize for GitFetch {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            name,
+            repo,
+            rev,
+            visibility,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("name", name)?;
+        map.serialize_entry("repo", repo)?;
+        map.serialize_entry("rev", rev)?;
+        map.serialize_entry("visibility", visibility)?;
+        map.end()
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Common {
     pub name: Name,
@@ -813,6 +838,7 @@ impl Serialize for PrebuiltCxxLibrary {
 pub enum Rule {
     Alias(Alias),
     HttpArchive(HttpArchive),
+    GitFetch(GitFetch),
     Binary(RustBinary),
     Library(RustLibrary),
     BuildscriptBinary(RustBinary),
@@ -835,18 +861,27 @@ impl PartialOrd for Rule {
     }
 }
 
-fn rule_sort_key(rule: &Rule) -> (&Name, usize) {
+fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
+    #[derive(Ord, PartialOrd, Eq, PartialEq)]
+    enum RuleSortKey<'a> {
+        // Git_fetch targets go above all other targets. In general a single
+        // repository can be used as the source of multiple crates.
+        GitFetch(&'a Name),
+        Other(&'a Name, usize),
+    }
+
     match rule {
         // Make the alias rule come before the actual rule. Note that aliases
         // emitted by reindeer are always to a target within the same package.
-        Rule::Alias(Alias { actual, .. }) => (actual, 0),
-        Rule::HttpArchive(HttpArchive { sort_key, .. }) => (sort_key, 1),
+        Rule::Alias(Alias { actual, .. }) => RuleSortKey::Other(actual, 0),
+        Rule::HttpArchive(HttpArchive { sort_key, .. }) => RuleSortKey::Other(sort_key, 1),
+        Rule::GitFetch(GitFetch { name, .. }) => RuleSortKey::GitFetch(name),
         Rule::Binary(_)
         | Rule::Library(_)
         | Rule::BuildscriptBinary(_)
         | Rule::BuildscriptGenrule(_)
         | Rule::CxxLibrary(_)
-        | Rule::PrebuiltCxxLibrary(_) => (rule.get_name(), 2),
+        | Rule::PrebuiltCxxLibrary(_) => RuleSortKey::Other(rule.get_name(), 2),
     }
 }
 
@@ -861,6 +896,7 @@ impl Rule {
         match self {
             Rule::Alias(Alias { name, .. })
             | Rule::HttpArchive(HttpArchive { name, .. })
+            | Rule::GitFetch(GitFetch { name, .. })
             | Rule::Binary(RustBinary {
                 common:
                     RustCommon {
@@ -903,6 +939,9 @@ impl Rule {
             Rule::Alias(alias) => FunctionCall::new(&config.alias, alias).serialize(Serializer),
             Rule::HttpArchive(http_archive) => {
                 FunctionCall::new(&config.http_archive, http_archive).serialize(Serializer)
+            }
+            Rule::GitFetch(git_fetch) => {
+                FunctionCall::new(&config.git_fetch, git_fetch).serialize(Serializer)
             }
             Rule::Binary(bin) => FunctionCall::new(&config.rust_binary, bin).serialize(Serializer),
             Rule::Library(lib) => {

@@ -23,12 +23,15 @@ use std::sync::Mutex;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use once_cell::sync::OnceCell;
 use rayon::prelude::*;
+use regex::Regex;
 
 use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::Common;
+use crate::buck::GitFetch;
 use crate::buck::HttpArchive;
 use crate::buck::Name;
 use crate::buck::PlatformRustCommon;
@@ -55,6 +58,7 @@ use crate::glob::Globs;
 use crate::glob::NO_EXCLUDE;
 use crate::index;
 use crate::lockfile::Lockfile;
+use crate::lockfile::LockfilePackage;
 use crate::platform::platform_names_for_expr;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
@@ -158,7 +162,7 @@ fn generate_rules<'scope>(
     target_req: TargetReq<'scope>,
 ) {
     if let TargetReq::Sources = target_req {
-        let _ = rule_tx.send(generate_http_archive(context, pkg));
+        let _ = rule_tx.send(generate_nonvendored_sources_archive(context, pkg));
         return;
     }
     for tgt in &pkg.targets {
@@ -205,7 +209,7 @@ fn generate_rules<'scope>(
     }
 }
 
-fn generate_http_archive<'scope>(
+fn generate_nonvendored_sources_archive<'scope>(
     context: &'scope RuleContext<'scope>,
     pkg: &'scope Manifest,
 ) -> Result<Rule> {
@@ -223,8 +227,11 @@ fn generate_http_archive<'scope>(
         }
     };
 
-    match lockfile_package.source {
-        Some(Source::CratesIo) => {}
+    match &lockfile_package.source {
+        Some(Source::CratesIo) => generate_http_archive(context, pkg, lockfile_package),
+        Some(Source::Git {
+            repo, commit_hash, ..
+        }) => generate_git_fetch(repo, commit_hash),
         _ => {
             bail!(
                 "`vendor = false` mode is supported only with exclusively crates.io dependencies. \"{}\" {} is coming from some source other than crates.io",
@@ -233,7 +240,13 @@ fn generate_http_archive<'scope>(
             );
         }
     }
+}
 
+fn generate_http_archive<'scope>(
+    context: &'scope RuleContext<'scope>,
+    pkg: &'scope Manifest,
+    lockfile_package: &LockfilePackage,
+) -> Result<Rule> {
     let sha256 = match &lockfile_package.checksum {
         Some(checksum) => checksum.clone(),
         None => {
@@ -260,6 +273,53 @@ fn generate_http_archive<'scope>(
         visibility: Visibility::Private,
         sort_key: Name(format!("{}-{}", pkg.name, pkg.version)),
     }))
+}
+
+fn generate_git_fetch(repo: &str, commit_hash: &str) -> Result<Rule> {
+    let short_name = short_name_for_git_repo(repo)?;
+
+    Ok(Rule::GitFetch(GitFetch {
+        name: Name(format!("{}.git", short_name)),
+        repo: repo.to_owned(),
+        rev: commit_hash.to_owned(),
+        visibility: Visibility::Private,
+    }))
+}
+
+/// Extract the "serde-rs/serde" part of "https://github.com/serde-rs/serde.git".
+pub fn short_name_for_git_repo(repo: &str) -> Result<&str> {
+    static GITHUB_URL_REGEX: OnceCell<Regex> = OnceCell::new();
+    let github_url_regex = GITHUB_URL_REGEX
+        .get_or_try_init(|| Regex::new(r"^https://github.com/([[:alnum:].-]+/[[:alnum:].-]+)$"))?;
+
+    let repo_without_extension = repo.strip_suffix(".git").unwrap_or(repo);
+    if let Some(captures) = github_url_regex.captures(repo_without_extension) {
+        Ok(captures.get(1).unwrap().as_str())
+    } else {
+        // TODO: come up with some mangling scheme for arbitrary repo URLs. Buck
+        // does not permit ':' in target names.
+        bail!(
+            "unsupported git URL: {:?}, currently vendor=false mode only supports \"https://github.com/$OWNER/$REPO\" repositories",
+            repo,
+        );
+    }
+}
+
+/// Find the git repository containing the given manifest directory.
+fn find_repository_root(manifest_dir: &Path) -> Result<&Path> {
+    let mut dir = manifest_dir;
+    loop {
+        if dir.join(".git").exists() {
+            return Ok(dir);
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => bail!(
+                "failed to find what git repo this manifest directory is a member of: {}",
+                manifest_dir.display(),
+            ),
+        }
+    }
 }
 
 /// Generate rules for a target. Returns the rules, and the
@@ -289,6 +349,11 @@ fn generate_target_rules<'scope>(
     let manifest_dir = pkg.manifest_dir();
     let rootmod = if context.config.vendor.is_some() {
         relative_path(&paths.third_party_dir, &tgt.src_path)
+    } else if let Some(Source::Git { repo, .. }) = &pkg.source {
+        let git_fetch = short_name_for_git_repo(repo)?;
+        let repository_root = find_repository_root(manifest_dir)?;
+        let path_within_repo = relative_path(repository_root, &tgt.src_path);
+        PathBuf::from(git_fetch).join(path_within_repo)
     } else {
         let http_archive = format!("{}-{}.crate", pkg.name, pkg.version);
         let path_within_crate = relative_path(manifest_dir, &tgt.src_path);
@@ -374,6 +439,10 @@ fn generate_target_rules<'scope>(
             fixups.compute_srcs(srcs)?,
         )
         .context("srcs")?;
+    } else if let Some(Source::Git { repo, .. }) = &pkg.source {
+        let short_name = short_name_for_git_repo(repo)?;
+        let git_fetch_target = format!(":{}.git", short_name);
+        base.srcs.insert(BuckPath(PathBuf::from(git_fetch_target)));
     } else {
         let http_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
         base.srcs
@@ -447,7 +516,7 @@ fn generate_target_rules<'scope>(
             log::debug!("pkg {} target {}: adding env {:?}", pkg, tgt.name, env);
             rule.env.extend(env);
         },
-        fixups.compute_env(),
+        fixups.compute_env()?,
     )
     .context("env")?;
 

@@ -36,9 +36,11 @@ use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
 use crate::buckify::normalize_dotdot;
 use crate::buckify::relative_path;
+use crate::buckify::short_name_for_git_repo;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
 use crate::cargo::NodeDepKind;
+use crate::cargo::Source;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::glob::Globs;
@@ -286,6 +288,29 @@ impl<'meta> Fixups<'meta> {
         };
 
         for fix in fixes {
+            if self.config.vendor.is_none() {
+                if let Some(Source::Git { repo, .. }) = &self.package.source {
+                    // Cxx_library fixups only work if the sources are vendored
+                    // or from an http_archive. They do not work with sources
+                    // from git_fetch, because we do not currently have a way to
+                    // generate subtargets referring to the git repo contents:
+                    // e.g. "briansmith/ring[crypto/crypto.c]"
+                    if let Some(unsupported_fixup_kind) = match fix {
+                        BuildscriptFixup::CxxLibrary(_) => Some("buildscript.cxx_library"),
+                        BuildscriptFixup::PrebuiltCxxLibrary(_) => {
+                            Some("buildscript.prebuilt_cxx_library")
+                        }
+                        _ => None,
+                    } {
+                        bail!(
+                            "{} fixup is not supported in vendor=false mode for crates that come from a git repo: {}",
+                            unsupported_fixup_kind,
+                            repo,
+                        );
+                    }
+                }
+            }
+
             match fix {
                 // Build and run it, and filter the output for --cfg options
                 // for the main target's rustc command line
@@ -785,7 +810,9 @@ impl<'meta> Fixups<'meta> {
     }
 
     /// Additional environment
-    pub fn compute_env(&self) -> Vec<(Option<PlatformExpr>, BTreeMap<String, StringOrPath>)> {
+    pub fn compute_env(
+        &self,
+    ) -> Result<Vec<(Option<PlatformExpr>, BTreeMap<String, StringOrPath>)>> {
         let mut ret = vec![];
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
@@ -804,6 +831,9 @@ impl<'meta> Fixups<'meta> {
                                 &self.third_party_dir,
                                 self.manifest_dir,
                             )))
+                        } else if let Some(Source::Git { repo, .. }) = &self.package.source {
+                            let short_name = short_name_for_git_repo(repo)?;
+                            StringOrPath::String(short_name.to_owned())
                         } else {
                             StringOrPath::String(format!(
                                 "{}-{}.crate",
@@ -842,7 +872,8 @@ impl<'meta> Fixups<'meta> {
                 ret.push((platform.cloned(), map));
             }
         }
-        ret
+
+        Ok(ret)
     }
 
     /// Given a glob for the srcs, walk the filesystem to get the full set.

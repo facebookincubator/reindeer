@@ -121,6 +121,9 @@ pub struct BuckConfig {
     /// Rule name for http_archive
     #[serde(default)]
     pub http_archive: StringWithDefault<MustBe!("http_archive")>,
+    /// Rule name for git_fetch
+    #[serde(default)]
+    pub git_fetch: StringWithDefault<MustBe!("git_fetch")>,
     /// Rule name for rust_library
     #[serde(default)]
     pub rust_library: StringWithDefault<MustBe!("rust_library")>,
