@@ -315,9 +315,6 @@ fn generate_target_rules<'scope>(
         }
     };
 
-    let global_rustc_flags = config.rustc_flags.clone();
-    let global_platform_rustc_flags = config.platform_rustc_flags.clone();
-
     // Get a list of the most obvious sources for the crate. This is either a list of
     // filename, or a list of globs.
     // If we're configured to get precise sources and we're using 2018+ edition source, then
@@ -349,17 +346,9 @@ fn generate_target_rules<'scope>(
     }
 
     // Platform-specific rule bits which are common to all platforms
-    let mut base = PlatformRustCommon {
-        rustc_flags: global_rustc_flags.clone(),
-        ..Default::default()
-    };
+    let mut base = PlatformRustCommon::default();
     // Per platform rule bits
     let mut perplat: BTreeMap<PlatformName, PlatformRustCommon> = BTreeMap::new();
-
-    // global_platform_rustc_flags is already in terms of PlatformName, do we can just add them in.
-    for (plat, flags) in global_platform_rustc_flags {
-        perplat.entry(plat).or_default().rustc_flags.extend(flags)
-    }
 
     unzip_platform(
         config,
@@ -659,7 +648,7 @@ fn generate_target_rules<'scope>(
                 edition,
                 base: PlatformRustCommon {
                     // don't use fixed ones because it will be a cyclic dependency
-                    rustc_flags: global_rustc_flags,
+                    rustc_flags: Vec::new(),
                     link_style: bin_base.link_style.clone(),
                     ..base
                 },

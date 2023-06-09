@@ -7,7 +7,6 @@
 
 //! Global third-party config
 
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -40,14 +39,6 @@ pub struct Config {
     /// Path the config was read from
     #[serde(skip)]
     pub config_path: PathBuf,
-
-    /// Default flags applied to all rules
-    #[serde(default)]
-    pub rustc_flags: Vec<String>,
-
-    /// Platform-specific rustc flags
-    #[serde(default)]
-    pub platform_rustc_flags: BTreeMap<PlatformName, Vec<String>>,
 
     /// Try to compute a precise list of sources rather than using globbing
     #[serde(default)]
