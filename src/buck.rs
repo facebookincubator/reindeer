@@ -360,7 +360,7 @@ impl Serialize for PlatformRustCommon {
 pub struct RustCommon {
     pub common: Common,
     pub krate: String,
-    pub rootmod: BuckPath,
+    pub crate_root: BuckPath,
     pub edition: crate::cargo::Edition,
     // Platform-dependent
     pub base: PlatformRustCommon,
@@ -442,7 +442,7 @@ impl Serialize for RustLibrary {
                             compatible_with,
                         },
                     krate,
-                    rootmod,
+                    crate_root,
                     edition,
                     base:
                         PlatformRustCommon {
@@ -472,7 +472,7 @@ impl Serialize for RustLibrary {
             map.serialize_entry("compatible_with", compatible_with)?;
         }
         map.serialize_entry("crate", krate)?;
-        map.serialize_entry("crate_root", rootmod)?;
+        map.serialize_entry("crate_root", crate_root)?;
         if *dlopen_enable {
             map.serialize_entry("dlopen_enable", &true)?;
         }
@@ -539,7 +539,7 @@ impl Serialize for RustBinary {
                             compatible_with,
                         },
                     krate,
-                    rootmod,
+                    crate_root,
                     edition,
                     base:
                         PlatformRustCommon {
@@ -565,7 +565,7 @@ impl Serialize for RustBinary {
             map.serialize_entry("compatible_with", compatible_with)?;
         }
         map.serialize_entry("crate", krate)?;
-        map.serialize_entry("crate_root", rootmod)?;
+        map.serialize_entry("crate_root", crate_root)?;
         map.serialize_entry("edition", edition)?;
         if !env.is_empty() {
             map.serialize_entry("env", env)?;

@@ -352,7 +352,7 @@ fn generate_target_rules<'scope>(
     log::debug!("pkg {} target {} fixups {:#?}", pkg, tgt.name, fixups);
 
     let manifest_dir = pkg.manifest_dir();
-    let rootmod = if context.config.vendor.is_some() || matches!(pkg.source, Source::Local) {
+    let crate_root = if context.config.vendor.is_some() || matches!(pkg.source, Source::Local) {
         relative_path(&paths.third_party_dir, &tgt.src_path)
     } else if let Source::Git { repo, .. } = &pkg.source {
         let git_fetch = short_name_for_git_repo(repo)?;
@@ -688,7 +688,7 @@ fn generate_target_rules<'scope>(
                     compatible_with: vec![],
                 },
                 krate: tgt.name.replace('-', "_"),
-                rootmod: BuckPath(rootmod),
+                crate_root: BuckPath(crate_root),
                 edition,
                 base: lib_base,
                 platform: lib_perplat,
@@ -720,7 +720,7 @@ fn generate_target_rules<'scope>(
                     compatible_with: vec![],
                 },
                 krate: tgt.name.replace('-', "_"),
-                rootmod: BuckPath(rootmod),
+                crate_root: BuckPath(crate_root),
                 edition,
                 base: PlatformRustCommon {
                     // don't use fixed ones because it will be a cyclic dependency
@@ -753,7 +753,7 @@ fn generate_target_rules<'scope>(
                     compatible_with: vec![],
                 },
                 krate: tgt.name.replace('-', "_"),
-                rootmod: BuckPath(rootmod),
+                crate_root: BuckPath(crate_root),
                 edition,
                 base: bin_base,
                 platform: bin_perplat,
