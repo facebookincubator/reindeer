@@ -352,18 +352,18 @@ fn generate_target_rules<'scope>(
     log::debug!("pkg {} target {} fixups {:#?}", pkg, tgt.name, fixups);
 
     let manifest_dir = pkg.manifest_dir();
-    let crate_root = if context.config.vendor.is_some() || matches!(pkg.source, Source::Local) {
-        relative_path(&paths.third_party_dir, &tgt.src_path)
-    } else if let Source::Git { repo, .. } = &pkg.source {
-        let git_fetch = short_name_for_git_repo(repo)?;
-        let repository_root = find_repository_root(manifest_dir)?;
-        let path_within_repo = relative_path(repository_root, &tgt.src_path);
-        PathBuf::from(git_fetch).join(path_within_repo)
-    } else {
-        let http_archive = format!("{}-{}.crate", pkg.name, pkg.version);
-        let path_within_crate = relative_path(manifest_dir, &tgt.src_path);
-        PathBuf::from(http_archive).join(path_within_crate)
-    };
+    let mapped_manifest_dir =
+        if context.config.vendor.is_some() || matches!(pkg.source, Source::Local) {
+            relative_path(&paths.third_party_dir, manifest_dir)
+        } else if let Source::Git { repo, .. } = &pkg.source {
+            let git_fetch = short_name_for_git_repo(repo)?;
+            let repository_root = find_repository_root(manifest_dir)?;
+            let path_within_repo = relative_path(repository_root, manifest_dir);
+            PathBuf::from(git_fetch).join(path_within_repo)
+        } else {
+            PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
+        };
+    let crate_root = mapped_manifest_dir.join(relative_path(manifest_dir, &tgt.src_path));
     let edition = tgt.edition.unwrap_or(pkg.edition);
 
     let mut licenses = BTreeSet::new();
@@ -489,12 +489,9 @@ fn generate_target_rules<'scope>(
                 tgt.name,
                 map
             );
-            let paths = map
-                .into_iter()
-                .map(|(from, to)| (BuckPath(from), BuckPath(to)));
-            rule.mapped_srcs.extend(paths);
+            rule.mapped_srcs.extend(map);
         },
-        fixups.compute_mapped_srcs()?,
+        fixups.compute_mapped_srcs(&mapped_manifest_dir)?,
     )
     .context("mapped_srcs(paths)")?;
 
@@ -842,6 +839,18 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
 
         for rule in &rules {
             match rule {
+                Rule::Binary(rule) | Rule::BuildscriptBinary(rule) => {
+                    rule.common.base.mapped_srcs.keys().for_each(&mut insert);
+                    for plat in rule.common.platform.values() {
+                        plat.mapped_srcs.keys().for_each(&mut insert);
+                    }
+                }
+                Rule::Library(rule) => {
+                    rule.common.base.mapped_srcs.keys().for_each(&mut insert);
+                    for plat in rule.common.platform.values() {
+                        plat.mapped_srcs.keys().for_each(&mut insert);
+                    }
+                }
                 Rule::CxxLibrary(rule) => {
                     rule.srcs.iter().for_each(&mut insert);
                     rule.headers.iter().for_each(&mut insert);

@@ -1034,7 +1034,8 @@ impl<'meta> Fixups<'meta> {
 
     pub fn compute_mapped_srcs(
         &self,
-    ) -> Result<Vec<(Option<PlatformExpr>, BTreeMap<PathBuf, PathBuf>)>> {
+        mapped_manifest_dir: &Path,
+    ) -> Result<Vec<(Option<PlatformExpr>, BTreeMap<SubtargetOrPath, BuckPath>)>> {
         let mut ret = vec![];
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
@@ -1042,13 +1043,14 @@ impl<'meta> Fixups<'meta> {
 
             for (k, v) in &config.extra_mapped_srcs {
                 map.insert(
-                    relative_path(&self.third_party_dir, &self.manifest_dir.join(k)),
-                    relative_path(&self.third_party_dir, &self.manifest_dir.join(v)),
+                    self.subtarget_or_path(Path::new(k)),
+                    BuckPath(mapped_manifest_dir.join(v)),
                 );
             }
 
             if let Some(overlay) = &config.overlay {
                 let overlay_dir = self.fixup_dir.join(overlay);
+                let relative_overlay_dir = relative_path(&self.third_party_dir, &overlay_dir);
                 let overlay_files = config.overlay_files(&self.fixup_dir)?;
 
                 log::debug!(
@@ -1061,8 +1063,8 @@ impl<'meta> Fixups<'meta> {
 
                 for file in overlay_files {
                     map.insert(
-                        relative_path(&self.third_party_dir, &overlay_dir.join(&file)),
-                        relative_path(&self.third_party_dir, &self.manifest_dir.join(&file)),
+                        SubtargetOrPath::Path(BuckPath(relative_overlay_dir.join(&file))),
+                        BuckPath(mapped_manifest_dir.join(&file)),
                     );
                 }
             }
