@@ -46,7 +46,7 @@ pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) 
     let db = if no_fetch {
         Database::open(&Repository::default_path()).context("opening repository")?
     } else {
-        Database::fetch().context("fetching database")?
+        Database::fetch().context("fetching database; if this fails, try deleting ~/.cargo/advisory-db and running reindeer again")?
     };
 
     let settings = Settings {
