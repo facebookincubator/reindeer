@@ -695,7 +695,7 @@ impl<'meta> Fixups<'meta> {
 
             if omits
                 .get(&None)
-                .map_or(false, |omits| omits.contains(original_rename))
+                .is_some_and(|omits| omits.contains(original_rename))
             {
                 // Dependency is unconditionally omitted on all platforms.
                 continue;

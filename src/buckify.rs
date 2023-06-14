@@ -894,7 +894,7 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
 
         let mut out = Vec::new();
         buck::write_buckfile(&config.buck, rules.iter(), &mut out).context("writing buck file")?;
-        if !matches!(fs::read(&buckpath), Ok(x) if x == out) {
+        if !fs::read(&buckpath).is_ok_and(|x| x == out) {
             fs::write(&buckpath, out)
                 .with_context(|| format!("write {} file", buckpath.display()))?;
         }
@@ -917,7 +917,7 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
                 // Avoid watcher churn since more often than not, nothing has
                 // changed in existing files.
                 let metadata_path = pkg.manifest_dir().join("METADATA.bzl");
-                if !matches!(fs::read(&metadata_path), Ok(x) if x == out) {
+                if !fs::read(&metadata_path).is_ok_and(|x| x == out) {
                     fs::write(&metadata_path, out)
                         .with_context(|| format!("write {} file", metadata_path.display()))?;
                 }
