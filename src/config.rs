@@ -308,7 +308,12 @@ pub fn read_config(dir: &Path) -> Result<Config> {
 fn try_read_config(path: &Path) -> Result<Config> {
     let file = match fs::read_to_string(path) {
         Ok(file) => file,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Config::default()),
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            return Ok(Config {
+                platform: default_platforms(),
+                ..Config::default()
+            });
+        }
         Err(err) => return Err(err).context(format!("Failed to read config {}", path.display())),
     };
 
