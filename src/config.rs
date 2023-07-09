@@ -33,7 +33,7 @@ use serde::Serialize;
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Path the config was read from
@@ -312,10 +312,8 @@ fn try_read_config(path: &Path) -> Result<Config> {
     let file = match fs::read_to_string(path) {
         Ok(file) => file,
         Err(err) if err.kind() == ErrorKind::NotFound => {
-            return Ok(Config {
-                platform: default_platforms(),
-                ..Config::default()
-            });
+            let empty_config = toml::Table::new();
+            return Ok(Config::deserialize(empty_config).unwrap());
         }
         Err(err) => return Err(err).context(format!("Failed to read config {}", path.display())),
     };
