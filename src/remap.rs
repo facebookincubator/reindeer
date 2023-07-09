@@ -12,27 +12,28 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use anyhow::Result;
+use serde::Deserialize;
 use serde::Serialize;
 
 use crate::cargo::GitRef;
 use crate::cargo::Source;
 use crate::lockfile::Lockfile;
 
-#[derive(Serialize)]
-struct RemapConfig {
-    #[serde(rename = "source")]
-    sources: Map<String, RemapSource>,
+#[derive(Serialize, Deserialize)]
+pub struct RemapConfig {
+    #[serde(rename = "source", default)]
+    pub sources: Map<String, RemapSource>,
 }
 
-#[derive(Serialize, Default)]
-struct RemapSource {
-    directory: Option<PathBuf>,
-    git: Option<String>,
-    rev: Option<String>,
-    branch: Option<String>,
-    tag: Option<String>,
+#[derive(Serialize, Deserialize, Default)]
+pub struct RemapSource {
+    pub directory: Option<PathBuf>,
+    pub git: Option<String>,
+    pub rev: Option<String>,
+    pub branch: Option<String>,
+    pub tag: Option<String>,
     #[serde(rename = "replace-with")]
-    replace_with: Option<&'static str>,
+    pub replace_with: Option<String>,
 }
 
 /// Reads Cargo.lock and writes a .cargo/config remapping every source in the
@@ -58,7 +59,7 @@ pub fn write_remap_all_sources(
     let mut sources = Map::new();
     for pkg in &lockfile.packages {
         let mut remap_source = RemapSource {
-            replace_with: Some("vendored-sources"),
+            replace_with: Some("vendored-sources".to_owned()),
             ..RemapSource::default()
         };
         let key = match &pkg.source {

@@ -6,6 +6,7 @@
  */
 
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::Context;
@@ -21,6 +22,7 @@ use crate::buckify::relative_path;
 use crate::cargo;
 use crate::config::Config;
 use crate::config::VendorConfig;
+use crate::remap::RemapConfig;
 use crate::Args;
 use crate::Paths;
 
@@ -51,8 +53,7 @@ pub(crate) fn cargo_vendor(
         cmdline.push("--no-delete");
     }
 
-    let configdir = paths.third_party_dir.join(".cargo");
-    fs::create_dir_all(&configdir)?;
+    fs::create_dir_all(&paths.cargo_home)?;
 
     log::info!("Running cargo {:?}", cmdline);
     let cargoconfig = cargo::run_cargo(
@@ -63,7 +64,10 @@ pub(crate) fn cargo_vendor(
         &cmdline,
     )?;
 
-    fs::write(configdir.join("config"), cargoconfig)?;
+    fs::write(paths.cargo_home.join("config"), &cargoconfig)?;
+    if !cargoconfig.is_empty() {
+        assert!(is_vendored(paths)?);
+    }
 
     if let Some(vendor_config) = &config.vendor {
         filter_checksum_files(&paths.third_party_dir, vendordir, vendor_config)?;
@@ -74,6 +78,28 @@ pub(crate) fn cargo_vendor(
     }
 
     Ok(())
+}
+
+pub(crate) fn is_vendored(paths: &Paths) -> Result<bool> {
+    let cargo_config_path = paths.cargo_home.join("config");
+    let content = match fs::read_to_string(&cargo_config_path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(err) => {
+            return Err(err).context(format!(
+                "Failed to read cargo config {}",
+                cargo_config_path.display()
+            ));
+        }
+    };
+
+    let remap_config: RemapConfig = toml::from_str(&content)
+        .context(format!("Failed to parse {}", cargo_config_path.display()))?;
+
+    match remap_config.sources.get("vendored-sources") {
+        Some(vendored_sources) => Ok(vendored_sources.directory.is_some()),
+        None => Ok(false),
+    }
 }
 
 fn filter_checksum_files(

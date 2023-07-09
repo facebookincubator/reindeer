@@ -109,15 +109,13 @@ fn try_main() -> Result<()> {
     let args = Args::from_args();
 
     let third_party_dir = dunce::canonicalize(&args.third_party_dir)?;
-    let config = config::read_config(&third_party_dir)?;
+    let mut config = config::read_config(&third_party_dir)?;
 
-    let paths = {
-        Paths {
-            manifest_path: third_party_dir.join("Cargo.toml"),
-            lockfile_path: third_party_dir.join("Cargo.lock"),
-            cargo_home: third_party_dir.join(".cargo"),
-            third_party_dir,
-        }
+    let paths = Paths {
+        manifest_path: third_party_dir.join("Cargo.toml"),
+        lockfile_path: third_party_dir.join("Cargo.lock"),
+        cargo_home: third_party_dir.join(".cargo"),
+        third_party_dir,
     };
 
     log::debug!("Args = {:#?}, paths {:#?}", args, paths);
@@ -149,7 +147,14 @@ fn try_main() -> Result<()> {
             )?;
         }
 
-        SubCommand::Buckify { stdout } => buckify::buckify(&config, &args, &paths, *stdout)?,
+        SubCommand::Buckify { stdout } => {
+            if config.vendor.is_some() && !vendor::is_vendored(&paths)? {
+                // If you ran `reindeer buckify` without `reindeer vendor`, then
+                // default to generating non-vendored targets.
+                config.vendor = None;
+            }
+            buckify::buckify(&config, &args, &paths, *stdout)?;
+        }
     }
 
     Ok(())
