@@ -20,7 +20,6 @@ use serde::Deserialize;
 use crate::buck::Name;
 use crate::cargo::DepKind;
 use crate::cargo::Manifest;
-use crate::cargo::ManifestDep;
 use crate::cargo::ManifestTarget;
 use crate::cargo::Metadata;
 use crate::cargo::Node;
@@ -29,7 +28,6 @@ use crate::cargo::NodeDepKind;
 use crate::cargo::PkgId;
 use crate::cargo::TargetReq;
 use crate::platform::PlatformExpr;
-use crate::platform::PlatformPredicate;
 
 /// Index for interesting things in Cargo metadata
 pub struct Index<'meta> {
@@ -270,78 +268,75 @@ impl<'meta> Index<'meta> {
             )
     }
 
-    /// Return the set of (unresolved) dependencies for a particular target.
-    /// (Target must be the target for the given package.)
-    fn deps_for_target(
-        &self,
-        pkg: &'meta Manifest,
-        tgt: &'meta ManifestTarget,
-    ) -> impl Iterator<Item = &'meta ManifestDep> {
-        assert!(pkg.targets.contains(tgt));
-
-        pkg.dependencies.iter().filter(move |dep| match dep.kind {
-            DepKind::Normal => {
-                tgt.kind_lib() || tgt.kind_proc_macro() || tgt.kind_bin() || tgt.kind_cdylib()
-            }
-            DepKind::Dev => tgt.kind_bench() || tgt.kind_test() || tgt.kind_example(),
-            DepKind::Build => tgt.kind_custom_build(),
-        })
-    }
-
-    /// Return resolved dependencies for a target
+    /// Return resolved dependencies for a target.
     pub fn resolved_deps_for_target(
         &self,
         pkg: &'meta Manifest,
         tgt: &'meta ManifestTarget,
     ) -> impl Iterator<Item = ResolvedDep<'meta>> + '_ {
-        // Unresolved dependency names
-        let mut deps = HashMap::new();
+        // Target must be the target for the given package.
+        assert!(pkg.targets.contains(tgt));
 
-        // Dependencies can be repeated with different target predicates;
-        // retain them all.
-        for dep in self.deps_for_target(pkg, tgt) {
-            deps.entry(dep.name.as_str())
-                .or_insert_with(HashSet::new)
-                .insert(dep);
+        let mut resolved_deps = HashMap::new();
+
+        for (rename, dep_kind, dep) in self.resolved_deps(pkg) {
+            if match dep_kind.kind {
+                DepKind::Normal => {
+                    tgt.kind_lib() || tgt.kind_proc_macro() || tgt.kind_bin() || tgt.kind_cdylib()
+                }
+                DepKind::Dev => tgt.kind_bench() || tgt.kind_test() || tgt.kind_example(),
+                DepKind::Build => tgt.kind_custom_build(),
+            } {
+                // Key by everything except `target`.
+                let NodeDepKind {
+                    kind,
+                    target: _,
+                    artifact,
+                    extern_name,
+                    compile_target,
+                    bin_name,
+                } = dep_kind;
+                let (ref mut unconditional_deps, ref mut conditional_deps) = resolved_deps
+                    .entry((
+                        &dep.id,
+                        kind,
+                        artifact,
+                        extern_name,
+                        compile_target,
+                        bin_name,
+                    ))
+                    .or_insert_with(|| (vec![], vec![]));
+                let v = (rename, dep_kind, dep);
+                if dep_kind.target.is_none() {
+                    unconditional_deps.push(v);
+                } else {
+                    conditional_deps.push(v);
+                };
+            }
         }
 
-        // Resolved dependencies filtered by deps for target
-        self.resolved_deps(pkg)
-            .filter_map(move |(rename, dep_kind, dep)| {
-                let mdeps = deps.get(dep.name.as_str())?;
-
-                let mut platforms = vec![]; // empty = unconditional
-
-                // If there are multiple manifestdeps then union all the
-                // target predicates, where "unconditional" beats all.
-                // (This is probably very over-engineered because all the times
-                // this happens seem to be unconditional OR condition).
-                for mdep in mdeps {
-                    if let Some(plat) = &mdep.target {
-                        match PlatformPredicate::parse(plat) {
-                            Ok(pred) => platforms.push(pred),
-                            Err(err) => {
-                                log::error!("Failed to parse predicate for {}: {}", dep, err);
-                                continue;
-                            }
-                        }
-                    } else {
-                        // No platform condition = unconditional
-                        platforms = vec![];
-                        break;
-                    }
+        resolved_deps
+            .into_iter()
+            .flat_map(|((pkgid, ..), (unconditional_deps, conditional_deps))| {
+                // When there are "unconditional" deps (i.e. `target` is None),
+                // all "conditional" deps are ignored. AFAIK, it's not possible
+                // to have more than one "unconditional" dep. Make sure that
+                // assumption holds up because otherwise it means somewhere
+                // in `resolved_deps` we did something wrong.
+                match unconditional_deps.len() {
+                    0 => conditional_deps,
+                    1 => unconditional_deps,
+                    _ => panic!(
+                        "`{}` had more than one unconditional dep for `{}` {:?}",
+                        pkg.name, pkgid, unconditional_deps,
+                    ),
                 }
-
-                Some(ResolvedDep {
-                    package: dep,
-                    platform: match &*platforms {
-                        [] => None,
-                        [plat] => Some(format!("cfg({})", plat).into()),
-                        _ => Some(format!("cfg({})", PlatformPredicate::Any(platforms)).into()),
-                    },
-                    rename,
-                    dep_kind,
-                })
+            })
+            .map(|(rename, dep_kind, dep)| ResolvedDep {
+                package: dep,
+                platform: dep_kind.target.clone(),
+                rename,
+                dep_kind,
             })
     }
 }
