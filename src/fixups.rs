@@ -104,7 +104,7 @@ impl<'meta> Fixups<'meta> {
             toml::from_str(&file).context(format!("Failed to parse {}", fixup_path.display()))?
         } else {
             log::debug!("no fixups at {}", fixup_path.display());
-            let fixup = FixupConfigFile::template(&paths.third_party_dir, index, package, target);
+            let fixup = FixupConfigFile::template(&paths.third_party_dir, target);
             if config.fixup_templates && target.kind_custom_build() {
                 log::info!(
                     "Writing template for {} to {}",
@@ -524,7 +524,7 @@ impl<'meta> Fixups<'meta> {
                     if config.unresolved_fixup_error {
                         log::error!("{}", unresolved_package_msg);
                         return Err(anyhow!(
-                            "Unresolved fix up errors, please fix them and rerun buckify."
+                            "Unresolved fix up errors, fix them and rerun buckify."
                         ));
                     } else {
                         log::warn!("{}", unresolved_package_msg);

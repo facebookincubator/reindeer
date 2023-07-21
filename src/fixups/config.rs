@@ -8,7 +8,6 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
-use std::fmt::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -18,12 +17,9 @@ use serde::Serialize;
 use walkdir::WalkDir;
 
 use crate::buckify::relative_path;
-use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
 use crate::fixups::buildscript::BuildscriptFixup;
 use crate::fixups::buildscript::BuildscriptFixups;
-use crate::index::Index;
-use crate::index::ResolvedDep;
 use crate::platform::PlatformExpr;
 
 /// Top-level fixup config file (correspondins to a fixups.toml)
@@ -63,28 +59,17 @@ pub struct FixupConfigFile {
 }
 
 impl FixupConfigFile {
-    /// Generate a template for a fixup.toml as a starting point. This includes the list of
-    /// buildscript dependencies, as a clue as to what the buildscript is trying to do.
-    pub fn template<'meta>(
-        third_party_path: &Path,
-        index: &'meta Index<'meta>,
-        package: &'meta Manifest,
-        target: &'meta ManifestTarget,
-    ) -> Self {
+    /// Generate a template for a fixup.toml as a starting point.
+    pub fn template(third_party_path: &Path, target: &ManifestTarget) -> Self {
         if !target.kind_custom_build() {
             return Default::default();
         }
 
         let relpath = relative_path(third_party_path, &target.src_path);
-        let mut msg = format!(
-            "Unresolved build script at {}. Dependencies:",
+        let buildscript = vec![BuildscriptFixup::Unresolved(format!(
+            "Unresolved build script at {}.",
             relpath.display()
-        );
-        for ResolvedDep { package, .. } in index.resolved_deps_for_target(package, target) {
-            let _ = write!(&mut msg, "\n    {}", package);
-        }
-
-        let buildscript = vec![BuildscriptFixup::Unresolved(msg)];
+        ))];
 
         FixupConfigFile {
             base: FixupConfig {
