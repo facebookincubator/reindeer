@@ -97,6 +97,8 @@ pub struct CargoConfig {
     /// Path to cargo executable. If set, then relative to this file
     #[serde(default)]
     pub cargo: Option<PathBuf>,
+    /// Path to rustc executable. If set, then relative to this file
+    pub rustc: Option<PathBuf>,
     /// Support Cargo's unstable "artifact dependencies" functionality, RFC 3028.
     #[serde(default)]
     pub bindeps: bool,

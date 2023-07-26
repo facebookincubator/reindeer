@@ -134,27 +134,37 @@ pub(crate) fn run_cargo(
         Command::new("cargo")
     };
 
+    // Priority:
+    // 1. `--rustc-path` arg.
+    // 2. `RUSTC` env.
+    // 3. `reindeer.toml` config value.
+    if let Some(rustc_path) = args.rustc_path.as_ref() {
+        cargo_command.env("RUSTC", rustc_path);
+    } else if let Some(rustc_path) = env::var_os("RUSTC") {
+        // Any relative RUSTC path in Reindeer's env is meant to be interpreted
+        // relative to the directory Reindeer is running in, which is different
+        // from the one we are about to invoke Cargo in. Patch up the RUSTC
+        // in the env.
+        if Path::new(&rustc_path).components().nth(1).is_some() {
+            if let Ok(current_dir) = env::current_dir() {
+                let rustc_path = current_dir.join(rustc_path);
+                cargo_command.env("RUSTC", rustc_path);
+            }
+        }
+    } else if let Some(bin) = config.cargo.rustc.as_ref() {
+        cargo_command.env("RUSTC", config.config_path.join(bin));
+    }
+
     if let Some(cargo_home) = cargo_home {
         cargo_command.env("CARGO_HOME", cargo_home);
     }
+
     cargo_command
         .current_dir(current_dir)
         .args(&cmdline)
         .envs(envs)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-
-    // Any relative RUSTC path in Reindeer's env is meant to be interpreted
-    // relative to the directory Reindeer is running in, which is different from
-    // the one we are about to invoke Cargo in. Patch up the RUSTC in the env.
-    if let Some(rustc_path) = env::var_os("RUSTC") {
-        if rustc_path.to_string_lossy().contains('/') {
-            if let Ok(current_dir) = env::current_dir() {
-                let rustc_path = current_dir.join(rustc_path);
-                cargo_command.env("RUSTC", rustc_path);
-            }
-        }
-    }
 
     let mut child = cargo_command
         .spawn()

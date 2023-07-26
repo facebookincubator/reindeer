@@ -120,6 +120,10 @@ target_arch = ["x86_64"]
 # command-line. Defaults to plain "cargo".
 # cargo = "path/to/cargo"
 
+# Path to rustc, relative to this file. Can also be specified on the
+# command-line. Used to set RUSTC env when invoking cargo.
+# rustc = "path/to/rustc"
+
 # Support Cargo's unstable "artifact dependencies" functionality, RFC 3028.
 # This requires a version of Cargo containing
 # https://github.com/rust-lang/cargo/pull/11550.

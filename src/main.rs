@@ -51,6 +51,9 @@ pub struct Args {
     /// Path to `cargo` command
     #[structopt(long)]
     cargo_path: Option<PathBuf>,
+    /// Path to `rustc` command
+    #[structopt(long)]
+    rustc_path: Option<PathBuf>,
     /// Extra cargo options
     #[structopt(long)]
     cargo_options: Vec<String>,
