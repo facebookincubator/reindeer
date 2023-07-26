@@ -126,19 +126,14 @@ pub(crate) fn run_cargo(
         current_dir.display()
     );
 
-    let cargo_path = args
-        .cargo_path
-        .clone()
-        .or_else(|| {
-            config
-                .cargo
-                .cargo
-                .as_ref()
-                .map(|bin| config.config_path.join(bin))
-        })
-        .unwrap_or_else(|| PathBuf::from("cargo"));
+    let mut cargo_command = if let Some(cargo_path) = args.cargo_path.as_ref() {
+        Command::new(cargo_path)
+    } else if let Some(bin) = config.cargo.cargo.as_ref() {
+        Command::new(config.config_path.join(bin))
+    } else {
+        Command::new("cargo")
+    };
 
-    let mut cargo_command = Command::new(&cargo_path);
     if let Some(cargo_home) = cargo_home {
         cargo_command.env("CARGO_HOME", cargo_home);
     }
@@ -163,7 +158,7 @@ pub(crate) fn run_cargo(
 
     let mut child = cargo_command
         .spawn()
-        .with_context(|| format!("Failed to execute {}", cargo_path.display()))?;
+        .with_context(|| format!("Failed to execute `{:?}`", cargo_command))?;
 
     let stdout_thr = thread::spawn({
         let stdout = BufReader::new(child.stdout.take().unwrap());
@@ -198,12 +193,7 @@ pub(crate) fn run_cargo(
     let stderr = stderr_thr.join().expect("stderr thread join failed");
 
     if !child.wait()?.success() {
-        anyhow::bail!(
-            "{} {} failed:\n{}",
-            cargo_path.display(),
-            cmdline.join(" "),
-            stderr
-        );
+        anyhow::bail!("`{:?}` failed:\n{}", cargo_command, stderr);
     }
 
     Ok(stdout.into_bytes())
