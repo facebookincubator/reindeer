@@ -60,6 +60,7 @@ use buildscript::CxxLibraryFixup;
 use buildscript::GenSrcs;
 use buildscript::PrebuiltCxxLibraryFixup;
 use buildscript::RustcFlags;
+use config::CargoEnv;
 use config::FixupConfigFile;
 
 /// Fixups for a specific package & target
@@ -822,10 +823,9 @@ impl<'meta> Fixups<'meta> {
                 .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone())))
                 .collect();
 
-            if config.cargo_env {
-                map.extend(vec![
-                    (
-                        "CARGO_MANIFEST_DIR".to_string(),
+            for cargo_env in config.cargo_env.iter() {
+                let v = match cargo_env {
+                    CargoEnv::CARGO_MANIFEST_DIR => {
                         if self.config.vendor.is_some()
                             || matches!(self.package.source, Source::Local)
                         {
@@ -841,33 +841,26 @@ impl<'meta> Fixups<'meta> {
                                 "{}-{}.crate",
                                 self.package.name, self.package.version,
                             ))
-                        },
-                    ),
-                    (
-                        "CARGO_PKG_DESCRIPTION".to_string(),
-                        StringOrPath::String(self.package.description.clone().unwrap_or_default()),
-                    ),
-                    (
-                        "CARGO_PKG_VERSION".to_string(),
-                        StringOrPath::String(self.package.version.to_string()),
-                    ),
-                    (
-                        "CARGO_PKG_VERSION_MAJOR".to_string(),
-                        StringOrPath::String(self.package.version.major.to_string()),
-                    ),
-                    (
-                        "CARGO_PKG_VERSION_MINOR".to_string(),
-                        StringOrPath::String(self.package.version.minor.to_string()),
-                    ),
-                    (
-                        "CARGO_PKG_VERSION_PATCH".to_string(),
-                        StringOrPath::String(self.package.version.patch.to_string()),
-                    ),
-                    (
-                        "CARGO_PKG_NAME".to_string(),
-                        StringOrPath::String(self.package.name.clone()),
-                    ),
-                ]);
+                        }
+                    }
+                    CargoEnv::CARGO_PKG_DESCRIPTION => {
+                        StringOrPath::String(self.package.description.clone().unwrap_or_default())
+                    }
+                    CargoEnv::CARGO_PKG_VERSION => {
+                        StringOrPath::String(self.package.version.to_string())
+                    }
+                    CargoEnv::CARGO_PKG_VERSION_MAJOR => {
+                        StringOrPath::String(self.package.version.major.to_string())
+                    }
+                    CargoEnv::CARGO_PKG_VERSION_MINOR => {
+                        StringOrPath::String(self.package.version.minor.to_string())
+                    }
+                    CargoEnv::CARGO_PKG_VERSION_PATCH => {
+                        StringOrPath::String(self.package.version.patch.to_string())
+                    }
+                    CargoEnv::CARGO_PKG_NAME => StringOrPath::String(self.package.name.clone()),
+                };
+                map.insert(cargo_env.to_string(), v);
             }
 
             if !map.is_empty() {

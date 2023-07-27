@@ -8,12 +8,19 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
+use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use serde::de::value::SeqAccessDeserializer;
+use serde::de::SeqAccess;
+use serde::de::Visitor;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
+use serde::Serializer;
+use strum::IntoEnumIterator as _;
 use walkdir::WalkDir;
 
 use crate::buckify::relative_path;
@@ -138,9 +145,12 @@ pub struct FixupConfig {
     /// Omit Cargo dependencies - just bare crate name
     #[serde(default)]
     pub omit_deps: BTreeSet<String>,
-    /// Add Cargo environment
+    /// Add Cargo environment.
+    /// `true` means add all Cargo environment variables.
+    /// `false` means add none.
+    /// A list of environment variables names adds only those.
     #[serde(default)]
-    pub cargo_env: bool,
+    pub cargo_env: CargoEnvs,
     /// Path relative to fixups_dir with overlay filesystem
     /// Files in overlay logically add to or replace files in
     /// manifest dir, and therefore have the same directory
@@ -194,5 +204,107 @@ impl FixupConfig {
     /// Return true if config applies to given version
     pub fn version_applies(&self, ver: &semver::Version) -> bool {
         self.version.as_ref().map_or(true, |req| req.matches(ver))
+    }
+}
+
+/// `cargo_env` selection.
+///
+/// Deserializes from `true`, `false` or `["CARGO_MANIFEST_DIR", ...]`.
+#[derive(Debug, Default)]
+pub enum CargoEnvs {
+    All,
+    #[default]
+    None,
+    Some(BTreeSet<CargoEnv>),
+}
+
+/// Supported Cargo environment variable names.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialOrd,
+    Ord,
+    PartialEq,
+    Eq,
+    Deserialize,
+    Serialize,
+    strum::Display,
+    strum::EnumIter
+)]
+#[allow(non_camel_case_types)]
+pub enum CargoEnv {
+    CARGO_MANIFEST_DIR,
+    CARGO_PKG_DESCRIPTION,
+    CARGO_PKG_VERSION,
+    CARGO_PKG_VERSION_MAJOR,
+    CARGO_PKG_VERSION_MINOR,
+    CARGO_PKG_VERSION_PATCH,
+    CARGO_PKG_NAME,
+}
+
+impl CargoEnvs {
+    pub fn iter(&self) -> Box<dyn Iterator<Item = CargoEnv> + '_> {
+        match self {
+            CargoEnvs::All => Box::new(CargoEnv::iter()),
+            CargoEnvs::None => Box::new(std::iter::empty()),
+            CargoEnvs::Some(envs) => Box::new(envs.iter().cloned()),
+        }
+    }
+}
+
+struct CargoEnvsVisitor;
+
+impl<'de> Visitor<'de> for CargoEnvsVisitor {
+    type Value = CargoEnvs;
+
+    fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.write_str("bool or list containing any of ")?;
+        let mut envs = CargoEnv::iter();
+        if let Some(first) = envs.next() {
+            write!(fmt, "`{}`", first)?;
+            for env in envs {
+                write!(fmt, ", `{}`", env)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        if value {
+            Ok(CargoEnvs::All)
+        } else {
+            Ok(CargoEnvs::None)
+        }
+    }
+
+    fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let de = SeqAccessDeserializer::new(seq);
+        Ok(CargoEnvs::Some(<_>::deserialize(de)?))
+    }
+}
+
+impl<'de> Deserialize<'de> for CargoEnvs {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(CargoEnvsVisitor)
+    }
+}
+
+impl Serialize for CargoEnvs {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        match self {
+            CargoEnvs::All => true.serialize(ser),
+            CargoEnvs::None => false.serialize(ser),
+            CargoEnvs::Some(envs) => envs.serialize(ser),
+        }
     }
 }
