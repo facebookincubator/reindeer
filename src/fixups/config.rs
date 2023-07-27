@@ -27,6 +27,7 @@ use crate::buckify::relative_path;
 use crate::cargo::ManifestTarget;
 use crate::fixups::buildscript::BuildscriptFixup;
 use crate::fixups::buildscript::BuildscriptFixups;
+use crate::glob::SerializableGlobSet as GlobSet;
 use crate::platform::PlatformExpr;
 
 /// Top-level fixup config file (correspondins to a fixups.toml)
@@ -126,6 +127,9 @@ pub struct FixupConfig {
     /// Extra src globs, rooted in manifest dir for package
     #[serde(default)]
     pub extra_srcs: Vec<String>,
+    /// Globs to exclude from srcs, rooted in manifest dir for package
+    #[serde(default)]
+    pub omit_srcs: GlobSet,
     /// Extra flags for rustc
     #[serde(default)]
     pub rustc_flags: Vec<String>,

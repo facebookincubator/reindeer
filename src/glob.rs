@@ -13,10 +13,57 @@ use std::path::PathBuf;
 
 use anyhow::bail;
 use anyhow::Result;
+use globset::Glob;
 use globset::GlobBuilder;
 use globset::GlobSet;
 use globset::GlobSetBuilder;
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
+use serde::Serializer;
 use walkdir::WalkDir;
+
+#[derive(Default, Debug)]
+pub struct SerializableGlobSet {
+    vec: Vec<Glob>,
+    globset: GlobSet,
+}
+
+impl SerializableGlobSet {
+    pub fn is_empty(&self) -> bool {
+        self.globset.is_empty()
+    }
+
+    pub fn is_match(&self, path: impl AsRef<Path>) -> bool {
+        self.globset.is_match(path)
+    }
+}
+
+impl<'de> Deserialize<'de> for SerializableGlobSet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let vec: Vec<Glob> = Deserialize::deserialize(deserializer)?;
+
+        let mut builder = GlobSetBuilder::new();
+        for glob in &vec {
+            builder.add(glob.clone());
+        }
+
+        let globset = builder.build().map_err(serde::de::Error::custom)?;
+        Ok(SerializableGlobSet { vec, globset })
+    }
+}
+
+impl Serialize for SerializableGlobSet {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.vec.serialize(serializer)
+    }
+}
 
 pub struct Globs {
     original_globs: Vec<String>,

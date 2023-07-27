@@ -44,6 +44,7 @@ use crate::cargo::Source;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::glob::Globs;
+use crate::glob::SerializableGlobSet as GlobSet;
 use crate::glob::NO_EXCLUDE;
 use crate::index::Index;
 use crate::index::ResolvedDep;
@@ -896,14 +897,16 @@ impl<'meta> Fixups<'meta> {
             manifest_rel.display()
         );
 
-        // Do any platforms have an overlay or platform-specific mapped srcs? If
-        // so, the srcs are per-platform.
-        let has_platform_overlay =
+        // Do any platforms have an overlay or platform-specific mapped srcs or
+        // omitted sources? If so, the srcs are per-platform.
+        let needs_per_platform_srcs =
             self.fixup_config
                 .configs(&self.package.version)
                 .any(|(platform, config)| {
                     platform.is_some()
-                        && (config.overlay.is_some() || !config.extra_mapped_srcs.is_empty())
+                        && (config.overlay.is_some()
+                            || !config.extra_mapped_srcs.is_empty()
+                            || !config.omit_srcs.is_empty())
                 });
 
         let mut common_files = HashSet::new();
@@ -920,15 +923,27 @@ impl<'meta> Fixups<'meta> {
             common_files.extend(self.compute_extra_srcs(&base.extra_srcs)?);
         }
 
-        let common_overlay_files = match self.fixup_config.base(&self.package.version) {
-            Some(base) => base.overlay_and_mapped_files(&self.fixup_dir)?,
-            None => HashSet::default(),
-        };
-        if !has_platform_overlay {
+        let no_omit_srcs;
+        let (common_overlay_files, common_omit_srcs) =
+            match self.fixup_config.base(&self.package.version) {
+                Some(base) => (
+                    base.overlay_and_mapped_files(&self.fixup_dir)?,
+                    &base.omit_srcs,
+                ),
+                None => {
+                    no_omit_srcs = GlobSet::default();
+                    (HashSet::default(), &no_omit_srcs)
+                }
+            };
+
+        if !needs_per_platform_srcs {
             let mut set = BTreeSet::new();
 
             for file in &common_files {
-                if !common_overlay_files.contains(&relative_path(&manifest_rel, file)) {
+                let path_in_crate = relative_path(&manifest_rel, file);
+                if !common_overlay_files.contains(&path_in_crate)
+                    && !common_omit_srcs.is_match(&path_in_crate)
+                {
                     set.insert(file.clone());
                 }
             }
@@ -946,13 +961,17 @@ impl<'meta> Fixups<'meta> {
 
             // If any platform has its own overlay, then we need to treat all sources
             // as platform-specific to handle any collisions.
-            if has_platform_overlay {
+            if needs_per_platform_srcs {
                 overlay_files.extend(common_overlay_files.clone());
                 files.extend(common_files.clone());
             }
 
             for file in files {
-                if !overlay_files.contains(&relative_path(&manifest_rel, &file)) {
+                let path_in_crate = relative_path(&manifest_rel, &file);
+                if !overlay_files.contains(&path_in_crate)
+                    && !common_omit_srcs.is_match(&path_in_crate)
+                    && !config.omit_srcs.is_match(&path_in_crate)
+                {
                     set.insert(file);
                 }
             }
