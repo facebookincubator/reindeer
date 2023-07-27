@@ -903,12 +903,15 @@ impl<'meta> Fixups<'meta> {
             manifest_rel.display()
         );
 
-        // Do any platforms have an overlay? If so, the srcs are per-platform
-        let has_platform_overlay = self
-            .fixup_config
-            .configs(&self.package.version)
-            .filter(|(platform, _)| platform.is_some())
-            .any(|(_, config)| config.overlay.is_some());
+        // Do any platforms have an overlay or platform-specific mapped srcs? If
+        // so, the srcs are per-platform.
+        let has_platform_overlay =
+            self.fixup_config
+                .configs(&self.package.version)
+                .any(|(platform, config)| {
+                    platform.is_some()
+                        && (config.overlay.is_some() || !config.extra_mapped_srcs.is_empty())
+                });
 
         let mut common_files = HashSet::new();
         let mut srcs_globs = Globs::new(srcs_globs, NO_EXCLUDE).context("Srcs")?;
@@ -925,7 +928,7 @@ impl<'meta> Fixups<'meta> {
         }
 
         let common_overlay_files = match self.fixup_config.base(&self.package.version) {
-            Some(base) => base.overlay_files(&self.fixup_dir)?,
+            Some(base) => base.overlay_and_mapped_files(&self.fixup_dir)?,
             None => HashSet::default(),
         };
         if !has_platform_overlay {
@@ -946,7 +949,7 @@ impl<'meta> Fixups<'meta> {
             let mut files = HashSet::new();
             files.extend(self.compute_extra_srcs(&config.extra_srcs)?);
 
-            let mut overlay_files = config.overlay_files(&self.fixup_dir)?;
+            let mut overlay_files = config.overlay_and_mapped_files(&self.fixup_dir)?;
 
             // If any platform has its own overlay, then we need to treat all sources
             // as platform-specific to handle any collisions.

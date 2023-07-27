@@ -183,6 +183,14 @@ impl FixupConfig {
         Ok(files)
     }
 
+    /// Returns set of files that are provided either by an overlay or by mapped
+    /// srcs.
+    pub fn overlay_and_mapped_files(&self, fixup_dir: &Path) -> Result<HashSet<PathBuf>> {
+        let mut files = self.overlay_files(fixup_dir)?;
+        files.extend(self.extra_mapped_srcs.values().map(PathBuf::clone));
+        Ok(files)
+    }
+
     /// Return true if config applies to given version
     pub fn version_applies(&self, ver: &semver::Version) -> bool {
         self.version.as_ref().map_or(true, |req| req.matches(ver))
