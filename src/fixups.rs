@@ -844,8 +844,14 @@ impl<'meta> Fixups<'meta> {
                             ))
                         }
                     }
+                    CargoEnv::CARGO_PKG_AUTHORS => {
+                        StringOrPath::String(self.package.authors.join(":"))
+                    }
                     CargoEnv::CARGO_PKG_DESCRIPTION => {
                         StringOrPath::String(self.package.description.clone().unwrap_or_default())
+                    }
+                    CargoEnv::CARGO_PKG_REPOSITORY => {
+                        StringOrPath::String(self.package.repository.clone().unwrap_or_default())
                     }
                     CargoEnv::CARGO_PKG_VERSION => {
                         StringOrPath::String(self.package.version.to_string())

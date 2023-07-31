@@ -223,6 +223,7 @@ pub enum CargoEnvs {
 }
 
 /// Supported Cargo environment variable names.
+// https://github.com/rust-lang/cargo/blob/0.72.1/src/cargo/core/compiler/compilation.rs#L315-L350
 #[derive(
     Debug,
     Clone,
@@ -239,12 +240,14 @@ pub enum CargoEnvs {
 #[allow(non_camel_case_types)]
 pub enum CargoEnv {
     CARGO_MANIFEST_DIR,
+    CARGO_PKG_AUTHORS,
     CARGO_PKG_DESCRIPTION,
+    CARGO_PKG_NAME,
+    CARGO_PKG_REPOSITORY,
     CARGO_PKG_VERSION,
     CARGO_PKG_VERSION_MAJOR,
     CARGO_PKG_VERSION_MINOR,
     CARGO_PKG_VERSION_PATCH,
-    CARGO_PKG_NAME,
 }
 
 impl CargoEnvs {

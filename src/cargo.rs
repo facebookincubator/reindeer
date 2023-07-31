@@ -266,6 +266,7 @@ pub enum VecStringOrBool {
 }
 
 /// Package manifest
+// https://doc.rust-lang.org/cargo/reference/manifest.html#the-package-section
 #[derive(Debug, Deserialize)]
 pub struct Manifest {
     /// Package name
