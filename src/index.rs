@@ -11,10 +11,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::error;
-use std::fmt;
 
-use anyhow::Result;
 use serde::Deserialize;
 
 use crate::buck::Name;
@@ -49,44 +46,6 @@ pub struct Index<'meta> {
 #[derive(Debug, Deserialize)]
 pub struct ExtraMetadata {
     pub oncall: String, // oncall shortname for use as maintainer
-}
-
-// Cumulative errors in package metadata
-#[derive(Debug, Clone)]
-struct PackageMetaError {
-    extra: BTreeSet<String>,
-}
-
-impl PackageMetaError {
-    fn new() -> Self {
-        PackageMetaError {
-            extra: BTreeSet::new(),
-        }
-    }
-
-    fn all_ok(&self) -> bool {
-        self.extra.is_empty()
-    }
-
-    fn add_extra(&mut self, s: impl ToString) {
-        self.extra.insert(s.to_string());
-    }
-}
-
-impl error::Error for PackageMetaError {}
-
-impl fmt::Display for PackageMetaError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        if self.extra.is_empty() {
-            write!(fmt, "Package Metadata: all OK")?;
-        } else {
-            write!(fmt, "Extra metadata for package(s):")?;
-            for p in &self.extra {
-                write!(fmt, " {}", p)?;
-            }
-        }
-        Ok(())
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -173,11 +132,6 @@ impl<'meta> Index<'meta> {
         self.public_targets.contains_key(&(&pkg.id, target_req))
     }
 
-    /// Returns the transitive closure of dependencies of public packages.
-    pub fn all_packages(&self) -> impl Iterator<Item = &'meta Manifest> + '_ {
-        self.pkgid_to_pkg.values().copied()
-    }
-
     /// Return the private package rule name.
     pub fn private_rule_name(&self, pkg: &Manifest) -> Name {
         Name(match self.public_targets.get(&(&pkg.id, TargetReq::Lib)) {
@@ -192,42 +146,6 @@ impl<'meta> Index<'meta> {
             Some(None) | None => pkg.name.to_owned(), // Package name
             Some(&Some(rename)) => rename.to_owned(), // Rename
         })
-    }
-
-    pub fn get_extra_meta(&self) -> Result<HashMap<&'meta str, ExtraMetadata>> {
-        // Package names borrowed from metadata
-        let pubpkgs: HashSet<&'meta str> = self
-            .root_pkg
-            .dependencies
-            .iter()
-            .map(|dep| dep.name.as_str())
-            .collect();
-        let mut pkgerrs = PackageMetaError::new();
-
-        let res = self.root_pkg.metadata.get("third-party").map_or_else(
-            || Ok(HashMap::new()),
-            |v| serde_json::from_value::<HashMap<String, ExtraMetadata>>(v.clone()),
-        )?;
-
-        let mut ret: HashMap<&'meta str, ExtraMetadata> = HashMap::new();
-        for (name, val) in res {
-            // remap names to borrowed from metadata, but also check to see if there's
-            // extra metadata (metadata which references a pkg which doesn't exist)
-            match pubpkgs.get(name.as_str()) {
-                None => {
-                    pkgerrs.add_extra(name);
-                }
-                Some(pkg) => {
-                    ret.insert(pkg, val);
-                }
-            }
-        }
-
-        if pkgerrs.all_ok() {
-            Ok(ret)
-        } else {
-            Err(From::from(pkgerrs))
-        }
     }
 
     /// Return the set of features resolved for a particular package

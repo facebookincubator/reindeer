@@ -64,10 +64,6 @@ pub struct Config {
     #[serde(default)]
     pub include_top_level: bool,
 
-    /// Emit metadata for each crate into Buck rules
-    #[serde(default)]
-    pub emit_metadata: bool,
-
     /// Use strict glob matching
     #[serde(default)]
     pub strict_globs: bool,

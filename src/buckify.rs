@@ -24,7 +24,6 @@ use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
 use once_cell::sync::OnceCell;
-use rayon::prelude::*;
 use regex::Regex;
 
 use crate::buck;
@@ -63,7 +62,6 @@ use crate::platform::platform_names_for_expr;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
 use crate::srcfiles::crate_srcfiles;
-use crate::tp_metadata;
 use crate::Args;
 use crate::Paths;
 
@@ -898,31 +896,6 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
             fs::write(&buckpath, out)
                 .with_context(|| format!("write {} file", buckpath.display()))?;
         }
-    }
-
-    // Emit METADATA.bzl for each vendored dependency.
-    if config.emit_metadata {
-        measure_time::trace_time!("Emit METADATA.bzl for each vendored dependency");
-
-        let extra_meta = context.index.get_extra_meta()?;
-        context
-            .index
-            .all_packages()
-            .par_bridge()
-            .try_for_each(|pkg| {
-                let mut out = Vec::new();
-                tp_metadata::write(&config.buck, pkg, &extra_meta, &mut out).with_context(
-                    || format!("writing METADATA.bzl file for {} {}", pkg.name, pkg.version),
-                )?;
-                // Avoid watcher churn since more often than not, nothing has
-                // changed in existing files.
-                let metadata_path = pkg.manifest_dir().join("METADATA.bzl");
-                if !fs::read(&metadata_path).is_ok_and(|x| x == out) {
-                    fs::write(&metadata_path, out)
-                        .with_context(|| format!("write {} file", metadata_path.display()))?;
-                }
-                anyhow::Ok(())
-            })?;
     }
 
     log::trace!(

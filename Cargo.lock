@@ -1114,7 +1114,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_starlark",
- "spdx",
  "structopt",
  "strum",
  "syn 2.0.27",
@@ -1332,12 +1331,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "smallvec"
-version = "1.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
-
-[[package]]
 name = "smartstring"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1359,17 +1352,6 @@ dependencies = [
  "libc",
  "winapi 0.2.8",
  "ws2_32-sys",
-]
-
-[[package]]
-name = "spdx"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e6b6cc773b635ad64a05f00367c6f66d06a8708f7360f67c41d446dacdd0a0f"
-dependencies = [
- "lazy_static",
- "regex",
- "smallvec",
 ]
 
 [[package]]

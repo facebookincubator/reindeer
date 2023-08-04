@@ -23,6 +23,3 @@ path = "/dev/null"
 # ../external_deps.py.
 [dependencies]
 with_buildscript = { path = "../common/with_buildscript/" }
-
-[package.metadata.third-party]
-with_buildscript = { oncall = "rust_foundation" }

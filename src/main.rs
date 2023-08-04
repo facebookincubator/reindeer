@@ -39,7 +39,6 @@ mod lockfile;
 mod platform;
 mod remap;
 mod srcfiles;
-mod tp_metadata;
 mod vendor;
 
 #[derive(Debug, StructOpt)]
