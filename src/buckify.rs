@@ -781,7 +781,7 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
         log::trace!("Metadata {:#?}", metadata);
     }
 
-    let index = index::Index::new(config.include_top_level, &metadata);
+    let index = index::Index::new(config.include_top_level, &metadata)?;
 
     let context = &RuleContext {
         config,
@@ -796,15 +796,17 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
     {
         measure_time::trace_time!("generate_dep_rules");
         rayon::scope(move |scope| {
-            generate_dep_rules(
-                context,
-                scope,
-                tx,
-                [
-                    (context.index.root_pkg, TargetReq::Lib),
-                    (context.index.root_pkg, TargetReq::EveryBin),
-                ],
-            );
+            for &workspace_member in &context.index.workspace_members {
+                generate_dep_rules(
+                    context,
+                    scope,
+                    tx.clone(),
+                    [
+                        (workspace_member, TargetReq::Lib),
+                        (workspace_member, TargetReq::EveryBin),
+                    ],
+                );
+            }
         });
     }
 

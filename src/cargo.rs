@@ -250,10 +250,8 @@ impl Display for PkgId {
 pub struct Metadata {
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub packages: BTreeSet<Manifest>,
-    pub target_directory: PathBuf,
     pub version: u32,
-    pub workspace_root: PathBuf,
-    pub workspace_members: Vec<PkgId>,
+    pub workspace_default_members: Vec<PkgId>,
     /// Resolved dependency graph
     pub resolve: Resolve,
 }
