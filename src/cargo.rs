@@ -71,7 +71,8 @@ pub fn cargo_get_lockfile_and_metadata(
         // directory.
         cargo_flags.extend(["--frozen", "--locked", "--offline"]);
 
-        if paths.cargo_home.join("config").exists() {
+        if paths.cargo_home.join("config.toml").exists() || paths.cargo_home.join("config").exists()
+        {
             cargo_home = Some(paths.cargo_home.as_path());
             current_dir = Cow::Borrowed(&paths.third_party_dir);
             lockfile = Some(Lockfile::load(paths)?);
@@ -79,7 +80,7 @@ pub fn cargo_get_lockfile_and_metadata(
             cargo_home = None;
             let temp_dir = env::temp_dir().join("reindeer");
             let dot_cargo_dir = temp_dir.join(".cargo");
-            let cargo_config = dot_cargo_dir.join("config");
+            let cargo_config = dot_cargo_dir.join("config.toml");
             let the_lockfile = Lockfile::load(paths)?;
             write_remap_all_sources(&cargo_config, &paths.third_party_dir, &the_lockfile)?;
             current_dir = Cow::Owned(temp_dir);

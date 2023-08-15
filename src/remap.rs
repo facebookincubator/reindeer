@@ -36,8 +36,8 @@ pub struct RemapSource {
     pub replace_with: Option<String>,
 }
 
-/// Reads Cargo.lock and writes a .cargo/config remapping every source in the
-/// lockfile to be provided by the vendored sources instead.
+/// Reads Cargo.lock and writes a .cargo/config.toml remapping every source in
+/// the lockfile to be provided by the vendored sources instead.
 ///
 /// ```toml
 /// [source.crates-io]

@@ -64,7 +64,7 @@ pub(crate) fn cargo_vendor(
         &cmdline,
     )?;
 
-    fs::write(paths.cargo_home.join("config"), &cargoconfig)?;
+    fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
     if !cargoconfig.is_empty() {
         assert!(is_vendored(paths)?);
     }
@@ -81,17 +81,28 @@ pub(crate) fn cargo_vendor(
 }
 
 pub(crate) fn is_vendored(paths: &Paths) -> Result<bool> {
-    let cargo_config_path = paths.cargo_home.join("config");
-    let content = match fs::read_to_string(&cargo_config_path) {
-        Ok(content) => content,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(false),
-        Err(err) => {
-            return Err(err).context(format!(
-                "Failed to read cargo config {}",
-                cargo_config_path.display()
-            ));
+    // .cargo/config.toml is Cargo's preferred name for the config, but .cargo/config
+    // is the older name so it takes priority if present.
+    let mut cargo_config_path = paths.cargo_home.join("config");
+    let result = match fs::read_to_string(&cargo_config_path) {
+        Ok(content) => Ok(content),
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            cargo_config_path = paths.cargo_home.join("config.toml");
+            match fs::read_to_string(&cargo_config_path) {
+                Ok(content) => Ok(content),
+                Err(err) if err.kind() == ErrorKind::NotFound => return Ok(false),
+                Err(err) => Err(err),
+            }
         }
+        Err(err) => Err(err),
     };
+
+    let content = result.with_context(|| {
+        format!(
+            "Failed to read cargo config {}",
+            cargo_config_path.display(),
+        )
+    })?;
 
     let remap_config: RemapConfig = toml::from_str(&content)
         .context(format!("Failed to parse {}", cargo_config_path.display()))?;
