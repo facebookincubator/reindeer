@@ -692,24 +692,8 @@ impl Display for Edition {
 pub enum Source {
     Local,
     CratesIo,
-    Git {
-        repo: String,
-        reference: GitRef,
-        commit_hash: String,
-    },
+    Git { repo: String, commit_hash: String },
     Unrecognized(String),
-}
-
-#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum GitRef {
-    /// ?rev=
-    Revision,
-    /// ?branch=
-    Branch(String),
-    /// ?tag=
-    Tag(String),
-    /// Not pinned to any of the above.
-    Head,
 }
 
 impl<'de> Deserialize<'de> for Source {
@@ -733,24 +717,14 @@ fn parse_source(source: &str) -> Option<Source> {
         //   git+https://github.com/owner/repo.git?branch=patchv1#9f8e7d6c5b4a3210
         // The #commithash is always present; the ?urlparam is optional.
         let (address, commit_hash) = rest.split_once('#')?;
-        if let Some((repo, reference)) = address.split_once('?') {
+        if let Some((repo, _reference)) = address.split_once('?') {
             Some(Source::Git {
                 repo: repo.to_owned(),
-                reference: if reference.starts_with("rev=") {
-                    GitRef::Revision
-                } else if let Some(branch) = reference.strip_prefix("branch=") {
-                    GitRef::Branch(branch.to_owned())
-                } else if let Some(tag) = reference.strip_prefix("tag=") {
-                    GitRef::Tag(tag.to_owned())
-                } else {
-                    return None;
-                },
                 commit_hash: commit_hash.to_owned(),
             })
         } else {
             Some(Source::Git {
                 repo: address.to_owned(),
-                reference: GitRef::Head,
                 commit_hash: commit_hash.to_owned(),
             })
         }
@@ -762,7 +736,6 @@ fn parse_source(source: &str) -> Option<Source> {
 #[cfg(test)]
 mod test {
     use super::parse_source;
-    use super::GitRef;
     use super::Source;
 
     #[test]
@@ -773,7 +746,6 @@ mod test {
             ),
             Some(Source::Git {
                 repo: "https://github.com/facebookincubator/reindeer".to_owned(),
-                reference: GitRef::Revision,
                 commit_hash: "abcdef1234567890abcdef1234567890abcdef00".to_owned(),
             }),
         );
