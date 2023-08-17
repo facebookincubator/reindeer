@@ -15,7 +15,7 @@ dependencies. Therefore, you can use Cargo to not only build Reindeer, but to
 install it as well.
 
 ```shell
-cargo install --locked --git https://github.com/facebookincubator/reindeer
+cargo install --locked --git https://github.com/facebookincubator/reindeer reindeer
 ```
 
 ### Nix
