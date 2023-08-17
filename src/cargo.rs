@@ -747,10 +747,7 @@ fn parse_source(source: &str) -> Option<Source> {
         if let Some((repo, reference)) = address.split_once('?') {
             Some(Source::Git {
                 repo: repo.to_owned(),
-                reference: if let Some(rev) = reference.strip_prefix("rev=") {
-                    if rev != commit_hash {
-                        return None;
-                    }
+                reference: if reference.starts_with("rev=") {
                     GitRef::Revision
                 } else if let Some(branch) = reference.strip_prefix("branch=") {
                     GitRef::Branch(branch.to_owned())
@@ -770,5 +767,26 @@ fn parse_source(source: &str) -> Option<Source> {
         }
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::parse_source;
+    use super::GitRef;
+    use super::Source;
+
+    #[test]
+    fn test_parses_source_git() {
+        assert_eq!(
+            parse_source(
+                "git+https://github.com/facebookincubator/reindeer?rev=abcdef123#abcdef1234567890abcdef1234567890abcdef00",
+            ),
+            Some(Source::Git {
+                repo: "https://github.com/facebookincubator/reindeer".to_owned(),
+                reference: GitRef::Revision,
+                commit_hash: "abcdef1234567890abcdef1234567890abcdef00".to_owned(),
+            }),
+        );
     }
 }
