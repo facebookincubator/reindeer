@@ -80,15 +80,16 @@ target_family = ["unix"]
 target_os = ["linux"]
 target_env = ["gnu"]
 target_arch = ["x86_64"]
+target_vendor = ["unknown"]
 
 # Fortanix SGX
 [platform.fortanix-sgx]
 x86_64-fortanix-unknown-sgx = []
 target_family = []
 target_os = ["unknown"]
-target_vendor = ["fortanix"]
 target_env = ["sgx"]
 target_arch = ["x86_64"]
+target_vendor = ["fortanix"]
 
 # macOS - x86_64-apple-darwin
 [platform.macos]
@@ -97,6 +98,7 @@ target_family = ["unix"]
 target_os = ["macos"]
 target_env = []
 target_arch = ["x86_64"]
+target_vendor = ["apple"]
 
 # Windows with MSVC toolchain - x86_64-pc-windows-msvc
 [platform.windows]
@@ -105,6 +107,7 @@ target_family = ["windows"]
 target_os = ["windows"]
 target_env = ["msvc"]
 target_arch = ["x86_64"]
+target_vendor = ["pc"]
 
 # Windows with GNU toolchain - x86_64-pc-windows-gnu
 [platform.windows-gnu]
@@ -113,6 +116,7 @@ target_family = ["windows"]
 target_os = ["windows"]
 target_env = ["gnu"]
 target_arch = ["x86_64"]
+target_vendor = ["pc"]
 
 # Configuration for cargo (used both for vendoring and resolving dependencies)
 [cargo]
