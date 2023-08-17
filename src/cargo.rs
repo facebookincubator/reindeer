@@ -747,10 +747,7 @@ fn parse_source(source: &str) -> Option<Source> {
         if let Some((repo, reference)) = address.split_once('?') {
             Some(Source::Git {
                 repo: repo.to_owned(),
-                reference: if let Some(rev) = reference.strip_prefix("rev=") {
-                    if rev != commit_hash {
-                        return None;
-                    }
+                reference: if reference.starts_with("rev=") {
                     GitRef::Revision
                 } else if let Some(branch) = reference.strip_prefix("branch=") {
                     GitRef::Branch(branch.to_owned())
@@ -770,5 +767,22 @@ fn parse_source(source: &str) -> Option<Source> {
         }
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{parse_source, Source};
+
+    #[test]
+    fn parses_sources() {
+        assert_eq!(
+            parse_source("git+https://github.com/EmbarkStudios/speedy?rev=1a2ec91#1a2ec91aa42fdfe1e2a239b93eafe367f5483b02").unwrap(),
+            Source::Git {
+                repo: "https://github.com/EmbarkStudios/speedy".into(),
+                reference: super::GitRef::Revision,
+                commit_hash: "1a2ec91aa42fdfe1e2a239b93eafe367f5483b02".into(),
+            }
+        );
     }
 }
