@@ -666,7 +666,7 @@ fn generate_target_rules<'scope>(
             }));
         }
 
-        rules.push(Rule::Library(RustLibrary {
+        let rust_library = RustLibrary {
             common: RustCommon {
                 common: Common {
                     name: if index.is_root_package(pkg) {
@@ -698,7 +698,13 @@ fn generate_target_rules<'scope>(
             } else {
                 None
             },
-        }));
+        };
+
+        rules.push(if index.is_root_package(pkg) {
+            Rule::RootPackage(rust_library)
+        } else {
+            Rule::Library(rust_library)
+        });
 
         // Library depends on the build script (if there is one).
         dep_pkgs.push((pkg, TargetReq::BuildScript));

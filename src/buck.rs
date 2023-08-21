@@ -845,6 +845,7 @@ pub enum Rule {
     BuildscriptGenrule(BuildscriptGenrule),
     CxxLibrary(CxxLibrary),
     PrebuiltCxxLibrary(PrebuiltCxxLibrary),
+    RootPackage(RustLibrary),
 }
 
 impl Eq for Rule {}
@@ -868,6 +869,9 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
         // repository can be used as the source of multiple crates.
         GitFetch(&'a Name),
         Other(&'a Name, usize),
+        // Root package goes last since it's an uninteresting list of
+        // deps that looks awkward anywhere else.
+        RootPackage,
     }
 
     match rule {
@@ -882,6 +886,7 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
         | Rule::BuildscriptGenrule(_)
         | Rule::CxxLibrary(_)
         | Rule::PrebuiltCxxLibrary(_) => RuleSortKey::Other(rule.get_name(), 2),
+        Rule::RootPackage(_) => RuleSortKey::RootPackage,
     }
 }
 
@@ -929,6 +934,14 @@ impl Rule {
             | Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
                 common: Common { name, .. },
                 ..
+            })
+            | Rule::RootPackage(RustLibrary {
+                common:
+                    RustCommon {
+                        common: Common { name, .. },
+                        ..
+                    },
+                ..
             }) => name,
         }
     }
@@ -944,7 +957,7 @@ impl Rule {
                 FunctionCall::new(&config.git_fetch, git_fetch).serialize(Serializer)
             }
             Rule::Binary(bin) => FunctionCall::new(&config.rust_binary, bin).serialize(Serializer),
-            Rule::Library(lib) => {
+            Rule::Library(lib) | Rule::RootPackage(lib) => {
                 FunctionCall::new(&config.rust_library, lib).serialize(Serializer)
             }
             Rule::BuildscriptBinary(bin) => {
