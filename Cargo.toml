@@ -25,7 +25,7 @@ rayon = "1.2"
 regex = "1.9.2"
 rustsec = { version = "0.26", features = ["fix"] }
 semver = { version = "1.0.17", features = ["serde"] }
-serde = { version = "1.0.176", features = ["derive", "rc"] }
+serde = { version = "1.0.185", features = ["derive", "rc"] }
 serde_json = { version = "1.0.100", features = ["float_roundtrip", "unbounded_depth"] }
 serde_starlark = "0.1.13"
 structopt = "0.3.23"
