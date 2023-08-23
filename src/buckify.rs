@@ -506,7 +506,7 @@ fn generate_target_rules<'scope>(
             );
             rule.features.extend(features);
         },
-        fixups.compute_features(),
+        fixups.compute_features()?,
     )
     .context("features")?;
 

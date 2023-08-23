@@ -544,49 +544,63 @@ impl<'meta> Fixups<'meta> {
 
     /// Return the set of features to enable, which is the union of the cargo-resolved ones
     /// and additional ones defined in the fixup.
-    pub fn compute_features(&self) -> Vec<(Option<PlatformExpr>, BTreeSet<String>)> {
-        let mut ret = vec![];
+    pub fn compute_features(&self) -> Result<HashMap<Option<PlatformExpr>, BTreeSet<String>>> {
+        let mut ret = HashMap::new();
 
-        let mut omits = HashMap::new();
-        let mut all_omits = HashSet::new();
-        // Pre-compute the list of all filtered features. If a platform filters a feature
-        // added by the base, we need to filter it from the base and add it to all other platforms.
+        let mut platform_omits = HashMap::new();
         for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-            let platform_omits = omits.entry(platform).or_insert_with(HashSet::new);
-            platform_omits.extend(fixup.omit_features.iter().map(String::as_str));
-            all_omits.extend(fixup.omit_features.iter().map(String::as_str));
+            // Group by feature which platforms omit it.
+            for feature in &fixup.omit_features {
+                platform_omits
+                    .entry(feature.as_str())
+                    .or_insert_with(HashSet::new)
+                    .insert(platform);
+            }
+
+            if !fixup.features.is_empty() {
+                ret.entry(platform.cloned())
+                    .or_insert_with(BTreeSet::new)
+                    .extend(fixup.features.clone());
+            }
         }
 
-        let resolved_features: Vec<_> = self.index.resolved_features(self.package).collect();
-        for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            let mut set = BTreeSet::new();
+        for feature in self.index.resolved_features(self.package) {
+            let Some(omitted_platforms) = platform_omits.get(feature) else {
+                // Feature is unconditionally included on all platforms.
+                ret.entry(None)
+                    .or_insert_with(BTreeSet::new)
+                    .insert(feature.to_owned());
+                continue;
+            };
 
-            for feature in resolved_features.iter() {
-                if platform.is_none() {
-                    if !all_omits.contains(feature) {
-                        set.insert(feature.to_string());
-                    }
-                } else {
-                    // If something omits this, check if this platform omits it.
-                    if all_omits.contains(feature) {
-                        if let Some(platform_omits) = omits.get(&platform) {
-                            if platform_omits.contains(feature) {
-                                continue;
-                            }
-                        }
-                        set.insert(feature.to_string());
-                    }
+            if omitted_platforms.contains(&None) {
+                // Feature is unconditionally omitted on all platforms.
+                continue;
+            }
+
+            let mut excludes = vec![];
+            for platform in omitted_platforms {
+                if let Some(platform_expr) = platform {
+                    // If a platform filters a feature added by the base,
+                    // we need to filter it from the base and add it to all
+                    // other platforms. Create a predicate that excludes all
+                    // filtered platforms. This will be the "all other
+                    // platforms".
+                    let platform_pred = PlatformPredicate::parse(platform_expr)?;
+                    excludes.push(PlatformPredicate::Not(Box::new(platform_pred)));
                 }
             }
 
-            set.extend(config.features.clone());
+            assert!(!excludes.is_empty());
 
-            if !set.is_empty() {
-                ret.push((platform.cloned(), set));
-            }
+            let platform_pred = PlatformPredicate::All(excludes);
+            let platform_expr: PlatformExpr = format!("cfg({})", platform_pred).into();
+            ret.entry(Some(platform_expr))
+                .or_insert_with(BTreeSet::new)
+                .insert(feature.to_owned());
         }
 
-        ret
+        Ok(ret)
     }
 
     fn buildscript_rustc_flags(&self) -> Vec<(Option<PlatformExpr>, Vec<String>)> {
