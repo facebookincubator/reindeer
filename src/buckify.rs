@@ -289,6 +289,11 @@ fn generate_git_fetch(repo: &str, commit_hash: &str) -> Result<Rule> {
 
 /// Create a uniquely hashed directory name for the arbitrary source url
 pub fn short_name_for_git_repo(repo: &str) -> Result<String> {
+    anyhow::ensure!(
+        repo.starts_with("https://"),
+        "only https git urls are supported"
+    );
+
     // The strategy here is similar to what cargo does to generate a unique directory name
     // for git sources
     let mut sanitized = repo.to_lowercase();
