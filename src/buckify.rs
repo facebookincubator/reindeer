@@ -23,8 +23,6 @@ use std::sync::Mutex;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
-use once_cell::sync::OnceCell;
-use regex::Regex;
 
 use crate::buck;
 use crate::buck::Alias;
@@ -237,7 +235,7 @@ fn generate_nonvendored_sources_archive<'scope>(
         } => generate_git_fetch(repo, commit_hash).map(Some),
         Source::Unrecognized(_) => {
             bail!(
-                "`vendor = false` mode is supported only with exclusively crates.io and GitHub dependencies. \"{}\" {} is coming from some source other than crates.io or GitHub",
+                "`vendor = false` mode is supported only with exclusively crates.io and https git dependencies. \"{}\" {} is coming from some other source",
                 pkg.name,
                 pkg.version,
             );
@@ -289,23 +287,46 @@ fn generate_git_fetch(repo: &str, commit_hash: &str) -> Result<Rule> {
     }))
 }
 
-/// Extract the "serde-rs/serde" part of "https://github.com/serde-rs/serde.git".
-pub fn short_name_for_git_repo(repo: &str) -> Result<&str> {
-    static GITHUB_URL_REGEX: OnceCell<Regex> = OnceCell::new();
-    let github_url_regex = GITHUB_URL_REGEX
-        .get_or_try_init(|| Regex::new(r"^https://github.com/([[:alnum:].-]+/[[:alnum:].-]+)$"))?;
+/// Create a uniquely hashed directory name for the arbitrary source url
+pub fn short_name_for_git_repo(repo: &str) -> Result<String> {
+    // The strategy here is similar to what cargo does to generate a unique directory name
+    // for git sources
+    let mut sanitized = repo.to_lowercase();
 
-    let repo_without_extension = repo.strip_suffix(".git").unwrap_or(repo);
-    if let Some(captures) = github_url_regex.captures(repo_without_extension) {
-        Ok(captures.get(1).unwrap().as_str())
-    } else {
-        // TODO: come up with some mangling scheme for arbitrary repo URLs. Buck
-        // does not permit ':' in target names.
-        bail!(
-            "unsupported git URL: {:?}, currently vendor=false mode only supports \"https://github.com/$OWNER/$REPO\" repositories",
-            repo,
-        );
+    if let Some(query) = sanitized.rfind('?') {
+        sanitized.truncate(query);
     }
+
+    if let Some(hash) = sanitized.rfind('#') {
+        sanitized.truncate(hash);
+    }
+
+    if sanitized.ends_with(".git") {
+        sanitized.truncate(sanitized.len() - 4);
+    }
+
+    let mut dir_name = sanitized
+        .split('/')
+        .next_back()
+        .unwrap_or("_empty")
+        .to_owned();
+
+    #[allow(deprecated)]
+    let hash = {
+        use std::hash::{Hash, Hasher, SipHasher};
+        let mut hasher = SipHasher::new_with_keys(0, 0);
+        sanitized.hash(&mut hasher);
+        hasher.finish()
+    };
+
+    dir_name.push('-');
+
+    for byte in hash.to_le_bytes() {
+        use std::fmt::Write;
+        write!(&mut dir_name, "{byte:0x}").unwrap();
+    }
+
+    Ok(dir_name)
 }
 
 /// Find the git repository containing the given manifest directory.
@@ -913,4 +934,30 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::short_name_for_git_repo;
+
+    #[test]
+    fn hashes_with_same_repo_variations() {
+        let same = [
+            short_name_for_git_repo("https://github.com/facebookincubator/reindeer.git").unwrap(),
+            short_name_for_git_repo("https://github.com/facebookincubator/reindeer").unwrap(),
+            short_name_for_git_repo("https://github.com/FacebookIncubator/reindeer.git").unwrap(),
+        ];
+
+        assert!(!same
+            .iter()
+            .any(|dir_name| dir_name != "reindeer-c03e7d4c9f50fdff"));
+    }
+
+    #[test]
+    fn hashes_non_github() {
+        assert_eq!(
+            short_name_for_git_repo("https://gitlab.com/gilrs-project/gilrs.git").unwrap(),
+            "gilrs-784d1d6a17891c9"
+        );
+    }
 }
