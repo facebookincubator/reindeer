@@ -11,6 +11,7 @@ license = "MIT"
 anyhow = "1.0.71"
 dunce = "1.0.2"
 env_logger = "0.10"
+fnv = "1.0"
 globset = { version = "0.4.13", features = ["serde1"] }
 ignore = "0.4"
 indexmap = { version = "1.9.2", features = ["arbitrary", "rayon", "serde-1"] }
@@ -42,6 +43,7 @@ syn = { version = "2.0.23", features = [
 termcolor = "1.0"
 toml = "0.7.3"
 unicode-ident = "1.0.10"
+url = "2.4"
 walkdir = "2.3"
 
 [dev-dependencies]

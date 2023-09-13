@@ -289,38 +289,40 @@ fn generate_git_fetch(repo: &str, commit_hash: &str) -> Result<Rule> {
 
 /// Create a uniquely hashed directory name for the arbitrary source url
 pub fn short_name_for_git_repo(repo: &str) -> Result<String> {
+    let mut canonical = url::Url::parse(&repo.to_lowercase()).context("invalid url")?;
+
     anyhow::ensure!(
-        repo.starts_with("https://"),
+        canonical.scheme() == "https",
         "only https git urls are supported"
     );
 
-    // The strategy here is similar to what cargo does to generate a unique directory name
-    // for git sources
-    let mut sanitized = repo.to_lowercase();
+    canonical.set_query(None);
+    canonical.set_fragment(None);
 
-    if let Some(query) = sanitized.rfind('?') {
-        sanitized.truncate(query);
+    // It would be nice to just say "you're using a .git extension, please remove it",
+    // but unfortunately some git providers (notably gitlab) require the .git extension
+    // in the url, but other providers, notably github, treat urls with or without
+    // the extension exactly the same. If we don't take the .git extension into
+    // account at all we could run into a situation where 2 or more crates are
+    // sourced from the same git repo but with and without the .git extension,
+    // causing them to be hashed and placed differently
+    if canonical.path().ends_with(".git") {
+        // This is less efficient but far simpler than using the really unfriendly
+        // path_segments_mut API
+        let stripped = canonical.path().trim_end_matches(".git").to_owned();
+        canonical.set_path(&stripped);
     }
 
-    if let Some(hash) = sanitized.rfind('#') {
-        sanitized.truncate(hash);
-    }
-
-    if sanitized.ends_with(".git") {
-        sanitized.truncate(sanitized.len() - 4);
-    }
-
-    let mut dir_name = sanitized
-        .split('/')
-        .next_back()
+    let mut dir_name = canonical
+        .path_segments()
+        .and_then(|mut it| it.next_back())
         .unwrap_or("_empty")
         .to_owned();
 
-    #[allow(deprecated)]
     let hash = {
-        use std::hash::{Hash, Hasher, SipHasher};
-        let mut hasher = SipHasher::new_with_keys(0, 0);
-        sanitized.hash(&mut hasher);
+        use std::hash::{Hash, Hasher};
+        let mut hasher = fnv::FnvHasher::default();
+        canonical.hash(&mut hasher);
         hasher.finish()
     };
 
@@ -955,14 +957,14 @@ mod test {
 
         assert!(!same
             .iter()
-            .any(|dir_name| dir_name != "reindeer-c03e7d4c9f50fdff"));
+            .any(|dir_name| dir_name != "reindeer-3e497668718a129"));
     }
 
     #[test]
     fn hashes_non_github() {
         assert_eq!(
             short_name_for_git_repo("https://gitlab.com/gilrs-project/gilrs.git").unwrap(),
-            "gilrs-784d1d6a17891c9"
+            "gilrs-1b413f0b5e8e0bb"
         );
     }
 }
