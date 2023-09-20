@@ -12,6 +12,8 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io;
 use std::io::Write;
 use std::path::Component;
@@ -23,8 +25,8 @@ use std::sync::Mutex;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
-use once_cell::sync::OnceCell;
-use regex::Regex;
+use fnv::FnvHasher;
+use url::Url;
 
 use crate::buck;
 use crate::buck::Alias;
@@ -237,7 +239,7 @@ fn generate_nonvendored_sources_archive<'scope>(
         } => generate_git_fetch(repo, commit_hash).map(Some),
         Source::Unrecognized(_) => {
             bail!(
-                "`vendor = false` mode is supported only with exclusively crates.io and GitHub dependencies. \"{}\" {} is coming from some source other than crates.io or GitHub",
+                "`vendor = false` mode is supported only with exclusively crates.io and https git dependencies. \"{}\" {} is coming from some other source",
                 pkg.name,
                 pkg.version,
             );
@@ -289,23 +291,42 @@ fn generate_git_fetch(repo: &str, commit_hash: &str) -> Result<Rule> {
     }))
 }
 
-/// Extract the "serde-rs/serde" part of "https://github.com/serde-rs/serde.git".
-pub fn short_name_for_git_repo(repo: &str) -> Result<&str> {
-    static GITHUB_URL_REGEX: OnceCell<Regex> = OnceCell::new();
-    let github_url_regex = GITHUB_URL_REGEX
-        .get_or_try_init(|| Regex::new(r"^https://github.com/([[:alnum:].-]+/[[:alnum:].-]+)$"))?;
+/// Create a uniquely hashed directory name for the arbitrary source url
+pub fn short_name_for_git_repo(repo: &str) -> Result<String> {
+    let mut canonical = Url::parse(&repo.to_lowercase()).context("invalid git url")?;
 
-    let repo_without_extension = repo.strip_suffix(".git").unwrap_or(repo);
-    if let Some(captures) = github_url_regex.captures(repo_without_extension) {
-        Ok(captures.get(1).unwrap().as_str())
-    } else {
-        // TODO: come up with some mangling scheme for arbitrary repo URLs. Buck
-        // does not permit ':' in target names.
-        bail!(
-            "unsupported git URL: {:?}, currently vendor=false mode only supports \"https://github.com/$OWNER/$REPO\" repositories",
-            repo,
-        );
+    anyhow::ensure!(
+        canonical.scheme() == "https",
+        "only https git urls are supported",
+    );
+
+    canonical.set_query(None);
+    canonical.set_fragment(None);
+
+    // It would be nice to just say "you're using a .git extension, please
+    // remove it", but some git providers (notably GitLab) require the .git
+    // extension in the URL, while other providers (notably GitHub) treat URLs
+    // with or without the extension exactly the same. If we don't take the .git
+    // extension into account at all we could run into a situation where 2
+    // or more crates are sourced from the same git repo but with and without
+    // the .git extension, causing them to be hashed and placed differently
+    if canonical.path().ends_with(".git") {
+        // This is less efficient but simpler than using the path_segments_mut
+        // API.
+        let stripped = canonical.path().trim_end_matches(".git").to_owned();
+        canonical.set_path(&stripped);
     }
+
+    let repo_name = canonical
+        .path_segments()
+        .and_then(|mut it| it.next_back())
+        .unwrap_or("_git");
+
+    let mut hasher = FnvHasher::default();
+    canonical.hash(&mut hasher);
+    let url_hash = hasher.finish();
+
+    Ok(format!("{repo_name}-{url_hash:016x}"))
 }
 
 /// Find the git repository containing the given manifest directory.
@@ -913,4 +934,32 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::short_name_for_git_repo;
+
+    #[test]
+    fn hashes_with_same_repo_variations() {
+        for url in [
+            "https://github.com/facebookincubator/reindeer.git",
+            "https://github.com/facebookincubator/reindeer",
+            "https://github.com/FacebookIncubator/reindeer.git",
+        ] {
+            assert_eq!(
+                short_name_for_git_repo(url).unwrap(),
+                "reindeer-09128a716876493e",
+                "{url}",
+            );
+        }
+    }
+
+    #[test]
+    fn hashes_non_github() {
+        assert_eq!(
+            short_name_for_git_repo("https://gitlab.com/gilrs-project/gilrs.git").unwrap(),
+            "gilrs-bbe0e8b5f013041b",
+        );
+    }
 }

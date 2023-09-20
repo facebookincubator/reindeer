@@ -1091,6 +1091,7 @@ dependencies = [
  "anyhow",
  "dunce",
  "env_logger",
+ "fnv",
  "globset",
  "ignore",
  "indexmap",
@@ -1099,10 +1100,8 @@ dependencies = [
  "measure_time",
  "monostate",
  "nom",
- "once_cell",
  "proc-macro2",
  "rayon",
- "regex",
  "rustsec",
  "semver",
  "serde",
@@ -1115,6 +1114,7 @@ dependencies = [
  "termcolor",
  "toml 0.7.3",
  "unicode-ident",
+ "url",
  "walkdir",
 ]
 
