@@ -696,7 +696,7 @@ fn generate_target_rules<'scope>(
                         index.private_rule_name(pkg)
                     },
                     visibility: if index.is_root_package(pkg) {
-                        Visibility::Public
+                        fixups.public_visibility()
                     } else {
                         Visibility::Private
                     },
