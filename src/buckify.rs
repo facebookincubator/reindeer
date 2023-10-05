@@ -26,6 +26,7 @@ use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
 use fnv::FnvHasher;
+use itertools::Itertools;
 use url::Url;
 
 use crate::buck;
@@ -400,7 +401,12 @@ fn generate_target_rules<'scope>(
             licenses.insert(BuckPath(rel_manifest.join(path)));
         }
         if let Some(license_file) = &pkg.license_file {
-            licenses.insert(BuckPath(rel_manifest.join(license_file)));
+            // Buck rejects `..` in a source path: "Error when treated as a
+            // path: expected a normalized path but got an un-normalized path
+            // instead: `vendor/libcst_derive-0.1.0/../../LICENSE`"
+            if !license_file.components().contains(&Component::ParentDir) {
+                licenses.insert(BuckPath(rel_manifest.join(license_file)));
+            }
         }
     };
 
