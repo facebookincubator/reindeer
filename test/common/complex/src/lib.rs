@@ -5,14 +5,9 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use lazy_static::lazy_static;
-
-lazy_static! {
-    pub static ref HELLO: String = "Hello, world".into();
-}
-
 pub fn complex() {
-    println!("I'm complex because I have a dependency: {}", *HELLO);
+    println!("I'm complex because I have a dependency.");
+    println!("Hello {}!", whoami::realname());
 
     simple::simple();
 }

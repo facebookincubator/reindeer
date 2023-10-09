@@ -6,7 +6,7 @@
 # Extra deps to be added to the dependency list. These are always absolute
 # buck rules.
 
-extra_deps = ["fbsource//third-party/rust:lazy_static"]
+extra_deps = ["fbsource//third-party/rust:whoami"]
 
 # Rust dependencies to be omitted. They are the local name (the new name for
 # renamed dependencies) being used for the dependency, without any versioning
