@@ -23,7 +23,8 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use structopt::StructOpt;
+use clap::Parser;
+use clap::Subcommand;
 
 mod audit_sec;
 mod buck;
@@ -41,42 +42,42 @@ mod remap;
 mod srcfiles;
 mod vendor;
 
-#[derive(Debug, StructOpt)]
-#[structopt(bin_name = "reindeer")]
+#[derive(Debug, Parser)]
+#[command(bin_name = "reindeer")]
 pub struct Args {
     /// Enable debug output
-    #[structopt(long, short = "D")]
+    #[arg(long, short = 'D')]
     debug: bool,
     /// Path to `cargo` command
-    #[structopt(long)]
+    #[arg(long, value_name = "PATH")]
     cargo_path: Option<PathBuf>,
     /// Path to `rustc` command
-    #[structopt(long)]
+    #[arg(long, value_name = "PATH")]
     rustc_path: Option<PathBuf>,
     /// Extra cargo options
-    #[structopt(long)]
+    #[arg(long, value_name = "ARGUMENT")]
     cargo_options: Vec<String>,
     /// Path to third-party dir
-    #[structopt(long, default_value = ".")]
+    #[arg(long, default_value = ".", value_name = "PATH")]
     third_party_dir: PathBuf,
-    #[structopt(subcommand)]
+    #[command(subcommand)]
     subcommand: SubCommand,
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 enum SubCommand {
     /// Update Cargo.lock with new dependencies
     Update {},
     /// Vendor crate needed for build
     Vendor {
         /// Don't delete older crates in the vendor directory
-        #[structopt(long)]
+        #[arg(long)]
         no_delete: bool,
         /// Show reported security problems for crates as they're being vendored
-        #[structopt(long)]
+        #[arg(long)]
         audit_sec: bool,
         /// Use cached version of the advisory repo
-        #[structopt(long)]
+        #[arg(long)]
         no_fetch: bool,
     },
     /// Generate Buck build rules for Cargo packages
@@ -84,16 +85,16 @@ enum SubCommand {
         /// Emit generated build rules to stdout, not overwriting existing file.
         ///
         /// Suppresses generation of other output files.
-        #[structopt(long)]
+        #[arg(long)]
         stdout: bool,
     },
     /// Show security report for vendored crates
     Auditsec {
         /// Use cached version of the advisory repo
-        #[structopt(long, short = "n")]
+        #[arg(long, short = 'n')]
         no_fetch: bool,
         /// Attempt to fix problems by updating crates (often not very well)
-        #[structopt(long)]
+        #[arg(long)]
         autofix: bool,
     },
 }
@@ -108,7 +109,7 @@ pub struct Paths {
 }
 
 fn try_main() -> Result<()> {
-    let args = Args::from_args();
+    let args = Args::parse();
 
     let third_party_dir = dunce::canonicalize(&args.third_party_dir)?;
     let mut config = config::read_config(&third_party_dir)?;

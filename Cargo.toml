@@ -9,6 +9,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "=1.0.72"
+clap = { version = "4.3.5", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 dunce = "1.0.2"
 env_logger = "0.10"
 fnv = "1.0"
@@ -27,7 +28,6 @@ semver = { version = "1.0.17", features = ["serde"] }
 serde = { version = "1.0.185", features = ["derive", "rc"] }
 serde_json = { version = "1.0.100", features = ["float_roundtrip", "unbounded_depth"] }
 serde_starlark = "0.1.13"
-structopt = "0.3.23"
 strum = { version = "0.24", features = ["derive"] }
 syn = { version = "2.0.23", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 termcolor = "1.0"
