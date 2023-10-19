@@ -162,21 +162,27 @@ impl<'meta> Fixups<'meta> {
         }
     }
 
-    fn subtarget_or_path(&self, relative_to_manifest_dir: &Path) -> SubtargetOrPath {
-        if self.config.vendor.is_some() {
+    fn subtarget_or_path(&self, relative_to_manifest_dir: &Path) -> Result<SubtargetOrPath> {
+        if self.config.vendor.is_some() || matches!(self.package.source, Source::Local) {
             // Path to vendored file looks like "vendor/foo-1.0.0/src/lib.rs"
             let manifest_dir = relative_path(&self.third_party_dir, self.manifest_dir);
             let path = manifest_dir.join(relative_to_manifest_dir);
-            SubtargetOrPath::Path(BuckPath(path))
+            Ok(SubtargetOrPath::Path(BuckPath(path)))
+        } else if let Source::Git { .. } = &self.package.source {
+            // This is unsupported because git_fetch doesn't support subtargets.
+            Err(anyhow!(
+                "git dependencies in non-vendor mode cannot have subtargets"
+            ))
+            .with_context(|| format!("package {} is a git depedency", self.package))
         } else {
             // Subtarget inside an http_archive: ":foo-1.0.0.crate[src/lib.rs]"
-            SubtargetOrPath::Subtarget(Subtarget {
+            Ok(SubtargetOrPath::Subtarget(Subtarget {
                 target: Name(format!(
                     "{}-{}.crate",
                     self.package.name, self.package.version
                 )),
                 relative: BuckPath(relative_to_manifest_dir.to_owned()),
-            })
+            }))
         }
     }
 
@@ -397,7 +403,7 @@ impl<'meta> Fixups<'meta> {
                             let srcs = globs
                                 .walk(self.manifest_dir)
                                 .map(|path| self.subtarget_or_path(&path))
-                                .collect();
+                                .collect::<Result<_>>()?;
                             if self.config.strict_globs {
                                 globs.check_all_globs_used()?;
                             }
@@ -409,7 +415,7 @@ impl<'meta> Fixups<'meta> {
                             let mut globs = Globs::new(headers, exclude)?;
                             let mut headers = BTreeSet::new();
                             for path in globs.walk(self.manifest_dir) {
-                                headers.insert(self.subtarget_or_path(&path));
+                                headers.insert(self.subtarget_or_path(&path)?);
                             }
 
                             let mut globs = Globs::new(["**/*.asm", "**/*.h"], NO_EXCLUDE)?;
@@ -431,7 +437,7 @@ impl<'meta> Fixups<'meta> {
                                 let exported_headers = exported_header_globs
                                     .walk(self.manifest_dir)
                                     .map(|path| self.subtarget_or_path(&path))
-                                    .collect();
+                                    .collect::<Result<_>>()?;
                                 if self.config.strict_globs {
                                     exported_header_globs.check_all_globs_used()?;
                                 }
@@ -441,20 +447,20 @@ impl<'meta> Fixups<'meta> {
                                 exported_headers
                                     .iter()
                                     .map(|(name, path)| {
-                                        (name.clone(), self.subtarget_or_path(Path::new(path)))
+                                        Ok((name.clone(), self.subtarget_or_path(Path::new(path))?))
                                     })
-                                    .collect(),
+                                    .collect::<Result<_>>()?,
                             ),
                         },
                         include_directories: fixup_include_paths
                             .iter()
-                            .map(|path| SubtargetOrPath::Path(BuckPath(rel_fixup.join(path))))
+                            .map(|path| Ok(SubtargetOrPath::Path(BuckPath(rel_fixup.join(path)))))
                             .chain(
                                 include_paths
                                     .iter()
                                     .map(|path| self.subtarget_or_path(path)),
                             )
-                            .collect(),
+                            .collect::<Result<_>>()?,
                         compiler_flags: compiler_flags.clone(),
                         preprocessor_flags: preprocessor_flags.clone(),
                         header_namespace: header_namespace.clone(),
@@ -508,7 +514,7 @@ impl<'meta> Fixups<'meta> {
                                     .map(RuleRef::new)
                                     .collect(),
                             },
-                            static_lib: self.subtarget_or_path(&static_lib),
+                            static_lib: self.subtarget_or_path(&static_lib)?,
                         };
                         res.push(Rule::PrebuiltCxxLibrary(rule));
                     }
@@ -1083,7 +1089,7 @@ impl<'meta> Fixups<'meta> {
                     if k.starts_with(':') || k.contains("//") {
                         SubtargetOrPath::Path(BuckPath(PathBuf::from(k)))
                     } else {
-                        self.subtarget_or_path(Path::new(k))
+                        self.subtarget_or_path(Path::new(k))?
                     },
                     BuckPath(mapped_manifest_dir.join(v)),
                 );
