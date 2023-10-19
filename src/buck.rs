@@ -226,6 +226,32 @@ impl Serialize for NameAsLabel<'_> {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Filegroup {
+    pub name: Name,
+    pub srcs: BTreeMap<BuckPath, SubtargetOrPath>,
+    pub visibility: Visibility,
+}
+
+impl Serialize for Filegroup {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            name,
+            srcs,
+            visibility,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("name", name)?;
+        // Pretty useless to have a filegroup without srcs,
+        // but that's legit in both buck1 and buck2.
+        if !srcs.is_empty() {
+            map.serialize_entry("srcs", srcs)?;
+        }
+        map.serialize_entry("visibility", visibility)?;
+        map.end()
+    }
+}
+
 #[derive(Debug)]
 pub struct HttpArchive {
     pub name: Name,
@@ -837,6 +863,7 @@ impl Serialize for PrebuiltCxxLibrary {
 #[derive(Debug)]
 pub enum Rule {
     Alias(Alias),
+    Filegroup(Filegroup),
     HttpArchive(HttpArchive),
     GitFetch(GitFetch),
     Binary(RustBinary),
@@ -880,7 +907,8 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
         Rule::Alias(Alias { actual, .. }) => RuleSortKey::Other(actual, 0),
         Rule::HttpArchive(HttpArchive { sort_key, .. }) => RuleSortKey::Other(sort_key, 1),
         Rule::GitFetch(GitFetch { name, .. }) => RuleSortKey::GitFetch(name),
-        Rule::Binary(_)
+        Rule::Filegroup(_)
+        | Rule::Binary(_)
         | Rule::Library(_)
         | Rule::BuildscriptBinary(_)
         | Rule::BuildscriptGenrule(_)
@@ -900,6 +928,7 @@ impl Rule {
     pub fn get_name(&self) -> &Name {
         match self {
             Rule::Alias(Alias { name, .. })
+            | Rule::Filegroup(Filegroup { name, .. })
             | Rule::HttpArchive(HttpArchive { name, .. })
             | Rule::GitFetch(GitFetch { name, .. })
             | Rule::Binary(RustBinary {
@@ -950,6 +979,9 @@ impl Rule {
         use serde_starlark::Serializer;
         let serialized = match self {
             Rule::Alias(alias) => FunctionCall::new(&config.alias, alias).serialize(Serializer),
+            Rule::Filegroup(filegroup) => {
+                FunctionCall::new(&config.filegroup, filegroup).serialize(Serializer)
+            }
             Rule::HttpArchive(http_archive) => {
                 FunctionCall::new(&config.http_archive, http_archive).serialize(Serializer)
             }

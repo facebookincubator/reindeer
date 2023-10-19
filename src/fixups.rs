@@ -62,6 +62,7 @@ use buildscript::GenSrcs;
 use buildscript::PrebuiltCxxLibraryFixup;
 use buildscript::RustcFlags;
 use config::CargoEnv;
+pub use config::ExportSources;
 use config::FixupConfigFile;
 
 /// Fixups for a specific package & target
@@ -199,6 +200,10 @@ impl<'meta> Fixups<'meta> {
 
     pub fn omit_target(&self) -> bool {
         self.fixup_config.omit_targets.contains(&self.target.name)
+    }
+
+    pub fn export_sources(&self) -> Option<&ExportSources> {
+        self.fixup_config.export_sources.as_ref()
     }
 
     pub fn precise_srcs(&self) -> bool {

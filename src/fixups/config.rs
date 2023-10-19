@@ -57,6 +57,10 @@ pub struct FixupConfigFile {
     /// rule so it can be mapped to the right underlying rule.
     pub python_ext: Option<String>,
 
+    /// Make the crate sources available through a `filegroup`.
+    /// This is useful for manually handling build scripts.
+    pub export_sources: Option<ExportSources>,
+
     /// Common config
     #[serde(flatten)]
     base: FixupConfig,
@@ -117,6 +121,20 @@ impl FixupConfigFile {
                     .map(|(plat, cfg)| (Some(plat), cfg)),
             )
     }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportSources {
+    /// Suffix for the rule name
+    pub name: String,
+    /// Src globs rooted in manifest dir for package
+    pub srcs: Vec<String>,
+    /// Globs to exclude from srcs, rooted in manifest dir for package
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    /// Visibility for the rule
+    pub visibility: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default, Serialize)]

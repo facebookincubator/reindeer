@@ -33,6 +33,7 @@ use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::Common;
+use crate::buck::Filegroup;
 use crate::buck::GitFetch;
 use crate::buck::HttpArchive;
 use crate::buck::Name;
@@ -55,6 +56,7 @@ use crate::cargo::Source;
 use crate::cargo::TargetReq;
 use crate::collection::SetOrMap;
 use crate::config::Config;
+use crate::fixups::ExportSources;
 use crate::fixups::Fixups;
 use crate::glob::Globs;
 use crate::glob::NO_EXCLUDE;
@@ -676,7 +678,7 @@ fn generate_target_rules<'scope>(
     }
 
     // Generate rules appropriate to each kind of crate we want to support
-    let rules: Vec<Rule> = if (tgt.kind_lib() && tgt.crate_lib())
+    let mut rules: Vec<Rule> = if (tgt.kind_lib() && tgt.crate_lib())
         || (tgt.kind_proc_macro() && tgt.crate_proc_macro())
         || (tgt.kind_cdylib() && tgt.crate_cdylib())
     {
@@ -800,6 +802,56 @@ fn generate_target_rules<'scope>(
 
         vec![]
     };
+
+    if let Some(ExportSources {
+        name,
+        srcs,
+        exclude,
+        visibility,
+    }) = fixups.export_sources()
+    {
+        // For non-disk sources (i.e. non-vendor mode git_fetch and
+        // http_archive), `srcs` and `exclude` are ignored because
+        // we can't look at the files to match globs.
+        let srcs = if config.vendor.is_some() || matches!(pkg.source, Source::Local) {
+            // e.g. {"src/lib.rs": "vendor/foo-1.0.0/src/lib.rs"}
+            let mut globs = Globs::new(srcs, exclude).context("export sources")?;
+            let srcs = globs
+                .walk(manifest_dir)
+                .map(|path| {
+                    let source = mapped_manifest_dir.join(&path);
+                    (BuckPath(path), SubtargetOrPath::Path(BuckPath(source)))
+                })
+                .collect();
+            if config.strict_globs {
+                globs.check_all_globs_used()?;
+            }
+            srcs
+        } else if let Source::Git { repo, .. } = &pkg.source {
+            // e.g. {":foo-123.git": "foo-123"}
+            let short_name = short_name_for_git_repo(repo)?;
+            let git_fetch_target = format!(":{}.git", short_name);
+            [(
+                BuckPath(mapped_manifest_dir.clone()),
+                SubtargetOrPath::Path(BuckPath(PathBuf::from(git_fetch_target))),
+            )]
+            .into()
+        } else {
+            // e.g. {":foo-1.0.0.git": "foo-1.0.0"}
+            let http_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
+            [(
+                BuckPath(mapped_manifest_dir.clone()),
+                SubtargetOrPath::Path(BuckPath(PathBuf::from(http_archive_target))),
+            )]
+            .into()
+        };
+        let rule = Filegroup {
+            name: Name(format!("{}-{}", index.private_rule_name(pkg), name)),
+            srcs,
+            visibility: Visibility::Custom(visibility.to_vec()),
+        };
+        rules.push(Rule::Filegroup(rule));
+    }
 
     Ok((rules, dep_pkgs))
 }

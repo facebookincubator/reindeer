@@ -119,6 +119,9 @@ pub struct BuckConfig {
     /// Rule name for alias
     #[serde(default)]
     pub alias: StringWithDefault<MustBe!("alias")>,
+    /// Rule name for filegroup
+    #[serde(default)]
+    pub filegroup: StringWithDefault<MustBe!("filegroup")>,
     /// Rule name for http_archive
     #[serde(default)]
     pub http_archive: StringWithDefault<MustBe!("http_archive")>,
