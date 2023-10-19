@@ -1078,7 +1078,13 @@ impl<'meta> Fixups<'meta> {
 
             for (k, v) in &config.extra_mapped_srcs {
                 map.insert(
-                    self.subtarget_or_path(Path::new(k)),
+                    // If the mapped source is target-like, take it as-is since
+                    // we have nothing to resolve or find.
+                    if k.starts_with(':') || k.contains("//") {
+                        SubtargetOrPath::Path(BuckPath(PathBuf::from(k)))
+                    } else {
+                        self.subtarget_or_path(Path::new(k))
+                    },
                     BuckPath(mapped_manifest_dir.join(v)),
                 );
             }
