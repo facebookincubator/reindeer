@@ -37,7 +37,7 @@ url = "2.2.2"
 walkdir = "2.3"
 
 [dev-dependencies]
-tempfile = "3.5"
+tempfile = "3.8"
 
 [features]
 vendored-libgit2 = ["rustsec/vendored-libgit2"]
