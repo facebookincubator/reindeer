@@ -31,7 +31,7 @@ serde_starlark = "0.1.13"
 strum = { version = "0.24", features = ["derive"] }
 syn = { version = "2.0.23", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 termcolor = "1.0"
-toml = "0.8.4"
+toml = "0.7.3"
 unicode-ident = "1.0.10"
 url = "2.2.2"
 walkdir = "2.3"
