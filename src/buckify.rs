@@ -70,17 +70,32 @@ use crate::srcfiles::crate_srcfiles;
 use crate::Args;
 use crate::Paths;
 
-// normalize a/b/../c => a/c
-pub fn normalize_dotdot(path: &Path) -> PathBuf {
-    let mut ret = PathBuf::new();
+// normalize a/b/../c => a/c and a/./b => a/b
+pub fn normalize_path(path: &Path) -> PathBuf {
+    #![allow(clippy::enum_glob_use)]
+    use std::path::Component::*;
 
-    for component in path.components() {
-        match component {
-            Component::ParentDir if ret.parent().is_some() => {
-                ret.pop();
-            }
-            c => ret.push(c),
-        }
+    let max_len = path.as_os_str().len();
+    let mut ret = PathBuf::with_capacity(max_len);
+
+    for c in path.components() {
+        match c {
+            Normal(_) | RootDir | Prefix(_) => ret.push(c),
+            ParentDir => match ret.components().next_back() {
+                Some(Normal(_)) => {
+                    ret.pop();
+                }
+                Some(RootDir | Prefix(_)) | None => {}
+                Some(ParentDir | CurDir) => {
+                    unreachable!();
+                }
+            },
+            CurDir => {}
+        };
+    }
+
+    if ret.as_os_str().is_empty() {
+        ret.push(CurDir.as_os_str());
     }
 
     ret
@@ -407,7 +422,10 @@ fn generate_target_rules<'scope>(
             // path: expected a normalized path but got an un-normalized path
             // instead: `vendor/libcst_derive-0.1.0/../../LICENSE`"
             if !license_file.components().contains(&Component::ParentDir) {
-                licenses.insert(BuckPath(rel_manifest.join(license_file)));
+                // But still normalize to get rid of `.`
+                // (e.g. `vendor/polars-arrow-0.34.2/./LICENSE`).
+                let license_path = normalize_path(&rel_manifest.join(license_file));
+                licenses.insert(BuckPath(license_path));
             }
         }
     };
@@ -426,7 +444,7 @@ fn generate_target_rules<'scope>(
             let srcs = sources
                 .files
                 .into_iter()
-                .map(|src| normalize_dotdot(&relative_path(manifest_dir, &src)))
+                .map(|src| normalize_path(&relative_path(manifest_dir, &src)))
                 .collect::<Vec<_>>();
             log::debug!("crate_srcfiles returned {:#?}", srcs);
             srcs

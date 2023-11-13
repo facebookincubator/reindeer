@@ -34,7 +34,7 @@ use crate::buck::StringOrPath;
 use crate::buck::Subtarget;
 use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
-use crate::buckify::normalize_dotdot;
+use crate::buckify::normalize_path;
 use crate::buckify::relative_path;
 use crate::buckify::short_name_for_git_repo;
 use crate::cargo::Manifest;
@@ -1049,7 +1049,7 @@ impl<'meta> Fixups<'meta> {
             let len_before = extra_srcs.len();
             let mut insert = |absolute_path: &Path| {
                 let tp_rel_path = relative_path(&self.third_party_dir, absolute_path);
-                extra_srcs.insert(normalize_dotdot(&tp_rel_path));
+                extra_srcs.insert(normalize_path(&tp_rel_path));
             };
 
             let rest_of_glob = rest_of_glob.as_path();
