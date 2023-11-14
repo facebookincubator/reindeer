@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Write as _;
 use std::fs;
@@ -167,7 +168,7 @@ pub struct AuditConfig {
     pub never_autofix: HashSet<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StringWithDefault<T> {
     pub value: String,
     pub is_default: bool,
@@ -209,6 +210,16 @@ impl<T> AsRef<Path> for StringWithDefault<T> {
 impl<T> Display for StringWithDefault<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         Display::fmt(&self.value, formatter)
+    }
+}
+
+impl<T> Debug for StringWithDefault<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_default {
+            formatter.pad(&format!("Default ({:?})", &self.value))
+        } else {
+            Debug::fmt(&self.value, formatter)
+        }
     }
 }
 
