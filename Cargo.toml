@@ -21,7 +21,7 @@ log = { version = "0.4.17", features = ["kv_unstable", "kv_unstable_std"] }
 measure_time = "0.8.2"
 monostate = "0.1.8"
 nom = "7.1"
-proc-macro2 = { version = "1.0.64", features = ["span-locations"] }
+proc-macro2 = { version = "1.0.70", features = ["span-locations"] }
 rayon = "1.2"
 rustsec = { version = "0.26", features = ["fix"] }
 semver = { version = "1.0.17", features = ["serde"] }
