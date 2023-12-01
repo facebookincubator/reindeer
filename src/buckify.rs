@@ -880,9 +880,7 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
         cargo_get_lockfile_and_metadata(config, args, paths)?
     };
 
-    if args.debug {
-        log::trace!("Metadata {:#?}", metadata);
-    }
+    log::trace!("Metadata {:#?}", metadata);
 
     let index = index::Index::new(config.include_top_level, &metadata)?;
 

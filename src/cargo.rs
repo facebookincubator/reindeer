@@ -108,8 +108,6 @@ pub(crate) fn run_cargo(
         envs.push(("RUSTC_BOOTSTRAP", "1"));
     }
 
-    let debug = args.debug;
-
     log::debug!(
         "Running Cargo command {:?} in {}",
         cmdline,
@@ -166,9 +164,7 @@ pub(crate) fn run_cargo(
             let mut buf = String::new();
             for line in stdout.lines() {
                 let line = line.expect("malformed stdout from cargo");
-                if debug {
-                    log::trace!("STDOUT: {}", line);
-                }
+                log::trace!("STDOUT: {}", line);
                 buf += &line;
                 buf += "\n";
             }
@@ -208,10 +204,6 @@ pub(crate) fn run_cargo_json<T: DeserializeOwned>(
     opts: &[&str],
 ) -> Result<T> {
     let json = run_cargo(config, cargo_home, current_dir, args, opts).context("running cargo")?;
-
-    if args.debug {
-        std::fs::write("dump.json", &json)?;
-    }
 
     let res = serde_json::from_slice::<T>(&json).context("deserializing json")?;
 

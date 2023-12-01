@@ -45,9 +45,6 @@ mod vendor;
 #[derive(Debug, Parser)]
 #[command(bin_name = "reindeer")]
 pub struct Args {
-    /// Enable debug output
-    #[arg(long, short = 'D')]
-    debug: bool,
     /// Path to `cargo` command
     #[arg(long, value_name = "PATH")]
     cargo_path: Option<PathBuf>,
