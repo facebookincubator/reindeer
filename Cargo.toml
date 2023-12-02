@@ -8,7 +8,7 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-anyhow = "=1.0.72"
+anyhow = "1.0.75"
 clap = { version = "4.4.7", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 dunce = "1.0.2"
 env_logger = "0.10"
