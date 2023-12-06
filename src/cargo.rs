@@ -327,7 +327,7 @@ impl Ord for Manifest {
 
 impl PartialOrd for Manifest {
     fn partial_cmp(&self, other: &Manifest) -> Option<std::cmp::Ordering> {
-        self.id.partial_cmp(&other.id)
+        Some(self.cmp(other))
     }
 }
 
