@@ -25,6 +25,7 @@ use std::sync::Mutex;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use cached::proc_macro::cached;
 use fnv::FnvHasher;
 use itertools::Itertools;
 use url::Url;
@@ -364,6 +365,23 @@ fn find_repository_root(manifest_dir: &Path) -> Result<&Path> {
     }
 }
 
+#[cached]
+fn srcfiles(manifest_dir: PathBuf, path: PathBuf) -> Vec<PathBuf> {
+    let sources = crate_srcfiles(path);
+    if sources.errors.is_empty() {
+        let srcs = sources
+            .files
+            .into_iter()
+            .map(|src| normalize_path(&relative_path(&manifest_dir, &src)))
+            .collect::<Vec<_>>();
+        log::debug!("crate_srcfiles returned {:#?}", srcs);
+        srcs
+    } else {
+        log::info!("crate_srcfiles failed: {:?}", sources.errors);
+        vec![]
+    }
+}
+
 /// Generate rules for a target. Returns the rules, and the
 /// packages we depend on for further rule generation.
 fn generate_target_rules<'scope>(
@@ -439,19 +457,7 @@ fn generate_target_rules<'scope>(
         && edition >= Edition::Rust2018
     {
         measure_time::trace_time!("srcfiles for {}", pkg);
-        let sources = crate_srcfiles(&tgt.src_path);
-        if sources.errors.is_empty() {
-            let srcs = sources
-                .files
-                .into_iter()
-                .map(|src| normalize_path(&relative_path(manifest_dir, &src)))
-                .collect::<Vec<_>>();
-            log::debug!("crate_srcfiles returned {:#?}", srcs);
-            srcs
-        } else {
-            log::info!("crate_srcfiles failed: {:?}", sources.errors);
-            vec![]
-        }
+        srcfiles(manifest_dir.to_owned(), tgt.src_path.clone())
     } else {
         vec![]
     };
