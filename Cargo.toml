@@ -33,6 +33,7 @@ strum = { version = "0.24", features = ["derive"] }
 syn = { version = "2.0.38", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 termcolor = "1.0"
 toml = "0.8.4"
+toml_edit = { version = "0.20.5", features = ["serde"] }
 unicode-ident = "1.0.10"
 url = "2.2.2"
 walkdir = "2.3"

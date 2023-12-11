@@ -31,6 +31,7 @@ use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
 use crate::platform::PredicateParseError;
+use crate::universe::UniverseName;
 
 /// Only the name of a target. Does not include package path, nor leading colon.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
@@ -175,6 +176,165 @@ pub struct Subtarget {
 impl Serialize for Subtarget {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         ser.collect_str(&format_args!(":{}[{}]", self.target, self.relative))
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[serde(rename = "select")]
+pub struct Select<K, V>(BTreeMap<K, V>);
+
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum Selectable<K, V> {
+    Value(V),
+    Select(Select<K, V>),
+}
+
+impl<K, V> Selectable<K, V> {
+    pub fn unwrap_ref(&self) -> &V {
+        match self {
+            Self::Value(v) => v,
+            Self::Select(..) => panic!("called `Selectable::unwrap_ref` on a `Select` value"),
+        }
+    }
+    pub fn unwrap_mut(&mut self) -> &mut V {
+        match self {
+            Self::Value(v) => v,
+            Self::Select(..) => panic!("called `Selectable::unwrap_mut` on a `Select` value"),
+        }
+    }
+}
+
+impl<K, V> Selectable<K, V>
+where
+    K: Ord,
+{
+    pub fn set_key(&mut self, key: K)
+    where
+        V: Default,
+    {
+        if let Self::Value(v) = self {
+            let mut map = BTreeMap::new();
+            map.insert(key, std::mem::take(v));
+            *self = Self::Select(Select(map));
+        } else {
+            panic!("called `Selectable::set_key` on a `Select` value");
+        }
+    }
+
+    pub fn merge(&mut self, other: Self) {
+        use std::collections::btree_map::Entry;
+        let this = match self {
+            Self::Select(map) => map,
+            Self::Value(..) => panic!("called `Selectable::merge` on a `Value`"),
+        };
+        let other = match other {
+            Self::Select(map) => map,
+            Self::Value(..) => panic!("called `Selectable::merge` on a `Value`"),
+        };
+        for (key, value) in other.0 {
+            match this.0.entry(key) {
+                Entry::Occupied(..) => panic!(),
+                Entry::Vacant(e) => {
+                    e.insert(value);
+                }
+            }
+        }
+    }
+
+    pub fn map_keys(&mut self, mut mapper: impl FnMut(&K) -> K) {
+        if let Self::Select(s) = self {
+            let map = std::mem::take(&mut s.0);
+            s.0 = map.into_iter().map(|(k, v)| (mapper(&k), v)).collect();
+        }
+    }
+}
+
+impl<K, V> Selectable<K, V>
+where
+    K: Default + Ord,
+    V: PartialEq,
+{
+    /// Simplify `select({"DEFAULT": <value>, "a": <value>, ..})` to `<value>`.
+    pub fn simplify(&mut self) {
+        let map = match self {
+            Self::Value(..) => return,
+            Self::Select(s) => &mut s.0,
+        };
+        let key = Default::default();
+        if let Some(value) = map.get(&key) {
+            if map.values().all(|v| v == value) {
+                *self = Self::Value(map.remove(&key).unwrap());
+            }
+        }
+    }
+}
+
+impl<K, V> Selectable<K, BTreeSet<V>> {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Value(v) => v.is_empty(),
+            Self::Select(select) => {
+                select.0.is_empty() || select.0.values().all(BTreeSet::is_empty)
+            }
+        }
+    }
+}
+
+impl<K, K1, V> Selectable<K, BTreeMap<K1, V>> {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Value(v) => v.is_empty(),
+            Self::Select(select) => {
+                select.0.is_empty() || select.0.values().all(BTreeMap::is_empty)
+            }
+        }
+    }
+}
+
+impl<K, V> Default for Selectable<K, V>
+where
+    V: Default,
+{
+    fn default() -> Self {
+        Self::Value(Default::default())
+    }
+}
+
+impl<K, V> Default for Select<K, V> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<K, V> fmt::Debug for Selectable<K, V>
+where
+    K: fmt::Debug,
+    V: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Value(v) => fmt::Debug::fmt(v, f),
+            Self::Select(s) => f.debug_tuple("Select").field(&s.0).finish(),
+        }
+    }
+}
+
+impl<K, V> Serialize for Selectable<K, V>
+where
+    K: Serialize,
+    V: Serialize,
+{
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Value(v) => v.serialize(ser),
+            Self::Select(s) => {
+                if s.0.len() == 1 {
+                    s.0.values().next().unwrap().serialize(ser)
+                } else {
+                    s.serialize(ser)
+                }
+            }
+        }
     }
 }
 
@@ -326,9 +486,9 @@ pub struct PlatformRustCommon {
     pub srcs: BTreeSet<BuckPath>,
     pub mapped_srcs: BTreeMap<SubtargetOrPath, BuckPath>,
     pub rustc_flags: Vec<String>,
-    pub features: BTreeSet<String>,
-    pub deps: BTreeSet<RuleRef>,
-    pub named_deps: BTreeMap<String, RuleRef>,
+    pub features: Selectable<UniverseName, BTreeSet<String>>,
+    pub deps: Selectable<UniverseName, BTreeSet<RuleRef>>,
+    pub named_deps: Selectable<UniverseName, BTreeMap<String, RuleRef>>,
     pub env: BTreeMap<String, StringOrPath>,
 
     // This isn't really "common" (Binaries only), but does need to be platform

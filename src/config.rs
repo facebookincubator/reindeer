@@ -7,6 +7,7 @@
 
 //! Global third-party config
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -33,6 +34,8 @@ use serde::Serialize;
 
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
+use crate::universe::UniverseConfig;
+use crate::universe::UniverseName;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -86,6 +89,9 @@ pub struct Config {
 
     #[serde(default = "default_platforms")]
     pub platform: HashMap<PlatformName, PlatformConfig>,
+
+    #[serde(default = "default_universes")]
+    pub universe: BTreeMap<UniverseName, UniverseConfig>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -257,6 +263,12 @@ fn default_platforms() -> HashMap<PlatformName, PlatformConfig> {
     toml::from_str::<DefaultConfig>(DEFAULT_PLATFORMS_TOML)
         .unwrap()
         .platform
+}
+
+fn default_universes() -> BTreeMap<UniverseName, UniverseConfig> {
+    let mut map = BTreeMap::new();
+    map.insert(Default::default(), Default::default());
+    map
 }
 
 fn deserialize_vendor_config<'de, D>(deserializer: D) -> Result<Option<VendorConfig>, D::Error>

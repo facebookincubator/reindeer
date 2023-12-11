@@ -40,6 +40,7 @@ mod lockfile;
 mod platform;
 mod remap;
 mod srcfiles;
+mod universe;
 mod vendor;
 
 #[derive(Debug, Parser)]

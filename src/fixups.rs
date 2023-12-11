@@ -269,12 +269,20 @@ impl<'meta> Fixups<'meta> {
         let mut features = BTreeSet::new();
         for (plat, _fixup) in self.fixup_config.configs(&self.package.version) {
             match plat {
-                None => features.extend(buildscript.common.base.features.iter().cloned()),
+                None => features.extend(
+                    buildscript
+                        .common
+                        .base
+                        .features
+                        .unwrap_ref()
+                        .iter()
+                        .cloned(),
+                ),
                 Some(expr) => {
                     let platnames = platform_names_for_expr(self.config, expr)?;
                     for platname in platnames {
                         if let Some(platattr) = buildscript.common.platform.get(platname) {
-                            features.extend(platattr.features.iter().cloned())
+                            features.extend(platattr.features.unwrap_ref().iter().cloned())
                         }
                     }
                 }

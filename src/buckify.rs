@@ -68,6 +68,7 @@ use crate::platform::platform_names_for_expr;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
 use crate::srcfiles::crate_srcfiles;
+use crate::universe::UniverseName;
 use crate::Args;
 use crate::Paths;
 
@@ -557,7 +558,7 @@ fn generate_target_rules<'scope>(
                 tgt.name,
                 features
             );
-            rule.features.extend(features);
+            rule.features.unwrap_mut().extend(features);
         },
         fixups.compute_features()?,
     )
@@ -626,9 +627,12 @@ fn generate_target_rules<'scope>(
                         let location = format!("$(location {}-{}#check)", dep.target, bin_name);
                         recipient.env.insert(env, StringOrPath::String(location));
                     } else if let Some(rename) = rename {
-                        recipient.named_deps.insert(rename.to_owned(), dep);
+                        recipient
+                            .named_deps
+                            .unwrap_mut()
+                            .insert(rename.to_owned(), dep);
                     } else {
-                        recipient.deps.insert(dep);
+                        recipient.deps.unwrap_mut().insert(dep);
                     }
                     if let Some(deppkg) = deppkg {
                         dep_pkgs.push((deppkg, target_req));
@@ -645,9 +649,9 @@ fn generate_target_rules<'scope>(
                 let location = format!("$(location {}-{}#check)", dep.target, bin_name);
                 base.env.insert(env, StringOrPath::String(location));
             } else if let Some(rename) = rename {
-                base.named_deps.insert(rename.to_owned(), dep);
+                base.named_deps.unwrap_mut().insert(rename.to_owned(), dep);
             } else {
-                base.deps.insert(dep);
+                base.deps.unwrap_mut().insert(dep);
             }
             if let Some(deppkg) = deppkg {
                 dep_pkgs.push((deppkg, target_req));
@@ -698,6 +702,7 @@ fn generate_target_rules<'scope>(
     if let Some(true) = pkg.dependency_target().map(ManifestTarget::kind_lib) {
         bin_base
             .deps
+            .unwrap_mut()
             .insert(RuleRef::from(index.private_rule_name(pkg)));
     }
 
@@ -880,10 +885,26 @@ fn generate_target_rules<'scope>(
     Ok((rules, dep_pkgs))
 }
 
-pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool) -> Result<()> {
+fn buckify_for_universe(
+    config: &Config,
+    args: &Args,
+    paths: &Paths,
+    universe: &UniverseName,
+) -> Result<BTreeSet<Rule>> {
+    let universe_config = &config.universe[universe];
+    let features = universe_config.features.iter().join(",");
     let (lockfile, metadata) = {
+        let _guard = if universe_config.include_crates.is_empty() {
+            None
+        } else {
+            Some(crate::universe::mutate_manifest(
+                universe_config,
+                &paths.manifest_path,
+            ))
+        };
         measure_time::trace_time!("Get cargo metadata");
-        cargo_get_lockfile_and_metadata(config, args, paths)?
+        let is_default = *universe == Default::default();
+        cargo_get_lockfile_and_metadata(config, args, paths, features, is_default)?
     };
 
     log::trace!("Metadata {:#?}", metadata);
@@ -983,6 +1004,16 @@ pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool)
             })
             .collect();
     }
+    Ok(rules)
+}
+
+pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool) -> Result<()> {
+    let mut rules = BTreeMap::new();
+    for universe in config.universe.keys().cloned() {
+        let universe_rules = buckify_for_universe(config, args, paths, &universe)?;
+        rules.insert(universe, universe_rules);
+    }
+    let rules = crate::universe::merge_universes(&config.universe, rules)?;
 
     // Emit build rules to stdout
     if stdout {

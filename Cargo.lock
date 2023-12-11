@@ -1427,6 +1427,7 @@ dependencies = [
  "tempfile",
  "termcolor",
  "toml 0.8.5",
+ "toml_edit 0.20.5",
  "unicode-ident",
  "url",
  "walkdir",
