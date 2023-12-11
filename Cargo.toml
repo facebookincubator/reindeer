@@ -5,6 +5,7 @@ name = "reindeer"
 version = "0.0.0"
 authors = ["Facebook"]
 edition = "2021"
+repository = "https://github.com/facebookincubator/reindeer"
 license = "MIT"
 
 [dependencies]
