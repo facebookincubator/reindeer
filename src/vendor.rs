@@ -10,7 +10,6 @@ use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::Context;
-use anyhow::Result;
 use globset::GlobBuilder;
 use globset::GlobSetBuilder;
 use ignore::gitignore::GitignoreBuilder;
@@ -39,7 +38,7 @@ pub(crate) fn cargo_vendor(
     no_fetch: bool,
     args: &Args,
     paths: &Paths,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     let vendordir = Path::new("vendor"); // relative to third_party_dir
 
     let mut cmdline = vec![
@@ -80,7 +79,7 @@ pub(crate) fn cargo_vendor(
     Ok(())
 }
 
-pub(crate) fn is_vendored(paths: &Paths) -> Result<bool> {
+pub(crate) fn is_vendored(paths: &Paths) -> anyhow::Result<bool> {
     // .cargo/config.toml is Cargo's preferred name for the config, but .cargo/config
     // is the older name so it takes priority if present.
     let mut cargo_config_path = paths.cargo_home.join("config");
@@ -117,7 +116,7 @@ fn filter_checksum_files(
     third_party_dir: &Path,
     vendordir: &Path,
     config: &VendorConfig,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     if config.checksum_exclude.is_empty() && config.gitignore_checksum_exclude.is_empty() {
         return Ok(());
     }

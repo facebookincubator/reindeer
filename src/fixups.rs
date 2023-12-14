@@ -19,7 +19,6 @@ use std::path::PathBuf;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
-use anyhow::Result;
 
 use crate::buck;
 use crate::buck::Alias;
@@ -98,7 +97,7 @@ impl<'meta> Fixups<'meta> {
         index: &'meta Index,
         package: &'meta Manifest,
         target: &'meta ManifestTarget,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         let fixup_dir = paths.third_party_dir.join("fixups").join(&package.name);
         let fixup_path = fixup_dir.join("fixups.toml");
 
@@ -163,7 +162,10 @@ impl<'meta> Fixups<'meta> {
         }
     }
 
-    fn subtarget_or_path(&self, relative_to_manifest_dir: &Path) -> Result<SubtargetOrPath> {
+    fn subtarget_or_path(
+        &self,
+        relative_to_manifest_dir: &Path,
+    ) -> anyhow::Result<SubtargetOrPath> {
         if self.config.vendor.is_some() || matches!(self.package.source, Source::Local) {
             // Path to vendored file looks like "vendor/foo-1.0.0/src/lib.rs"
             let manifest_dir = relative_path(&self.third_party_dir, self.manifest_dir);
@@ -247,7 +249,7 @@ impl<'meta> Fixups<'meta> {
         &self,
         buildscript: RustBinary,
         config: &'meta Config,
-    ) -> Result<Vec<Rule>> {
+    ) -> anyhow::Result<Vec<Rule>> {
         let mut res = Vec::new();
 
         let rel_fixup = relative_path(&self.third_party_dir, &self.fixup_dir);
@@ -416,7 +418,7 @@ impl<'meta> Fixups<'meta> {
                             let srcs = globs
                                 .walk(self.manifest_dir)
                                 .map(|path| self.subtarget_or_path(&path))
-                                .collect::<Result<_>>()?;
+                                .collect::<anyhow::Result<_>>()?;
                             if self.config.strict_globs {
                                 globs.check_all_globs_used()?;
                             }
@@ -450,7 +452,7 @@ impl<'meta> Fixups<'meta> {
                                 let exported_headers = exported_header_globs
                                     .walk(self.manifest_dir)
                                     .map(|path| self.subtarget_or_path(&path))
-                                    .collect::<Result<_>>()?;
+                                    .collect::<anyhow::Result<_>>()?;
                                 if self.config.strict_globs {
                                     exported_header_globs.check_all_globs_used()?;
                                 }
@@ -462,7 +464,7 @@ impl<'meta> Fixups<'meta> {
                                     .map(|(name, path)| {
                                         Ok((name.clone(), self.subtarget_or_path(Path::new(path))?))
                                     })
-                                    .collect::<Result<_>>()?,
+                                    .collect::<anyhow::Result<_>>()?,
                             ),
                         },
                         include_directories: fixup_include_paths
@@ -473,7 +475,7 @@ impl<'meta> Fixups<'meta> {
                                     .iter()
                                     .map(|path| self.subtarget_or_path(path)),
                             )
-                            .collect::<Result<_>>()?,
+                            .collect::<anyhow::Result<_>>()?,
                         compiler_flags: compiler_flags.clone(),
                         preprocessor_flags: preprocessor_flags.clone(),
                         header_namespace: header_namespace.clone(),
@@ -563,7 +565,9 @@ impl<'meta> Fixups<'meta> {
 
     /// Return the set of features to enable, which is the union of the cargo-resolved ones
     /// and additional ones defined in the fixup.
-    pub fn compute_features(&self) -> Result<HashMap<Option<PlatformExpr>, BTreeSet<String>>> {
+    pub fn compute_features(
+        &self,
+    ) -> anyhow::Result<HashMap<Option<PlatformExpr>, BTreeSet<String>>> {
         let mut ret = HashMap::new();
 
         let mut platform_omits = HashMap::new();
@@ -677,7 +681,7 @@ impl<'meta> Fixups<'meta> {
     /// to only targets which were actually used).
     pub fn compute_deps(
         &self,
-    ) -> Result<
+    ) -> anyhow::Result<
         Vec<(
             Option<&'meta Manifest>,
             RuleRef,
@@ -847,7 +851,7 @@ impl<'meta> Fixups<'meta> {
     /// Additional environment
     pub fn compute_env(
         &self,
-    ) -> Result<Vec<(Option<PlatformExpr>, BTreeMap<String, StringOrPath>)>> {
+    ) -> anyhow::Result<Vec<(Option<PlatformExpr>, BTreeMap<String, StringOrPath>)>> {
         let mut ret = vec![];
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
@@ -916,7 +920,7 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_srcs(
         &self,
         srcs: Vec<PathBuf>,
-    ) -> Result<Vec<(Option<PlatformExpr>, BTreeSet<PathBuf>)>> {
+    ) -> anyhow::Result<Vec<(Option<PlatformExpr>, BTreeSet<PathBuf>)>> {
         let mut ret: Vec<(Option<PlatformExpr>, BTreeSet<PathBuf>)> = vec![];
 
         // This function is only used in vendoring mode, so it's guaranteed that
@@ -1031,7 +1035,7 @@ impl<'meta> Fixups<'meta> {
         Ok(ret)
     }
 
-    fn compute_extra_srcs(&self, globs: &[String]) -> Result<HashSet<PathBuf>> {
+    fn compute_extra_srcs(&self, globs: &[String]) -> anyhow::Result<HashSet<PathBuf>> {
         let mut extra_srcs = HashSet::new();
         let mut unmatched_globs = Vec::new();
 
@@ -1089,7 +1093,7 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_mapped_srcs(
         &self,
         mapped_manifest_dir: &Path,
-    ) -> Result<Vec<(Option<PlatformExpr>, BTreeMap<SubtargetOrPath, BuckPath>)>> {
+    ) -> anyhow::Result<Vec<(Option<PlatformExpr>, BTreeMap<SubtargetOrPath, BuckPath>)>> {
         let mut ret = vec![];
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {

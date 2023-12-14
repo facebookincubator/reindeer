@@ -25,7 +25,6 @@ use std::process::Stdio;
 use std::thread;
 
 use anyhow::Context;
-use anyhow::Result;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -43,7 +42,7 @@ pub fn cargo_get_lockfile_and_metadata(
     paths: &Paths,
     features: String,
     default_features: bool,
-) -> Result<(Lockfile, Metadata)> {
+) -> anyhow::Result<(Lockfile, Metadata)> {
     let mut cargo_flags = vec![
         "metadata",
         "--format-version",
@@ -105,7 +104,7 @@ pub(crate) fn run_cargo(
     current_dir: &Path,
     args: &Args,
     opts: &[&str],
-) -> Result<Vec<u8>> {
+) -> anyhow::Result<Vec<u8>> {
     let mut cmdline: Vec<_> = args
         .cargo_options
         .iter()
@@ -212,7 +211,7 @@ pub(crate) fn run_cargo_json<T: DeserializeOwned>(
     current_dir: &Path,
     args: &Args,
     opts: &[&str],
-) -> Result<T> {
+) -> anyhow::Result<T> {
     let json = run_cargo(config, cargo_home, current_dir, args, opts).context("running cargo")?;
 
     let res = serde_json::from_slice::<T>(&json).context("deserializing json")?;

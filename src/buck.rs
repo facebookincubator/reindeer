@@ -16,7 +16,6 @@ use std::fmt::Display;
 use std::io::Write;
 use std::path::PathBuf;
 
-use anyhow::Result;
 use semver::Version;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
@@ -1135,7 +1134,7 @@ impl Rule {
         }
     }
 
-    pub fn render(&self, config: &BuckConfig, out: &mut impl Write) -> Result<()> {
+    pub fn render(&self, config: &BuckConfig, out: &mut impl Write) -> anyhow::Result<()> {
         use serde_starlark::Serializer;
         let serialized = match self {
             Rule::Alias(alias) => FunctionCall::new(&config.alias, alias).serialize(Serializer),
@@ -1199,7 +1198,7 @@ pub fn write_buckfile<'a>(
     config: &BuckConfig,
     rules: impl Iterator<Item = &'a Rule>,
     out: &mut impl Write,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     out.write_all(config.generated_file_header.as_bytes())?;
     if !config.generated_file_header.is_empty() {
         out.write_all(b"\n")?;

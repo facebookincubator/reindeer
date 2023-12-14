@@ -11,7 +11,6 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::PathBuf;
 
-use anyhow::Result;
 use serde::de::Error as DeError;
 use serde::de::MapAccess;
 use serde::de::Visitor;

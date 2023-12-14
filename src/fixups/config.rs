@@ -12,7 +12,6 @@ use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 
-use anyhow::Result;
 use serde::de::value::SeqAccessDeserializer;
 use serde::de::SeqAccess;
 use serde::de::Visitor;
@@ -198,7 +197,7 @@ pub struct FixupConfig {
 impl FixupConfig {
     /// Return set of overlay files, relative to the overlay dir (and therefore
     /// relative to manifest dir).
-    pub fn overlay_files(&self, fixup_dir: &Path) -> Result<HashSet<PathBuf>> {
+    pub fn overlay_files(&self, fixup_dir: &Path) -> anyhow::Result<HashSet<PathBuf>> {
         let files = match &self.overlay {
             Some(overlay) => {
                 let overlay_dir = fixup_dir.join(overlay);
@@ -217,7 +216,7 @@ impl FixupConfig {
 
     /// Returns set of files that are provided either by an overlay or by mapped
     /// srcs.
-    pub fn overlay_and_mapped_files(&self, fixup_dir: &Path) -> Result<HashSet<PathBuf>> {
+    pub fn overlay_and_mapped_files(&self, fixup_dir: &Path) -> anyhow::Result<HashSet<PathBuf>> {
         let mut files = self.overlay_files(fixup_dir)?;
         files.extend(self.extra_mapped_srcs.values().map(PathBuf::clone));
         Ok(files)

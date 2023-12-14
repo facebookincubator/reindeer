@@ -24,7 +24,6 @@ use std::sync::Mutex;
 
 use anyhow::bail;
 use anyhow::Context;
-use anyhow::Result;
 use cached::proc_macro::cached;
 use fnv::FnvHasher;
 use itertools::Itertools;
@@ -126,7 +125,7 @@ fn unzip_platform<T: Clone>(
     perplat: &mut BTreeMap<PlatformName, PlatformRustCommon>,
     mut extend: impl FnMut(&mut PlatformRustCommon, T),
     things: impl IntoIterator<Item = (Option<PlatformExpr>, T)>,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     for (platform, thing) in things.into_iter() {
         match platform {
             Some(expr) => {
@@ -159,7 +158,7 @@ struct RuleContext<'meta> {
 fn generate_dep_rules<'scope>(
     context: &'scope RuleContext<'scope>,
     scope: &rayon::Scope<'scope>,
-    rule_tx: mpsc::Sender<Result<Rule>>,
+    rule_tx: mpsc::Sender<anyhow::Result<Rule>>,
     pkg_deps: impl IntoIterator<Item = (&'scope Manifest, TargetReq<'scope>)>,
 ) {
     let mut done = context.done.lock().unwrap();
@@ -177,7 +176,7 @@ fn generate_dep_rules<'scope>(
 fn generate_rules<'scope>(
     context: &'scope RuleContext<'scope>,
     scope: &rayon::Scope<'scope>,
-    rule_tx: mpsc::Sender<Result<Rule>>,
+    rule_tx: mpsc::Sender<anyhow::Result<Rule>>,
     pkg: &'scope Manifest,
     target_req: TargetReq<'scope>,
 ) {
@@ -236,7 +235,7 @@ fn generate_rules<'scope>(
 fn generate_nonvendored_sources_archive<'scope>(
     context: &'scope RuleContext<'scope>,
     pkg: &'scope Manifest,
-) -> Result<Option<Rule>> {
+) -> anyhow::Result<Option<Rule>> {
     let lockfile_package = match context.lockfile.find(pkg) {
         Some(lockfile_package) => lockfile_package,
         None => {
@@ -271,7 +270,7 @@ fn generate_http_archive<'scope>(
     context: &'scope RuleContext<'scope>,
     pkg: &'scope Manifest,
     lockfile_package: &LockfilePackage,
-) -> Result<Rule> {
+) -> anyhow::Result<Rule> {
     let sha256 = match &lockfile_package.checksum {
         Some(checksum) => checksum.clone(),
         None => {
@@ -300,7 +299,7 @@ fn generate_http_archive<'scope>(
     }))
 }
 
-fn generate_git_fetch(repo: &str, commit_hash: &str) -> Result<Rule> {
+fn generate_git_fetch(repo: &str, commit_hash: &str) -> anyhow::Result<Rule> {
     let short_name = short_name_for_git_repo(repo)?;
 
     Ok(Rule::GitFetch(GitFetch {
@@ -312,7 +311,7 @@ fn generate_git_fetch(repo: &str, commit_hash: &str) -> Result<Rule> {
 }
 
 /// Create a uniquely hashed directory name for the arbitrary source url
-pub fn short_name_for_git_repo(repo: &str) -> Result<String> {
+pub fn short_name_for_git_repo(repo: &str) -> anyhow::Result<String> {
     let mut canonical = Url::parse(&repo.to_lowercase()).context("invalid git url")?;
 
     anyhow::ensure!(
@@ -350,7 +349,7 @@ pub fn short_name_for_git_repo(repo: &str) -> Result<String> {
 }
 
 /// Find the git repository containing the given manifest directory.
-fn find_repository_root(manifest_dir: &Path) -> Result<&Path> {
+fn find_repository_root(manifest_dir: &Path) -> anyhow::Result<&Path> {
     let mut dir = manifest_dir;
     loop {
         if dir.join(".git").exists() {
@@ -389,7 +388,7 @@ fn generate_target_rules<'scope>(
     context: &'scope RuleContext<'scope>,
     pkg: &'scope Manifest,
     tgt: &'scope ManifestTarget,
-) -> Result<(Vec<Rule>, Vec<(&'scope Manifest, TargetReq<'scope>)>)> {
+) -> anyhow::Result<(Vec<Rule>, Vec<(&'scope Manifest, TargetReq<'scope>)>)> {
     let RuleContext {
         config,
         paths,
@@ -890,7 +889,7 @@ fn buckify_for_universe(
     args: &Args,
     paths: &Paths,
     universe: &UniverseName,
-) -> Result<BTreeSet<Rule>> {
+) -> anyhow::Result<BTreeSet<Rule>> {
     let universe_config = &config.universe[universe];
     let features = universe_config.features.iter().join(",");
     let (lockfile, metadata) = {
@@ -940,7 +939,7 @@ fn buckify_for_universe(
     }
 
     // Collect rules from channel
-    let mut rules: BTreeSet<_> = match rx.iter().collect::<Result<_>>() {
+    let mut rules: BTreeSet<_> = match rx.iter().collect::<anyhow::Result<_>>() {
         Ok(rules) => rules,
         Err(err) => {
             if let Some(custom_err_msg) = config.unresolved_fixup_error_message.as_ref() {
@@ -1008,7 +1007,12 @@ fn buckify_for_universe(
     Ok(rules)
 }
 
-pub(crate) fn buckify(config: &Config, args: &Args, paths: &Paths, stdout: bool) -> Result<()> {
+pub(crate) fn buckify(
+    config: &Config,
+    args: &Args,
+    paths: &Paths,
+    stdout: bool,
+) -> anyhow::Result<()> {
     let mut rules = BTreeMap::new();
     for universe in config.universe.keys().cloned() {
         let universe_rules = buckify_for_universe(config, args, paths, &universe)?;

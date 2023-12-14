@@ -12,7 +12,6 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 
 use anyhow::Context as _;
-use anyhow::Result;
 use serde::Deserialize;
 
 use crate::buck::Name;
@@ -66,7 +65,7 @@ impl<'meta> Index<'meta> {
     /// Construct an index for a set of Cargo metadata to allow convenient and efficient
     /// queries. The metadata represents a top level package and all its transitive
     /// dependencies.
-    pub fn new(root_is_real: bool, metadata: &'meta Metadata) -> Result<Index<'meta>> {
+    pub fn new(root_is_real: bool, metadata: &'meta Metadata) -> anyhow::Result<Index<'meta>> {
         let pkgid_to_pkg: HashMap<_, _> = metadata.packages.iter().map(|m| (&m.id, m)).collect();
 
         let root_pkg = metadata.resolve.root.as_ref().map(|root_pkgid| {

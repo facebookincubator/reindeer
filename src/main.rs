@@ -22,7 +22,6 @@
 
 use std::path::PathBuf;
 
-use anyhow::Result;
 use clap::Parser;
 use clap::Subcommand;
 
@@ -106,7 +105,7 @@ pub struct Paths {
     cargo_home: PathBuf,
 }
 
-fn try_main() -> Result<()> {
+fn try_main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let third_party_dir = dunce::canonicalize(&args.third_party_dir)?;

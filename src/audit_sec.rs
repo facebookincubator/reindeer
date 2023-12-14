@@ -8,7 +8,6 @@
 use std::io::Write;
 
 use anyhow::Context;
-use anyhow::Result;
 use rustsec::advisory::Informational;
 use rustsec::report::Report;
 use rustsec::report::Settings;
@@ -28,7 +27,12 @@ use crate::config::Config;
 use crate::Paths;
 
 /// Check crates for known security problems. Requires an existing Cargo.lock.
-pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) -> Result<()> {
+pub fn audit_sec(
+    config: &Config,
+    paths: &Paths,
+    no_fetch: bool,
+    autofix: bool,
+) -> anyhow::Result<()> {
     let stdout = &mut StandardStream::stdout(ColorChoice::Auto);
     let default = ColorSpec::new();
     let mut red = ColorSpec::new();
@@ -60,7 +64,7 @@ pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) 
     for v in &report.vulnerabilities.list {
         let adv = &v.advisory;
         let pkg = &v.package;
-        let _ = || -> Result<_> {
+        let _ = || -> anyhow::Result<_> {
             stdout.set_color(&red)?;
             writeln!(
                 stdout,
@@ -77,7 +81,7 @@ pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) 
 
         if !config.audit.never_autofix.contains(v.package.name.as_str()) {
             if let Err(err) = fixer.fix(v, !autofix) {
-                let _ = || -> Result<_> {
+                let _ = || -> anyhow::Result<_> {
                     stdout.set_color(&red)?;
                     writeln!(
                         stdout,
@@ -109,7 +113,7 @@ pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) 
         };
 
         if let Some((adv, msg)) = adv {
-            let _ = || -> Result<_> {
+            let _ = || -> anyhow::Result<_> {
                 stdout.set_color(&yellow)?;
                 writeln!(
                     stdout,
@@ -125,7 +129,7 @@ pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) 
                 Ok(())
             }();
         } else {
-            let _ = || -> Result<_> {
+            let _ = || -> anyhow::Result<_> {
                 stdout.set_color(&yellow)?;
                 writeln!(stdout, "Yanked Package: {} {}", pkg.name, pkg.version)?;
                 Ok(())
@@ -133,7 +137,7 @@ pub fn audit_sec(config: &Config, paths: &Paths, no_fetch: bool, autofix: bool) 
         }
     }
 
-    let _ = || -> Result<_> {
+    let _ = || -> anyhow::Result<_> {
         stdout.set_color(&bold)?;
         writeln!(
             stdout,

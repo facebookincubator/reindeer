@@ -23,7 +23,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use anyhow::Result;
 use monostate::MustBe;
 use serde::de::value::MapAccessDeserializer;
 use serde::de::Deserializer;
@@ -304,7 +303,7 @@ where
     deserializer.deserialize_any(VendorConfigVisitor)
 }
 
-pub fn read_config(dir: &Path) -> Result<Config> {
+pub fn read_config(dir: &Path) -> anyhow::Result<Config> {
     let reindeer_toml = dir.join("reindeer.toml");
     let mut config = try_read_config(&reindeer_toml)?;
 
@@ -332,7 +331,7 @@ pub fn read_config(dir: &Path) -> Result<Config> {
     Ok(config)
 }
 
-fn try_read_config(path: &Path) -> Result<Config> {
+fn try_read_config(path: &Path) -> anyhow::Result<Config> {
     let file = match fs::read_to_string(path) {
         Ok(file) => file,
         Err(err) if err.kind() == ErrorKind::NotFound => {

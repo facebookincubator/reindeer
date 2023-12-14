@@ -8,7 +8,6 @@
 use std::fs;
 
 use anyhow::Context;
-use anyhow::Result;
 use serde::Deserialize;
 use serde::Deserializer;
 
@@ -24,7 +23,7 @@ pub struct Lockfile {
 }
 
 impl Lockfile {
-    pub fn load(paths: &Paths) -> Result<Self> {
+    pub fn load(paths: &Paths) -> anyhow::Result<Self> {
         let cargo_lock_content = fs::read_to_string(&paths.lockfile_path)
             .with_context(|| format!("Failed to load {}", paths.lockfile_path.display()))?;
 

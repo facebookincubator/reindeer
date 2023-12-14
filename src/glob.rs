@@ -12,7 +12,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::bail;
-use anyhow::Result;
 use globset::Glob;
 use globset::GlobBuilder;
 use globset::GlobSet;
@@ -79,7 +78,7 @@ impl Globs {
     pub fn new(
         globs: impl IntoIterator<Item = impl AsRef<str>>,
         excepts: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         let globs: Vec<String> = globs.into_iter().map(|g| g.as_ref().to_owned()).collect();
 
         let mut builder = GlobSetBuilder::new();
@@ -131,7 +130,7 @@ impl Globs {
             .into_iter()
     }
 
-    pub fn check_all_globs_used(&self) -> Result<()> {
+    pub fn check_all_globs_used(&self) -> anyhow::Result<()> {
         if self.globs_used.len() == self.globset.len() {
             return Ok(());
         }
