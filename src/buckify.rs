@@ -377,7 +377,7 @@ fn srcfiles(manifest_dir: PathBuf, path: PathBuf) -> Vec<PathBuf> {
         log::debug!("crate_srcfiles returned {:#?}", srcs);
         srcs
     } else {
-        log::info!("crate_srcfiles failed: {:?}", sources.errors);
+        log::debug!("crate_srcfiles failed: {:?}", sources.errors);
         vec![]
     }
 }
@@ -396,7 +396,7 @@ fn generate_target_rules<'scope>(
         ..
     } = context;
 
-    log::info!("Generating rules for package {} target {}", pkg, tgt.name);
+    log::debug!("Generating rules for package {} target {}", pkg, tgt.name);
 
     let fixups = Fixups::new(config, paths, index, pkg, tgt)?;
 
@@ -826,7 +826,7 @@ fn generate_target_rules<'scope>(
         rules
     } else {
         // Ignore everything else for now.
-        log::info!("pkg {} target {} Skipping {:?}", pkg, tgt.name, tgt.kind());
+        log::debug!("pkg {} target {} Skipping {:?}", pkg, tgt.name, tgt.kind());
 
         vec![]
     };
@@ -901,7 +901,8 @@ fn buckify_for_universe(
                 &paths.manifest_path,
             ))
         };
-        measure_time::trace_time!("Get cargo metadata");
+        log::info!("Running `cargo metadata` for universe {universe}...");
+        measure_time::info_time!("Running `cargo metadata`");
         let is_default = *universe == Default::default();
         cargo_get_lockfile_and_metadata(config, args, paths, features, is_default)?
     };
@@ -922,7 +923,8 @@ fn buckify_for_universe(
     let (tx, rx) = mpsc::channel();
 
     {
-        measure_time::trace_time!("generate_dep_rules");
+        log::info!("Generating buck rules for universe {universe}...");
+        measure_time::info_time!("Generating buck rules");
         rayon::scope(move |scope| {
             for &workspace_member in &context.index.workspace_members {
                 generate_dep_rules(

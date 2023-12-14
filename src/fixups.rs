@@ -108,7 +108,7 @@ impl<'meta> Fixups<'meta> {
             log::debug!("no fixups at {}", fixup_path.display());
             let fixup = FixupConfigFile::template(&paths.third_party_dir, target);
             if config.fixup_templates && target.kind_custom_build() {
-                log::info!(
+                log::debug!(
                     "Writing template for {} to {}",
                     package,
                     relative_path(&paths.third_party_dir, &fixup_path).display()
@@ -933,7 +933,7 @@ impl<'meta> Fixups<'meta> {
             .map(|src| src.to_string_lossy().into_owned())
             .collect();
 
-        log::info!(
+        log::debug!(
             "pkg {}, srcs {:?}, manifest_rel {}",
             self.package,
             srcs_globs,
