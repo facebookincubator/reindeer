@@ -910,6 +910,7 @@ fn buckify_for_universe(
     log::trace!("Metadata {:#?}", metadata);
 
     let index = index::Index::new(config.include_top_level, &metadata)?;
+    crate::universe::validate_universe_config(universe, universe_config, &index)?;
 
     let context = &RuleContext {
         config,

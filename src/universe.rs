@@ -279,3 +279,21 @@ pub fn mutate_manifest(
         original_contents,
     })
 }
+
+pub fn validate_universe_config(
+    universe_name: &UniverseName,
+    config: &UniverseConfig,
+    index: &crate::index::Index,
+) -> anyhow::Result<()> {
+    for krate in &config.include_crates {
+        if !index.is_public_package_name(krate) {
+            anyhow::bail!(
+                "Universe {universe_name} specifies in `include_crates` \
+                 a crate which is not a public package: {krate:?}. \
+                 Add it as a dependency of the root crate \
+                 or remove it from the `include_crates` list in Reindeer config."
+            );
+        };
+    }
+    Ok(())
+}

@@ -39,6 +39,9 @@ pub struct Index<'meta> {
     pub workspace_members: Vec<&'meta Manifest>,
     /// Set of packages from which at least one target is public.
     public_packages: BTreeSet<&'meta PkgId>,
+    /// The (possibly renamed) names of all packages which have at least one
+    /// public target.
+    public_package_names: BTreeSet<String>,
     /// Set of public targets. These consist of:
     /// - root_pkg, if it is being made public (aka "real", and not just a pseudo package)
     /// - first-order dependencies of root_pkg, including artifact dependencies
@@ -95,6 +98,7 @@ impl<'meta> Index<'meta> {
             workspace_members,
             public_packages: BTreeSet::new(),
             public_targets: BTreeMap::new(),
+            public_package_names: BTreeSet::new(),
         };
 
         // Keep an index of renamed crates, mapping from _ normalized name to actual name.
@@ -132,6 +136,15 @@ impl<'meta> Index<'meta> {
             tmp.public_packages.insert(pkg);
         }
 
+        for ((id, _), rename) in public_targets.iter() {
+            tmp.public_package_names
+                .insert(if let &Some(rename) = rename {
+                    rename.to_owned()
+                } else {
+                    tmp.pkgid_to_pkg[id].name.clone()
+                });
+        }
+
         Ok(Index {
             public_targets,
             ..tmp
@@ -149,6 +162,12 @@ impl<'meta> Index<'meta> {
     /// Test if there is any target from the package which is public
     pub fn is_public_package(&self, pkg: &Manifest) -> bool {
         self.public_packages.contains(&pkg.id)
+    }
+
+    /// Test if there is any target from any package with the given (possibly
+    /// renamed) crate name which is public.
+    pub fn is_public_package_name(&self, id: &str) -> bool {
+        self.public_package_names.contains(id)
     }
 
     /// Test if a specific target from a package is public
