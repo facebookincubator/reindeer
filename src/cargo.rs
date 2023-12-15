@@ -486,6 +486,10 @@ impl ManifestTarget {
         self.crate_types.contains(&CrateType::Dylib)
     }
 
+    pub fn crate_staticlib(&self) -> bool {
+        self.crate_types.contains(&CrateType::Staticlib)
+    }
+
     pub fn crate_cdylib(&self) -> bool {
         self.crate_types.contains(&CrateType::Cdylib)
     }

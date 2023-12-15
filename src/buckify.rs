@@ -580,7 +580,7 @@ fn generate_target_rules<'scope>(
     let mut dep_pkgs = Vec::new();
     for (deppkg, dep, rename, dep_kind) in fixups.compute_deps()? {
         let target_req = dep_kind.target_req();
-        if let TargetReq::Staticlib | TargetReq::Cdylib = target_req {
+        if let TargetReq::Cdylib = target_req {
             let artifact = &dep_kind.artifact;
             bail!("unsupported artifact kind {artifact:?} for dependency {dep:?}");
         }
@@ -709,8 +709,9 @@ fn generate_target_rules<'scope>(
     let mut rules: Vec<Rule> = if (tgt.kind_lib() && tgt.crate_lib())
         || (tgt.kind_proc_macro() && tgt.crate_proc_macro())
         || (tgt.kind_cdylib() && tgt.crate_cdylib())
+        || (tgt.kind_staticlib() && tgt.crate_staticlib())
     {
-        // Library or procmacro
+        // Library, procmacro, cdylib, or staticlib
         let mut rules = vec![];
 
         // The root package is public but we don't expose it via

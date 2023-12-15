@@ -242,7 +242,11 @@ impl<'meta> Index<'meta> {
         for (rename, dep_kind, dep) in self.resolved_deps(pkg) {
             if match dep_kind.kind {
                 DepKind::Normal => {
-                    tgt.kind_lib() || tgt.kind_proc_macro() || tgt.kind_bin() || tgt.kind_cdylib()
+                    tgt.kind_lib()
+                        || tgt.kind_proc_macro()
+                        || tgt.kind_bin()
+                        || tgt.kind_cdylib()
+                        || tgt.kind_staticlib()
                 }
                 DepKind::Dev => tgt.kind_bench() || tgt.kind_test() || tgt.kind_example(),
                 DepKind::Build => tgt.kind_custom_build(),
