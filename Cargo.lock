@@ -890,11 +890,8 @@ version = "1.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1885e79c1fc4b10f0e172c475f458b7f7b93061064d98c3293e98c5ba0c8b399"
 dependencies = [
- "arbitrary",
  "autocfg",
  "hashbrown 0.12.3",
- "rayon",
- "serde",
 ]
 
 [[package]]
@@ -903,8 +900,11 @@ version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d530e1a18b1cb4c484e6e34556a0d948706958449fca0cab753d649f2bce3d1f"
 dependencies = [
+ "arbitrary",
  "equivalent",
  "hashbrown 0.14.3",
+ "rayon",
+ "serde",
 ]
 
 [[package]]
@@ -1409,7 +1409,7 @@ dependencies = [
  "fnv",
  "globset",
  "ignore",
- "indexmap 1.9.2",
+ "indexmap 2.1.0",
  "itertools 0.11.0",
  "log",
  "measure_time",
