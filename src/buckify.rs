@@ -826,7 +826,7 @@ fn generate_target_rules<'scope>(
         rules
     } else {
         // Ignore everything else for now.
-        log::debug!("pkg {} target {} Skipping {:?}", pkg, tgt.name, tgt.kind());
+        log::warn!("pkg {} target {} Skipping {:?}", pkg, tgt.name, tgt.kind());
 
         vec![]
     };
