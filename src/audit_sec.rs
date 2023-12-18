@@ -12,7 +12,6 @@ use rustsec::advisory::Informational;
 use rustsec::report::Report;
 use rustsec::report::Settings;
 use rustsec::Database;
-use rustsec::Fixer;
 use rustsec::Lockfile;
 use rustsec::Repository;
 use rustsec::Warning;
@@ -23,16 +22,10 @@ use termcolor::ColorSpec;
 use termcolor::StandardStream;
 use termcolor::WriteColor;
 
-use crate::config::Config;
 use crate::Paths;
 
 /// Check crates for known security problems. Requires an existing Cargo.lock.
-pub fn audit_sec(
-    config: &Config,
-    paths: &Paths,
-    no_fetch: bool,
-    autofix: bool,
-) -> anyhow::Result<()> {
+pub fn audit_sec(paths: &Paths, no_fetch: bool) -> anyhow::Result<()> {
     let stdout = &mut StandardStream::stdout(ColorChoice::Auto);
     let default = ColorSpec::new();
     let mut red = ColorSpec::new();
@@ -42,7 +35,6 @@ pub fn audit_sec(
     let mut bold = ColorSpec::new();
     bold.set_bold(true);
 
-    let cargo_toml = paths.third_party_dir.join("Cargo.toml");
     let cargo_lock = paths.third_party_dir.join("Cargo.lock");
 
     let lockfile = Lockfile::load(&cargo_lock)
@@ -58,8 +50,6 @@ pub fn audit_sec(
         ..Settings::default()
     };
     let report = Report::generate(&db, &lockfile, &settings);
-
-    let mut fixer = Fixer::new(cargo_toml).context("initializing fixer")?;
 
     for v in &report.vulnerabilities.list {
         let adv = &v.advisory;
@@ -78,20 +68,6 @@ pub fn audit_sec(
             writeln!(stdout, "\n{}", adv.description)?;
             Ok(())
         }();
-
-        if !config.audit.never_autofix.contains(v.package.name.as_str()) {
-            if let Err(err) = fixer.fix(v, !autofix) {
-                let _ = || -> anyhow::Result<_> {
-                    stdout.set_color(&red)?;
-                    writeln!(
-                        stdout,
-                        "Failed to find fix for {} ({} {}): {}\n",
-                        adv.id, pkg.name, pkg.version, err
-                    )?;
-                    Ok(())
-                }();
-            }
-        }
 
         let _ = writeln!(stdout, "\n");
     }

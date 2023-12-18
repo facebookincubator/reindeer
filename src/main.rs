@@ -90,9 +90,6 @@ enum SubCommand {
         /// Use cached version of the advisory repo
         #[arg(long, short = 'n')]
         no_fetch: bool,
-        /// Attempt to fix problems by updating crates (often not very well)
-        #[arg(long)]
-        autofix: bool,
     },
 }
 
@@ -129,8 +126,8 @@ fn try_main() -> anyhow::Result<()> {
             vendor::cargo_vendor(&config, *no_delete, *audit_sec, *no_fetch, &args, &paths)?;
         }
 
-        SubCommand::Auditsec { no_fetch, autofix } => {
-            audit_sec::audit_sec(&config, &paths, *no_fetch, *autofix)?;
+        SubCommand::Auditsec { no_fetch } => {
+            audit_sec::audit_sec(&paths, *no_fetch)?;
         }
 
         SubCommand::Update { .. } => {

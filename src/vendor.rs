@@ -73,7 +73,7 @@ pub(crate) fn cargo_vendor(
     }
 
     if audit_sec {
-        crate::audit_sec::audit_sec(config, paths, no_fetch, false).context("doing audit_sec")?;
+        crate::audit_sec::audit_sec(paths, no_fetch).context("doing audit_sec")?;
     }
 
     Ok(())

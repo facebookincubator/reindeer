@@ -25,7 +25,7 @@ monostate = "0.1.8"
 nom = "7.1"
 proc-macro2 = { version = "1.0.70", features = ["span-locations"] }
 rayon = "1.2"
-rustsec = { version = "0.26", features = ["fix"] }
+rustsec = "0.26"
 semver = { version = "1.0.17", features = ["serde"] }
 serde = { version = "1.0.185", features = ["derive", "rc"] }
 serde_json = { version = "1.0.100", features = ["float_roundtrip", "unbounded_depth"] }
