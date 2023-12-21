@@ -59,6 +59,7 @@ pub fn merge_universes(
     config: &BTreeMap<UniverseName, UniverseConfig>,
     universes: BTreeMap<UniverseName, BTreeSet<Rule>>,
 ) -> anyhow::Result<BTreeSet<Rule>> {
+    use crate::buck::BuildscriptGenrule;
     use crate::buck::PlatformRustCommon;
     use crate::buck::RustBinary;
     use crate::buck::RustLibrary;
@@ -67,7 +68,8 @@ pub fn merge_universes(
     fn set_select_keys(key: UniverseName, attrs: &mut PlatformRustCommon) {
         attrs.features.set_key(key.clone());
         attrs.deps.set_key(key.clone());
-        attrs.named_deps.set_key(key);
+        attrs.named_deps.set_key(key.clone());
+        attrs.env.set_key(key);
     }
     fn set_library_keys(key: UniverseName, rule: &mut RustLibrary) {
         for platform in rule.common.platform.values_mut() {
@@ -80,6 +82,9 @@ pub fn merge_universes(
             set_select_keys(key.clone(), platform);
         }
         set_select_keys(key, &mut rule.common.base);
+    }
+    fn set_genrule_keys(key: UniverseName, rule: &mut BuildscriptGenrule) {
+        rule.features.set_key(key.clone());
     }
 
     /// Given
@@ -95,6 +100,7 @@ pub fn merge_universes(
         old.features.merge(new.features);
         old.deps.merge(new.deps);
         old.named_deps.merge(new.named_deps);
+        old.env.merge(new.env);
     }
     fn merge_library(old: &mut RustLibrary, new: RustLibrary) {
         // TODO: merge platform maps instead of unwrapping (I think platform
@@ -111,6 +117,9 @@ pub fn merge_universes(
         }
         merge_selects(&mut old.common.base, new.common.base);
     }
+    fn merge_genrule(old: &mut BuildscriptGenrule, new: BuildscriptGenrule) {
+        old.features.merge(new.features);
+    }
 
     /// Simplify select maps to values when all universes have the same value.
     /// Remap select keys from universe names to universe constraints.
@@ -125,6 +134,7 @@ pub fn merge_universes(
         finalize(config, &mut attrs.features);
         finalize(config, &mut attrs.deps);
         finalize(config, &mut attrs.named_deps);
+        finalize(config, &mut attrs.env);
     };
     let finalize_library_keys = |rule: &mut RustLibrary| {
         for platform in rule.common.platform.values_mut() {
@@ -138,6 +148,9 @@ pub fn merge_universes(
         }
         finalize_select_keys(&mut rule.common.base);
     };
+    let finalize_genrule_keys = |rule: &mut BuildscriptGenrule| {
+        finalize(config, &mut rule.features);
+    };
 
     // set select keys to universe name; construct Name -> Rule map for merging
     let mut universes: BTreeMap<UniverseName, BTreeMap<buck::Name, Rule>> = universes
@@ -147,8 +160,13 @@ pub fn merge_universes(
                 .into_iter()
                 .map(|mut rule| {
                     match &mut rule {
-                        Rule::Library(rule) => set_library_keys(name.clone(), rule),
-                        Rule::Binary(rule) => set_binary_keys(name.clone(), rule),
+                        Rule::Library(rule) | Rule::RootPackage(rule) => {
+                            set_library_keys(name.clone(), rule)
+                        }
+                        Rule::Binary(rule) | Rule::BuildscriptBinary(rule) => {
+                            set_binary_keys(name.clone(), rule)
+                        }
+                        Rule::BuildscriptGenrule(rule) => set_genrule_keys(name.clone(), rule),
                         _ => {}
                     }
                     (rule.get_name().clone(), rule)
@@ -160,23 +178,42 @@ pub fn merge_universes(
 
     // merge universes
     let mut rules = universes.remove(&Default::default()).unwrap();
-    for (_, universe_rules) in universes {
+    for (universe_name, universe_rules) in universes {
         for (name, rule) in universe_rules {
             if let Some(old_rule) = rules.get_mut(&name) {
                 match old_rule {
-                    Rule::Library(old) => {
-                        let Rule::Library(new) = rule else {
+                    Rule::Library(old) | Rule::RootPackage(old) => {
+                        let (Rule::Library(new) | Rule::RootPackage(new)) = rule else {
                             panic!("expected library")
                         };
                         merge_library(old, new);
                     }
-                    Rule::Binary(old) => {
-                        let Rule::Binary(new) = rule else {
+                    Rule::Binary(old) | Rule::BuildscriptBinary(old) => {
+                        let (Rule::Binary(new) | Rule::BuildscriptBinary(new)) = rule else {
                             panic!("expected binary")
                         };
                         merge_binary(old, new);
                     }
-                    _ => {}
+                    Rule::BuildscriptGenrule(old) => {
+                        let Rule::BuildscriptGenrule(new) = rule else {
+                            panic!("expected buildscript genrule")
+                        };
+                        merge_genrule(old, new);
+                    }
+                    Rule::Alias(old) => {
+                        let Rule::Alias(new) = rule else {
+                            panic!("expected alias")
+                        };
+                        if *old != new {
+                            panic!("expected alias rules to be identical in every universe")
+                        }
+                    }
+                    _ => {
+                        log::warn!(
+                            "Skipping unhandled rule while merging universe {universe_name}: {:?}",
+                            rule
+                        );
+                    }
                 }
             } else {
                 rules.insert(name, rule);
@@ -187,8 +224,9 @@ pub fn merge_universes(
     // finalize
     for rule in rules.values_mut() {
         match rule {
-            Rule::Library(rule) => finalize_library_keys(rule),
-            Rule::Binary(rule) => finalize_binary_keys(rule),
+            Rule::Library(rule) | Rule::RootPackage(rule) => finalize_library_keys(rule),
+            Rule::Binary(rule) | Rule::BuildscriptBinary(rule) => finalize_binary_keys(rule),
+            Rule::BuildscriptGenrule(rule) => finalize_genrule_keys(rule),
             _ => {}
         }
     }

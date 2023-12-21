@@ -488,7 +488,7 @@ pub struct PlatformRustCommon {
     pub features: Selectable<UniverseName, BTreeSet<String>>,
     pub deps: Selectable<UniverseName, BTreeSet<RuleRef>>,
     pub named_deps: Selectable<UniverseName, BTreeMap<String, RuleRef>>,
-    pub env: BTreeMap<String, StringOrPath>,
+    pub env: Selectable<UniverseName, BTreeMap<String, StringOrPath>>,
 
     // This isn't really "common" (Binaries only), but does need to be platform
     pub link_style: Option<String>,
@@ -793,7 +793,7 @@ pub struct BuildscriptGenrule {
     pub buildscript_rule: Name,
     pub package_name: String,
     pub version: Version,
-    pub features: BTreeSet<String>,
+    pub features: Selectable<UniverseName, BTreeSet<String>>,
     pub cfgs: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub path_env: BTreeMap<String, String>,

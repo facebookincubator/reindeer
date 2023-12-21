@@ -517,7 +517,7 @@ fn generate_target_rules<'scope>(
                 pkg,
                 tgt.name,
             );
-            rule.env.insert(
+            rule.env.unwrap_mut().insert(
                 "OUT_DIR".to_owned(),
                 StringOrPath::String(format!(
                     "$(location :{}[out_dir])",
@@ -569,7 +569,7 @@ fn generate_target_rules<'scope>(
         &mut perplat,
         |rule, env| {
             log::debug!("pkg {} target {}: adding env {:?}", pkg, tgt.name, env);
-            rule.env.extend(env);
+            rule.env.unwrap_mut().extend(env);
         },
         fixups.compute_env()?,
     )
@@ -624,7 +624,10 @@ fn generate_target_rules<'scope>(
                         let bin_name = dep_kind.bin_name.as_ref().unwrap();
                         let env = format!("{}-{}", target_name, bin_name);
                         let location = format!("$(location {}-{}#check)", dep.target, bin_name);
-                        recipient.env.insert(env, StringOrPath::String(location));
+                        recipient
+                            .env
+                            .unwrap_mut()
+                            .insert(env, StringOrPath::String(location));
                     } else if let Some(rename) = rename {
                         recipient
                             .named_deps
@@ -646,7 +649,9 @@ fn generate_target_rules<'scope>(
                 let bin_name = dep_kind.bin_name.as_ref().unwrap();
                 let env = format!("{}-{}", target_name, bin_name);
                 let location = format!("$(location {}-{}#check)", dep.target, bin_name);
-                base.env.insert(env, StringOrPath::String(location));
+                base.env
+                    .unwrap_mut()
+                    .insert(env, StringOrPath::String(location));
             } else if let Some(rename) = rename {
                 base.named_deps.unwrap_mut().insert(rename.to_owned(), dep);
             } else {

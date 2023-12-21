@@ -303,7 +303,7 @@ impl<'meta> Fixups<'meta> {
             buildscript_rule: buildscript_rule_name.clone(),
             package_name: self.package.name.clone(),
             version: self.package.version.clone(),
-            features: features.clone(),
+            features: buck::Selectable::Value(features.clone()),
             cfgs: Vec::new(),
             env: BTreeMap::new(),
             path_env: BTreeMap::new(),
