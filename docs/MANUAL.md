@@ -196,7 +196,7 @@ in `fixups.toml`, where the extra sources are specified as one or more globs.
 
 Some packages use version and other information from Cargo via a set of
 environment variables. If a build fails with a message about `CARGO_<something>`
-not being defined, then you can add `cargo_env = True` to `fixups.toml`.
+not being defined, then you can add `cargo_env = true` to `fixups.toml`.
 
 Sometimes they need an arbitrary environment variable to be defined. You can
 specify this with
