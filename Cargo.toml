@@ -11,7 +11,7 @@ license = "MIT"
 [dependencies]
 anyhow = "1.0.75"
 cached = "0.39.0"
-clap = { version = "4.4.7", features = ["derive", "env", "string", "unicode", "wrap_help"] }
+clap = { version = "4.4.12", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 dunce = "1.0.2"
 env_logger = "0.10"
 fnv = "1.0"
