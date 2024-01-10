@@ -275,9 +275,6 @@ pub fn mutate_manifest(
                 return;
             };
             for (krate, item) in deps.iter_mut() {
-                if self.0.include_crates.contains(&*krate) {
-                    continue;
-                }
                 let Item::Value(val) = item else {
                     continue;
                 };
@@ -299,7 +296,14 @@ pub fn mutate_manifest(
                     item["version"] = toml_edit::value(version);
                 }
                 if item.is_inline_table() {
-                    if !self.0.include_crates.contains(&*krate) {
+                    if self.0.include_crates.contains(&*krate) {
+                        // If the crate is included but marked optional, mark it
+                        // non-optional.
+                        if item.get("optional").and_then(|i| i.as_bool()) == Some(true) {
+                            item["optional"] = toml_edit::value(false);
+                        }
+                    } else {
+                        // The crate is not included, so mark it optional.
                         item["optional"] = toml_edit::value(true);
                     }
                 }
