@@ -1,0 +1,49 @@
+aliases:
+  - &is_main_branch
+      equal: [ main, << pipeline.git.branch >> ]
+
+commands:
+  install_rust_toolchain:
+    description: Install a rust toolchain
+    steps:
+      - run:
+          name: Download rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain nightly-2023-07-10 -y
+      - run:
+          name: Set environment variables
+          command: |
+            echo 'source "$HOME"/.cargo/env' >> "$BASH_ENV"
+
+  setup_linux_env:
+    description: Linux installation steps
+    steps:
+      - install_rust_toolchain
+
+  cargo:
+    description: Use cargo to build & test
+    steps:
+      - run:
+          name: Cargo build & test
+          command: |
+            cargo build --locked
+            cargo test
+
+version: 2.1
+jobs:
+  linux-cargo-build-and-test:
+    description: |
+      Linux cargo build & test
+    machine:
+      # Ubuntu 22.04
+      # https://circleci.com/developer/machine/image/ubuntu-2204
+      image: ubuntu-2204:2023.10.1
+    resource_class: medium
+    steps:
+      - checkout
+      - setup_linux_env
+      - cargo
+workflows:
+  build-test:
+    jobs:
+      - linux-cargo-build-and-test
