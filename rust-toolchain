@@ -1,0 +1,4 @@
+[toolchain]
+
+# @rustc_version: rustc 1.74.0-nightly (ca62d2c44 2023-09-30)
+channel = "nightly-2023-10-01"
