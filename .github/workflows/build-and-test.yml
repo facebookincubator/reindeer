@@ -3,10 +3,15 @@ on:
   push:
   pull_request:
 jobs:
-  linux-build-and-test:
-    runs-on: ubuntu-latest
+  build-and-test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu, macos, windows]
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup_linux_env
+      - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked
       - run: cargo test
