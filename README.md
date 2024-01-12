@@ -1,4 +1,4 @@
-# Reindeer - Building Cargo Packages with Buck
+# Reindeer - Building Cargo Packages with Buck [![Build Status](https://github.com/facebookincubator/reindeer/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/facebookincubator/reindeer/actions)
 
 Jeremy Fitzhardinge <jsgf@fb.com>
 
