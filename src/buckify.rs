@@ -107,6 +107,12 @@ pub fn relative_path(mut base: &Path, to: &Path) -> PathBuf {
     let mut res = PathBuf::new();
 
     while !to.starts_with(base) {
+        log::debug!(
+            "relative_path: to={}, base={}, res={}",
+            to.display(),
+            base.display(),
+            res.display()
+        );
         res.push("..");
         base = base.parent().expect("root dir not prefix of other?");
     }
