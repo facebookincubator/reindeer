@@ -13,5 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
+      - run: echo CARGO_HOME=$GITHUB_WORKSPACE/.cargo >> $GITHUB_ENV
+        shell: bash
       - run: cargo build --locked
       - run: cargo test
+      - run: |-
+          cd example
+          ./setup.sh # run reindeer buckify
+          cat ./third-party/BUCK
+        shell: bash
