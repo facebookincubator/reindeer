@@ -12,9 +12,7 @@ jobs:
         os: [ubuntu, macos, windows]
     steps:
       - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
-      - run: echo CARGO_HOME=$GITHUB_WORKSPACE/.cargo >> $GITHUB_ENV
-        shell: bash
+      # - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked
       - run: cargo test
       - run: |-

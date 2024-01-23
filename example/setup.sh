@@ -19,4 +19,4 @@ set -e
 # typically commit these fixups and the generated third-party/BUCK in the same
 # commit as above.
 
-../target/debug/reindeer --third-party-dir third-party buckify
+RUST_LOG="debug" ../target/debug/reindeer --third-party-dir third-party buckify

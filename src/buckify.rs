@@ -114,7 +114,30 @@ pub fn relative_path(mut base: &Path, to: &Path) -> PathBuf {
             res.display()
         );
         res.push("..");
-        base = base.parent().expect("root dir not prefix of other?");
+        base.parent().expect("root not prefix of other?")
+        /*
+            match base.parent() {
+                Some(parent) => base = parent,
+                None => {
+                    // Here, `to` and `base` do not share a common
+                    // ancestor.
+
+                    // Example:
+                    //  - `to`   = 'C:\Users\runneradmin\.cargo\...001f\anyhow-1.0.79\build.rs'
+                    //  - `base` = 'D:\a\reindeer\reindeer\shim\third-party\rust'
+
+                    // In this case return `to` "as-is" (i.e. without any
+                    // modification)`. `reindeer buckify` seems to work
+                    // with this choice.
+                    log::debug!(
+                        "relative_path: no common ancestor. returning to={}",
+                        to.display(),
+                    );
+
+                    return to.to_path_buf();
+                }
+        }
+            */
     }
 
     res.join(
