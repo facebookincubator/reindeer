@@ -13,12 +13,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-      - run: echo CARGO_HOME=$GITHUB_WORKSPACE/.cargo >> $GITHUB_ENV
+      - run: |-
+          echo CARGO_HOME=$GITHUB_WORKSPACE/.cargo >> $GITHUB_ENV
+          echo $GITHUB_WORKSPACE/target/debug >> $GITHUB_PATH
         shell: bash
       - run: cargo build --locked
       - run: cargo test
-      - run: |-
+      - uses: dtolnay/install-buck2@latest
+      - name: Build example project (Ubuntu, macOS)
+        run: |-
           cd example
-          ./setup.sh # run reindeer buckify
-          cat ./third-party/BUCK
-        shell: bash
+          reindeer --third-party-dir third-party buckify
+          buck2 init --git
+          buck2 run "//project:test"
+        if: matrix.os == 'ubuntu' || matrix.os == 'macos'
+      - name: Build example project (Windows)
+        run: |-
+          cd example
+          & reindeer --third-party-dir third-party buckify
+          & buck2 init --git
+          & buck2 run "//project:test"
+        if: matrix.os == 'windows'
