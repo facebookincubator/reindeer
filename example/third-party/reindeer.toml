@@ -157,16 +157,24 @@ target_vendor = ["pc"]
 # Name of the generated file
 file_name = "BUCK" # default
 
-# Rules used for various kinds of targets. These rules don't directly correspond
-# with BUCK rules - they have extra attributes such as per-platform settings.
-# The intent is that you provide a set of macro definitions which resolve them
-# to appropriate underlying rules suitable for your environment. (This may also
-# work for Buck-like build systems such as Bazel.)
-rust_library = "third_party_rust_library"       # A plain Rust library
-rust_binary = "third_party_rust_binary"         # A Rust executable
+# Rules used for various kinds of targets. These rules don't directly
+# correspond with BUCK rules - they have extra attributes such as
+# per-platform settings. The intent is that you provide a set of macro
+# definitions which resolve them to appropriate underlying rules
+# suitable for your environment. (This may also work for Buck-like
+# build systems such as Bazel.)
+rust_library = "cargo.rust_library"       # A plain Rust library
+rust_binary = "cargo.rust_binary"         # A Rust executable
 cxx_library = "third_party_rust_cxx_library"    # A C++ library (mostly for Rust -> C dependencies)
 prebuilt_cxx_library = "third_party_rust_prebuilt_cxx_library"    # A prebuilt library (mostly for Rust -> C dependencies)
 buildscript_genrule = "buildscript_run"    # Rule for running a build script to produce rustc args and generated sources
+
+# Load the macros to which the rules above will resolve.
+buckfile_imports = """
+load("@prelude//rust:cargo_buildscript.bzl", "buildscript_run")
+load("@prelude//rust:cargo_package.bzl", "cargo")
+load("//third-party/macros:rust_third_party.bzl", "third_party_rust_cxx_library", "third_party_rust_prebuilt_cxx_library")
+"""
 
 # Banner comment for the generated BUCK File.
 generated_file_header = """
@@ -176,16 +184,4 @@ generated_file_header = """
 ##
 ## See README.md for directions on how to update this.
 ##
-"""
-
-# Load the macros to which the rules above will resolve.
-buckfile_imports = """
-load(
-    "//third-party/macros:rust_third_party.bzl",
-    "third_party_rust_library", # names match above
-    "third_party_rust_binary",
-    "third_party_rust_cxx_library",
-    "third_party_rust_prebuilt_cxx_library",
-)
-load("@prelude//rust:cargo_buildscript.bzl", "buildscript_run")
 """
