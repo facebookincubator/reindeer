@@ -725,9 +725,13 @@ fn generate_target_rules<'scope>(
         // Library, procmacro, cdylib, or staticlib
         let mut rules = vec![];
 
-        // The root package is public but we don't expose it via
-        // an alias. The root package library is exposed directly.
-        if index.is_public_target(pkg, TargetReq::Lib) && !index.is_root_package(pkg) {
+        // The root package is public but we don't expose it via an alias. The
+        // root package library is exposed directly. In the case the root
+        // package is public and the target is a staticlib we do expose it via
+        // an alias.
+        if index.is_public_target(pkg, TargetReq::Lib) && !index.is_root_package(pkg)
+            || index.is_public_target(pkg, TargetReq::Staticlib)
+        {
             rules.push(Rule::Alias(Alias {
                 name: index.public_rule_name(pkg),
                 actual: index.private_rule_name(pkg),
