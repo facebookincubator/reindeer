@@ -36,11 +36,11 @@ pub struct Index<'meta> {
     pub root_pkg: Option<&'meta Manifest>,
     /// All packages considered part of the workspace.
     pub workspace_members: Vec<&'meta Manifest>,
-    /// Set of packages from which at least one target is public.
-    public_packages: BTreeSet<&'meta PkgId>,
+    /// Set of package IDs from which at least one target is public mapped to an optional rename
+    public_packages: BTreeMap<&'meta PkgId, Option<&'meta str>>,
     /// The (possibly renamed) names of all packages which have at least one
     /// public target.
-    public_package_names: BTreeSet<String>,
+    public_package_names: BTreeSet<&'meta str>,
     /// Set of public targets. These consist of:
     /// - root_pkg, if it is being made public (aka "real", and not just a pseudo package)
     /// - first-order dependencies of root_pkg, including artifact dependencies
@@ -95,9 +95,9 @@ impl<'meta> Index<'meta> {
             pkgid_to_node: metadata.resolve.nodes.iter().map(|n| (&n.id, n)).collect(),
             root_pkg,
             workspace_members,
-            public_packages: BTreeSet::new(),
-            public_targets: BTreeMap::new(),
+            public_packages: BTreeMap::new(),
             public_package_names: BTreeSet::new(),
+            public_targets: BTreeMap::new(),
         };
 
         // Keep an index of renamed crates, mapping from _ normalized name to actual name.
@@ -131,16 +131,13 @@ impl<'meta> Index<'meta> {
             }))
             .collect::<BTreeMap<_, _>>();
 
-        for (pkg, _kind) in public_targets.keys() {
-            tmp.public_packages.insert(pkg);
-        }
-
         for ((id, _), rename) in public_targets.iter() {
+            tmp.public_packages.insert(id, rename.clone());
             tmp.public_package_names
                 .insert(if let &Some(rename) = rename {
-                    rename.to_owned()
+                    rename
                 } else {
-                    tmp.pkgid_to_pkg[id].name.clone()
+                    &tmp.pkgid_to_pkg[id].name
                 });
         }
 
@@ -160,13 +157,13 @@ impl<'meta> Index<'meta> {
 
     /// Test if there is any target from the package which is public
     pub fn is_public_package(&self, pkg: &Manifest) -> bool {
-        self.public_packages.contains(&pkg.id)
+        self.public_packages.contains_key(&pkg.id)
     }
 
     /// Test if there is any target from any package with the given (possibly
     /// renamed) crate name which is public.
-    pub fn is_public_package_name(&self, id: &str) -> bool {
-        self.public_package_names.contains(id)
+    pub fn is_public_package_name(&self, name: &str) -> bool {
+        self.public_package_names.contains(&name)
     }
 
     /// Test if a specific target from a package is public
@@ -176,7 +173,7 @@ impl<'meta> Index<'meta> {
 
     /// Return the private package rule name.
     pub fn private_rule_name(&self, pkg: &Manifest) -> Name {
-        Name(match self.public_targets.get(&(&pkg.id, TargetReq::Lib)) {
+        Name(match self.public_packages.get(&pkg.id) {
             Some(None) | None => pkg.to_string(), // Full version info
             Some(Some(rename)) => format!("{}-{}", pkg, rename), // Rename
         })
@@ -184,7 +181,7 @@ impl<'meta> Index<'meta> {
 
     /// Return the package public rule name.
     pub fn public_rule_name(&self, pkg: &'meta Manifest) -> Name {
-        Name(match self.public_targets.get(&(&pkg.id, TargetReq::Lib)) {
+        Name(match self.public_packages.get(&pkg.id) {
             Some(None) | None => pkg.name.to_owned(), // Package name
             Some(&Some(rename)) => rename.to_owned(), // Rename
         })
