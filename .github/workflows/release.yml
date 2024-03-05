@@ -2,7 +2,7 @@ on:
   push:
     tags:
       # Only match TagIt tags, which always start with this prefix
-      - 'v20*'
+      # - 'v20*'
   workflow_dispatch:
 
 name: Publish Release
