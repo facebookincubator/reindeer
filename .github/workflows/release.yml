@@ -36,6 +36,10 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
+      - run: sudo apt-get update && sudo apt-get install libssl-dev
+        if: matrix.os == 'ubuntu'
+      - run: brew install openssl
+        if: matrix.os == 'macos'
       - uses: SebRollen/toml-action@v1.0.2
         id: read_rust_toolchain
         with:
@@ -75,7 +79,7 @@ jobs:
           else
             CARGO=cargo
           fi
-          $CARGO build --release --bin reindeer --target ${{ matrix.target.triple }}
+          $CARGO build --locked --release --bin reindeer --target ${{ matrix.target.triple }}
       - name: Move binary to artifacts/
         shell: bash
         run: |
