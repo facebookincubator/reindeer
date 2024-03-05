@@ -1,6 +1,8 @@
 on:
   push:
     tags:
+      # Only match TagIt tags, which always start with this prefix
+      - 'v20*'
   workflow_dispatch:
 
 name: Publish Release
@@ -22,9 +24,8 @@ jobs:
           - os: 'ubuntu-22.04'
             triple: 'x86_64-unknown-linux-musl'
             cross: true
-          - os: 'macos-12'
+          - os: 'macos-14'
             triple: 'aarch64-apple-darwin'
-            cross: true
           - os: 'macos-12'
             triple: 'x86_64-apple-darwin'
           - os: 'windows-2022'
@@ -37,9 +38,7 @@ jobs:
         with:
           fetch-depth: 0
       - run: sudo apt-get update && sudo apt-get install libssl-dev
-        if: matrix.os == 'ubuntu'
-      - run: brew install openssl
-        if: matrix.os == 'macos'
+        if: matrix.os == 'ubuntu-22.04'
       - uses: SebRollen/toml-action@v1.0.2
         id: read_rust_toolchain
         with:
