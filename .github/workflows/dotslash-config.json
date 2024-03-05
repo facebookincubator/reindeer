@@ -1,0 +1,29 @@
+{
+    "exclude-github-release-provider": true,
+    "outputs": {
+      "reindeer": {
+        "platforms": {
+          "macos-aarch64": {
+            "regex": "^reindeer-aarch64-apple-darwin.zst$",
+            "path": "reindeer-aarch64-apple-darwin"
+          },
+          "linux-aarch64": {
+            "regex": "^reindeer-aarch64-unknown-linux-musl.zst$",
+            "path": "reindeer-aarch64-unknown-linux-musl"
+          },
+          "macos-x86_64": {
+            "regex": "^reindeer-x86_64-apple-darwin.zst$",
+            "path": "reindeer-x86_64-apple-darwin"
+          },
+          "windows-x86_64": {
+            "regex": "^reindeer-x86_64-pc-windows-msvc.exe.zst$",
+            "path": "reindeer-x86_64-pc-windows-msvc.exe"
+          },
+          "linux-x86_64": {
+            "regex": "^reindeer-x86_64-unknown-linux-musl.zst$",
+            "path": "reindeer-x86_64-unknown-linux-musl"
+          }
+        }
+      }
+    }
+  }

@@ -1,0 +1,120 @@
+on:
+  push:
+    tags:
+  workflow_dispatch:
+
+name: Publish Release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - os: 'ubuntu-22.04'
+            triple: 'aarch64-unknown-linux-gnu'
+            cross: true
+          - os: 'ubuntu-22.04'
+            triple: 'aarch64-unknown-linux-musl'
+            cross: true
+          - os: 'ubuntu-22.04'
+            triple: 'x86_64-unknown-linux-gnu'
+          - os: 'ubuntu-22.04'
+            triple: 'x86_64-unknown-linux-musl'
+            cross: true
+          - os: 'macos-12'
+            triple: 'aarch64-apple-darwin'
+            cross: true
+          - os: 'macos-12'
+            triple: 'x86_64-apple-darwin'
+          - os: 'windows-2022'
+            triple: 'x86_64-pc-windows-msvc'
+            is_windows: true
+    runs-on: ${{ matrix.target.os }}
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - uses: SebRollen/toml-action@v1.0.2
+        id: read_rust_toolchain
+        with:
+          file: 'rust-toolchain'
+          field: 'toolchain.channel'
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.read_rust_toolchain.outputs.value }}
+          targets: ${{ matrix.target.triple }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: reindeer-upload
+          key: ${{ matrix.target.triple }}
+      - uses: actions-rs/install@v0.1
+        if: matrix.target.cross
+        with:
+          crate: cross
+          version: latest
+      - name: Set variables
+        id: set_variables
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.target.is_windows }}" ]; then
+            echo "cargo_out=target/${{ matrix.target.triple }}/release/reindeer.exe" >> "$GITHUB_OUTPUT"
+            echo "reindeer_zst=artifacts/reindeer-${{ matrix.target.triple }}.exe.zst" >> "$GITHUB_OUTPUT"
+          else
+            echo "cargo_out=target/${{ matrix.target.triple }}/release/reindeer" >> "$GITHUB_OUTPUT"
+            echo "reindeer_zst=artifacts/reindeer-${{ matrix.target.triple }}.zst" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build
+        shell: bash
+        env:
+          RUSTFLAGS: "-C strip=debuginfo -C codegen-units=1"
+        run: |
+          if [ -n "${{ matrix.target.cross }}" ]; then
+            CARGO=cross
+          else
+            CARGO=cargo
+          fi
+          $CARGO build --release --bin reindeer --target ${{ matrix.target.triple }}
+      - name: Move binary to artifacts/
+        shell: bash
+        run: |
+          mkdir artifacts
+          zstd -z ${{ steps.set_variables.outputs.cargo_out }} -o ${{ steps.set_variables.outputs.reindeer_zst }}
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: reindeer-${{ matrix.target.triple }}
+          path: ${{ steps.set_variables.outputs.reindeer_zst }}
+
+  release:
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - shell: bash
+        run: |
+          mkdir -p ${{github.workspace}}/artifacts
+      - uses: actions/download-artifact@v3
+        with:
+          path: ${{github.workspace}}/artifacts
+      - name: Display structure of downloaded files
+        shell: bash
+        run: |
+          ls -R artifacts
+      - uses: pyTooling/Actions/releaser@adef08d3bdef092282614f3b683897cefae82ee3 # v0.4.6
+        id: upload_attempt_1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: '${{ github.ref_name }}'
+          files: ${{ github.workspace }}/artifacts/**
+          rm: false # do not clean past assets
+      - uses: facebook/dotslash-publish-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          config: .github/dotslash-config.json
+          tag: '${{ github.ref_name }}'
