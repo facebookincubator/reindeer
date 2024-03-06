@@ -40,6 +40,7 @@ jobs:
       # This makes sure that this executable is portable:
       - name: Vendor openssl
         run: cargo add openssl-sys -F vendored
+        if: !matrix.target.is_windows
       - uses: SebRollen/toml-action@v1.0.2
         id: read_rust_toolchain
         with:
