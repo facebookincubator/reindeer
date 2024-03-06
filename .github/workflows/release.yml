@@ -37,8 +37,9 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      - run: cargo add openssl-sys -F vendored
-        if: matrix.target.cross
+      # This makes sure that this executable is portable:
+      - name: Vendor openssl
+        run: cargo add openssl-sys -F vendored
       - uses: SebRollen/toml-action@v1.0.2
         id: read_rust_toolchain
         with:
