@@ -37,6 +37,8 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
+      - run: cargo add openssl-sys -F vendored
+        if: matrix.target.cross
       - uses: SebRollen/toml-action@v1.0.2
         id: read_rust_toolchain
         with:
@@ -69,7 +71,7 @@ jobs:
       - name: Build
         shell: bash
         env:
-          RUSTFLAGS: "-C strip=debuginfo -C codegen-units=1 -F vendored-openssl"
+          RUSTFLAGS: "-C strip=debuginfo -C codegen-units=1"
         run: |
           if [ -n "${{ matrix.target.cross }}" ]; then
             CARGO=cross
