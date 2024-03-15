@@ -18,7 +18,11 @@ use serde::de::MapAccess;
 use serde::de::SeqAccess;
 use serde::de::Visitor;
 use serde::ser::Serialize;
+use serde::ser::SerializeSeq;
+use serde::ser::SerializeTupleStruct;
 use serde::ser::Serializer;
+use serde_starlark::FunctionCall;
+use serde_starlark::MULTILINE;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SetOrMap<T> {
@@ -98,5 +102,199 @@ where
 
         let visitor = SetOrMapVisitor(PhantomData);
         deserializer.deserialize_any(visitor)
+    }
+}
+
+pub struct MultilineArray<'a, A>(&'a A);
+
+impl<'a, A, T> Serialize for MultilineArray<'a, A>
+where
+    &'a A: IntoIterator<Item = &'a T>,
+    T: Serialize + 'a,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut array = serializer.serialize_seq(Some(MULTILINE))?;
+        for element in self.0 {
+            array.serialize_element(element)?;
+        }
+        array.end()
+    }
+}
+
+#[derive(Debug, Default, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct SelectSet {
+    pub common: BTreeSet<String>,
+    pub selects: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl SelectSet {
+    pub fn is_empty(&self) -> bool {
+        self.common.is_empty() && self.selects.is_empty()
+    }
+}
+
+// Inspired by SelectSet (see link) but much simplified. If you stumble here
+// and want to extend the implementation below, this link is a good reference
+// for ideas:
+// https://github.com/bazelbuild/rules_rust/blob/0.40.0/crate_universe/src/utils/starlark/select_set.rs#L15-L27
+impl Serialize for SelectSet {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut plus = serializer.serialize_tuple_struct("+", MULTILINE)?;
+        match (self.common.is_empty(), self.selects.is_empty()) {
+            (_, true) => {
+                plus.serialize_field(&self.common)?;
+            }
+            (true, false) => {
+                plus.serialize_field(&FunctionCall::new("select", [&self.selects]))?;
+            }
+            (false, false) => {
+                // force common to be always serialized over mutliple lines
+                plus.serialize_field(&MultilineArray(&self.common))?;
+                plus.serialize_field(&FunctionCall::new("select", [&self.selects]))?;
+            }
+        }
+        plus.end()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use indoc::indoc;
+
+    use super::*;
+
+    #[test]
+    fn select_set_empty() {
+        let select_set = SelectSet::default();
+
+        let expected = indoc! {r#"
+            []
+        "#};
+
+        assert_eq!(
+            select_set.serialize(serde_starlark::Serializer).unwrap(),
+            expected,
+        );
+    }
+
+    #[test]
+    fn select_set_only_common_single() {
+        let common = BTreeSet::from(["a".to_owned()]);
+        let select_set = SelectSet {
+            common,
+            ..Default::default()
+        };
+
+        let expected = indoc! {r#"
+            ["a"]
+        "#};
+
+        assert_eq!(
+            select_set.serialize(serde_starlark::Serializer).unwrap(),
+            expected,
+        );
+    }
+
+    #[test]
+    fn select_set_only_common_multiple() {
+        let common = BTreeSet::from(["a".to_owned(), "b".to_owned()]);
+        let select_set = SelectSet {
+            common,
+            ..Default::default()
+        };
+
+        let expected = indoc! {r#"
+            [
+                "a",
+                "b",
+            ]
+        "#};
+
+        assert_eq!(
+            select_set.serialize(serde_starlark::Serializer).unwrap(),
+            expected,
+        );
+    }
+
+    #[test]
+    fn select_set_only_selects() {
+        let selects = BTreeMap::from([
+            (
+                "DEFAULT".to_owned(),
+                BTreeSet::from(["a".to_owned(), "b".to_owned()]),
+            ),
+            (
+                "ovr_config//third-party/some/constraints:1".to_owned(),
+                BTreeSet::from(["c".to_owned()]),
+            ),
+            (
+                "ovr_config//third-party/some/constraints:2".to_owned(),
+                BTreeSet::from(["d".to_owned(), "e".to_owned()]),
+            ),
+        ]);
+
+        let select_set = SelectSet {
+            selects,
+            ..Default::default()
+        };
+
+        let expected = indoc! {r#"
+            select({
+                "DEFAULT": [
+                    "a",
+                    "b",
+                ],
+                "ovr_config//third-party/some/constraints:1": ["c"],
+                "ovr_config//third-party/some/constraints:2": [
+                    "d",
+                    "e",
+                ],
+            })
+        "#};
+
+        assert_eq!(
+            select_set.serialize(serde_starlark::Serializer).unwrap(),
+            expected,
+        );
+    }
+
+    #[test]
+    fn select_set_common_and_selects() {
+        let common = BTreeSet::from(["a".to_owned()]);
+        let selects = BTreeMap::from([
+            (
+                "DEFAULT".to_owned(),
+                BTreeSet::from(["a".to_owned(), "b".to_owned()]),
+            ),
+            (
+                "ovr_config//third-party/some/constraints:1".to_owned(),
+                BTreeSet::from(["c".to_owned()]),
+            ),
+        ]);
+
+        let select_set = SelectSet { common, selects };
+
+        let expected = indoc! {r#"
+            [
+                "a",
+            ] + select({
+                "DEFAULT": [
+                    "a",
+                    "b",
+                ],
+                "ovr_config//third-party/some/constraints:1": ["c"],
+            })
+        "#};
+
+        assert_eq!(
+            select_set.serialize(serde_starlark::Serializer).unwrap(),
+            expected,
+        );
     }
 }

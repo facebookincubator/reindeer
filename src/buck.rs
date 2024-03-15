@@ -12,6 +12,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::io::Write;
 use std::path::PathBuf;
@@ -23,6 +24,7 @@ use serde::ser::Serializer;
 use serde::Serialize;
 use serde_starlark::FunctionCall;
 
+use crate::collection::SelectSet;
 use crate::collection::SetOrMap;
 use crate::config::BuckConfig;
 use crate::platform::PlatformConfig;
@@ -484,7 +486,7 @@ pub struct Common {
 pub struct PlatformRustCommon {
     pub srcs: BTreeSet<BuckPath>,
     pub mapped_srcs: BTreeMap<SubtargetOrPath, BuckPath>,
-    pub rustc_flags: Vec<String>,
+    pub rustc_flags: SelectSet,
     pub features: Selectable<UniverseName, BTreeSet<String>>,
     pub deps: Selectable<UniverseName, BTreeSet<RuleRef>>,
     pub named_deps: Selectable<UniverseName, BTreeMap<String, RuleRef>>,

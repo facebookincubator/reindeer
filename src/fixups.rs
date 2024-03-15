@@ -626,7 +626,12 @@ impl<'meta> Fixups<'meta> {
         Ok(ret)
     }
 
-    fn buildscript_rustc_flags(&self) -> Vec<(Option<PlatformExpr>, Vec<String>)> {
+    fn buildscript_rustc_flags(
+        &self,
+    ) -> Vec<(
+        Option<PlatformExpr>,
+        (Vec<String>, BTreeMap<String, Vec<String>>),
+    )> {
         let mut ret = vec![];
         if self.buildscript_target().is_none() {
             return ret; // no buildscript
@@ -648,7 +653,7 @@ impl<'meta> Fixups<'meta> {
             }
 
             if !flags.is_empty() {
-                ret.push((platform.cloned(), flags));
+                ret.push((platform.cloned(), (flags, Default::default())));
             }
         }
 
@@ -656,7 +661,12 @@ impl<'meta> Fixups<'meta> {
     }
 
     /// Return extra command-line options, with platform annotation if needed
-    pub fn compute_cmdline(&self) -> Vec<(Option<PlatformExpr>, Vec<String>)> {
+    pub fn compute_cmdline(
+        &self,
+    ) -> Vec<(
+        Option<PlatformExpr>,
+        (Vec<String>, BTreeMap<String, Vec<String>>),
+    )> {
         let mut ret = vec![];
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
@@ -664,9 +674,10 @@ impl<'meta> Fixups<'meta> {
 
             flags.extend(config.rustc_flags.clone());
             flags.extend(config.cfgs.iter().map(|cfg| format!("--cfg={}", cfg)));
+            let flags_select = config.rustc_flags_select.clone();
 
-            if !flags.is_empty() {
-                ret.push((platform.cloned(), flags));
+            if !flags.is_empty() || !flags_select.is_empty() {
+                ret.push((platform.cloned(), (flags, flags_select)));
             }
         }
 

@@ -483,9 +483,22 @@ fn generate_target_rules<'scope>(
         config,
         &mut base,
         &mut perplat,
-        |rule, flags| {
-            log::debug!("pkg {} target {}: adding flags {:?}", pkg, tgt.name, flags);
-            rule.rustc_flags.extend(flags)
+        |rule, (flags, flags_select)| {
+            log::debug!(
+                "pkg {} target {}: adding flags {:?} and select {:?}",
+                pkg,
+                tgt.name,
+                flags,
+                flags_select
+            );
+            rule.rustc_flags.common.extend(flags);
+            flags_select.into_iter().for_each(|(k, v)| {
+                rule.rustc_flags
+                    .selects
+                    .entry(k)
+                    .or_insert(BTreeSet::new())
+                    .extend(v);
+            });
         },
         fixups.compute_cmdline(),
     )
@@ -798,7 +811,7 @@ fn generate_target_rules<'scope>(
                 edition,
                 base: PlatformRustCommon {
                     // don't use fixed ones because it will be a cyclic dependency
-                    rustc_flags: Vec::new(),
+                    rustc_flags: Default::default(),
                     link_style: bin_base.link_style.clone(),
                     ..base
                 },
