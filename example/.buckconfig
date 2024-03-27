@@ -16,4 +16,3 @@ target_platform_detector_spec = target:root//...->prelude//platforms:default
 [rust]
 default_edition = 2021
 remap_src_paths = yes
-rustc_check_flags = --cap-lints=warn
