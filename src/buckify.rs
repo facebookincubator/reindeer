@@ -297,7 +297,7 @@ fn generate_http_archive<'scope>(
         strip_prefix: format!("{}-{}", pkg.name, pkg.version),
         sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
         urls: vec![format!(
-            "https://crates.io/api/v1/crates/{}/{}/download",
+            "https://static.crates.io/crates/{}/{}/download",
             pkg.name, pkg.version,
         )],
         visibility: Visibility::Private,
