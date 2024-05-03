@@ -17,14 +17,14 @@ env_logger = "0.10"
 fnv = "1.0"
 globset = { version = "0.4.13", features = ["serde1"] }
 ignore = "0.4"
-indexmap = { version = "2.1.0", features = ["arbitrary", "rayon", "serde"] }
+indexmap = { version = "2.2.6", features = ["arbitrary", "rayon", "serde"] }
 itertools = "0.11.0"
 log = { version = "0.4.17", features = ["kv_unstable", "kv_unstable_std"] }
 measure_time = "0.8.2"
 monostate = "0.1.8"
 nom = "7.1"
 proc-macro2 = { version = "1.0.70", features = ["span-locations"] }
-rayon = "1.2"
+rayon = "1.9.0"
 rustsec = "0.26"
 semver = { version = "1.0.17", features = ["serde"] }
 serde = { version = "1.0.185", features = ["derive", "rc"] }
