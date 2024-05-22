@@ -54,14 +54,23 @@ pub(crate) fn cargo_vendor(
                 cmdline.push("--no-delete");
             }
             log::info!("Running cargo {:?}", cmdline);
-            let mut cargoconfig = cargo::run_cargo(
+            let _ = cargo::run_cargo(
                 config,
                 Some(&paths.cargo_home),
                 &paths.third_party_dir,
                 args,
                 &cmdline,
             )?;
-            cargoconfig.splice(0..0, b"# ".iter().copied());
+            let cargoconfig = format!(
+                r#"[source.crates-io]
+registry = 'sparse+https://index.crates.io/'
+replace-with = 'local-registry'
+
+[source.local-registry]
+local-registry = {vendordir:?}
+"#
+            );
+            // cargoconfig.splice(0..0, b"# ".iter().copied());
             fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
             // if !cargoconfig.is_empty() {
             //     assert!(is_vendored(paths)?);
