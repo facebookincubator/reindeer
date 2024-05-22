@@ -262,7 +262,7 @@ fn generate_nonvendored_sources_archive<'scope>(
         Source::Local => Ok(None),
         Source::CratesIo => match context.config.vendor {
             VendorConfig::Off => generate_http_archive(context, pkg, lockfile_package).map(Some),
-            VendorConfig::Compressed => {
+            VendorConfig::LocalRegistry => {
                 generate_extract_archive(context, pkg, lockfile_package).map(Some)
             }
             VendorConfig::Source(_) => unreachable!(),

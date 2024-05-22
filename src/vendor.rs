@@ -43,7 +43,7 @@ pub(crate) fn cargo_vendor(
     let vendordir = Path::new("vendor"); // relative to third_party_dir
 
     match &config.vendor {
-        VendorConfig::Compressed => {
+        VendorConfig::LocalRegistry => {
             let mut cmdline = vec![
                 "local-registry",
                 "-s",
@@ -143,13 +143,13 @@ pub(crate) fn is_vendored(config: &Config, paths: &Paths) -> anyhow::Result<bool
         .context(format!("Failed to parse {}", cargo_config_path.display()))?;
 
     let source_name = match config.vendor {
-        VendorConfig::Compressed => "local-registry",
+        VendorConfig::LocalRegistry => "local-registry",
         VendorConfig::Source(_) => "vendored-sources",
         _ => return Ok(false),
     };
     match remap_config.sources.get(source_name) {
         Some(source) => match config.vendor {
-            VendorConfig::Compressed => Ok(source.local_registry.is_some()),
+            VendorConfig::LocalRegistry => Ok(source.local_registry.is_some()),
             VendorConfig::Source(_) => Ok(source.directory.is_some()),
             VendorConfig::Off => Ok(false),
         },

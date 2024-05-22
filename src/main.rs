@@ -148,7 +148,7 @@ fn try_main() -> anyhow::Result<()> {
 
         SubCommand::Buckify { stdout } => {
             match &config.vendor {
-                VendorConfig::Compressed | VendorConfig::Source(..)
+                VendorConfig::LocalRegistry | VendorConfig::Source(..)
                     if !vendor::is_vendored(&config, &paths)? =>
                 {
                     // If you ran `reindeer buckify` without `reindeer vendor`, then

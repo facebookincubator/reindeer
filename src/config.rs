@@ -156,7 +156,7 @@ pub struct BuckConfig {
 #[serde(deny_unknown_fields)]
 pub enum VendorConfig {
     Off,
-    Compressed,
+    LocalRegistry,
     Source(VendorSourceConfig),
 }
 impl VendorConfig {
@@ -318,8 +318,8 @@ where
         where
             E: serde::de::Error,
         {
-            if v == "compressed" {
-                Ok(VendorConfig::Compressed)
+            if v == "local-registry" {
+                Ok(VendorConfig::LocalRegistry)
             } else {
                 Err(E::custom("unknown vendor type"))
             }
