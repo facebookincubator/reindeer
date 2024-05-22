@@ -49,6 +49,7 @@ pub(crate) fn cargo_vendor(
                 "-s",
                 paths.lockfile_path.to_str().unwrap(),
                 vendordir.to_str().unwrap(),
+                "--git",
             ];
             if no_delete {
                 cmdline.push("--no-delete");
