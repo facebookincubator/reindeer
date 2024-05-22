@@ -452,7 +452,6 @@ impl Serialize for HttpArchive {
 pub struct CompressedCrate {
     pub name: Name,
     pub src: BuckPath,
-    pub sha256: String,
     pub strip_prefix: String,
     pub sub_targets: BTreeSet<BuckPath>,
     pub visibility: Visibility,
@@ -464,7 +463,6 @@ impl Serialize for CompressedCrate {
         let Self {
             name,
             src,
-            sha256,
             strip_prefix,
             sub_targets,
             visibility,
@@ -473,7 +471,6 @@ impl Serialize for CompressedCrate {
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
         map.serialize_entry("src", src)?;
-        map.serialize_entry("sha256", sha256)?;
         map.serialize_entry("strip_prefix", strip_prefix)?;
         if !sub_targets.is_empty() {
             map.serialize_entry("sub_targets", sub_targets)?;

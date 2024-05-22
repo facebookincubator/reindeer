@@ -281,29 +281,14 @@ fn generate_nonvendored_sources_archive<'scope>(
 }
 
 fn generate_extract_archive<'scope>(
-    context: &'scope RuleContext<'scope>,
+    _context: &'scope RuleContext<'scope>,
     pkg: &'scope Manifest,
-    lockfile_package: &LockfilePackage,
+    _lockfile_package: &LockfilePackage,
 ) -> anyhow::Result<Rule> {
-    let sha256 = match &lockfile_package.checksum {
-        Some(checksum) => checksum.clone(),
-        None => {
-            // Dependencies from Source::CratesIo should almost certainly be
-            // associated with a checksum so a failure here is not expected.
-            bail!(
-                "No sha256 checksum available for \"{}\" {} in lockfile {}",
-                pkg.name,
-                pkg.version,
-                context.paths.lockfile_path.display(),
-            );
-        }
-    };
-
     let vendordir = "vendor";
 
     Ok(Rule::ExtractArchive(CompressedCrate {
         name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
-        sha256,
         src: BuckPath(PathBuf::from(format!(
             "{vendordir}/{}-{}.crate",
             pkg.name, pkg.version
