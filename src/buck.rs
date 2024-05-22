@@ -449,7 +449,7 @@ impl Serialize for HttpArchive {
 }
 
 #[derive(Debug)]
-pub struct CompressedCrate {
+pub struct ExtractArchive {
     pub name: Name,
     pub src: BuckPath,
     pub strip_prefix: String,
@@ -458,7 +458,7 @@ pub struct CompressedCrate {
     pub sort_key: Name,
 }
 
-impl Serialize for CompressedCrate {
+impl Serialize for ExtractArchive {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         let Self {
             name,
@@ -1057,7 +1057,7 @@ impl Serialize for PrebuiltCxxLibrary {
 pub enum Rule {
     Alias(Alias),
     Filegroup(Filegroup),
-    ExtractArchive(CompressedCrate),
+    ExtractArchive(ExtractArchive),
     HttpArchive(HttpArchive),
     GitFetch(GitFetch),
     Binary(RustBinary),
@@ -1099,7 +1099,7 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
         // Make the alias rule come before the actual rule. Note that aliases
         // emitted by reindeer are always to a target within the same package.
         Rule::Alias(Alias { actual, .. }) => RuleSortKey::Other(actual, 0),
-        Rule::ExtractArchive(CompressedCrate { sort_key, .. }) => RuleSortKey::Other(sort_key, 1),
+        Rule::ExtractArchive(ExtractArchive { sort_key, .. }) => RuleSortKey::Other(sort_key, 1),
         Rule::HttpArchive(HttpArchive { sort_key, .. }) => RuleSortKey::Other(sort_key, 1),
         Rule::GitFetch(GitFetch { name, .. }) => RuleSortKey::GitFetch(name),
         Rule::Filegroup(_)
@@ -1125,7 +1125,7 @@ impl Rule {
             Rule::Alias(Alias { name, .. })
             | Rule::Filegroup(Filegroup { name, .. })
             | Rule::HttpArchive(HttpArchive { name, .. })
-            | Rule::ExtractArchive(CompressedCrate { name, .. })
+            | Rule::ExtractArchive(ExtractArchive { name, .. })
             | Rule::GitFetch(GitFetch { name, .. })
             | Rule::Binary(RustBinary {
                 common:

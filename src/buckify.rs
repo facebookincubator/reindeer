@@ -33,7 +33,7 @@ use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::Common;
-use crate::buck::CompressedCrate;
+use crate::buck::ExtractArchive;
 use crate::buck::Filegroup;
 use crate::buck::GitFetch;
 use crate::buck::HttpArchive;
@@ -287,7 +287,7 @@ fn generate_extract_archive<'scope>(
 ) -> anyhow::Result<Rule> {
     let vendordir = "vendor";
 
-    Ok(Rule::ExtractArchive(CompressedCrate {
+    Ok(Rule::ExtractArchive(ExtractArchive {
         name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
         src: BuckPath(PathBuf::from(format!(
             "{vendordir}/{}-{}.crate",
