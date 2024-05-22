@@ -77,11 +77,8 @@ pub struct Config {
     #[serde(default)]
     pub buck: BuckConfig,
 
-    #[serde(
-        default = "default_vendor_config",
-        deserialize_with = "deserialize_vendor_config"
-    )]
-    pub vendor: Option<VendorConfig>,
+    #[serde(default, deserialize_with = "deserialize_vendor_config")]
+    pub vendor: VendorConfig,
 
     #[serde(default)]
     pub audit: AuditConfig,
@@ -131,6 +128,8 @@ pub struct BuckConfig {
     /// Rule name for http_archive
     #[serde(default)]
     pub http_archive: StringWithDefault<MustBe!("http_archive")>,
+    #[serde(default)]
+    pub extract_archive: StringWithDefault<MustBe!("extract_archive")>,
     /// Rule name for git_fetch
     #[serde(default)]
     pub git_fetch: StringWithDefault<MustBe!("git_fetch")>,
@@ -153,9 +152,26 @@ pub struct BuckConfig {
     pub buildscript_genrule: StringWithDefault<MustBe!("buildscript_run")>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum VendorConfig {
+    Off,
+    Compressed,
+    Source(VendorSourceConfig),
+}
+impl VendorConfig {
+    pub(crate) fn is_source(&self) -> bool {
+        matches!(self, Self::Source(_))
+    }
+
+    pub(crate) fn is_not_source(&self) -> bool {
+        !self.is_source()
+    }
+}
+
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct VendorConfig {
+pub struct VendorSourceConfig {
     /// List of .gitignore files to use to filter checksum files, relative to
     /// this config file.
     #[serde(default)]
@@ -163,6 +179,12 @@ pub struct VendorConfig {
     /// Set of globs to remove from Cargo's checksun files in vendored dirs
     #[serde(default)]
     pub checksum_exclude: HashSet<String>,
+}
+
+impl Default for VendorConfig {
+    fn default() -> Self {
+        VendorConfig::Source(Default::default())
+    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -247,10 +269,6 @@ impl<T> From<String> for StringWithDefault<T> {
     }
 }
 
-fn default_vendor_config() -> Option<VendorConfig> {
-    Some(VendorConfig::default())
-}
-
 fn default_platforms() -> HashMap<PlatformName, PlatformConfig> {
     const DEFAULT_PLATFORMS_TOML: &str = include_str!("default_platforms.toml");
 
@@ -270,14 +288,14 @@ fn default_universes() -> BTreeMap<UniverseName, UniverseConfig> {
     map
 }
 
-fn deserialize_vendor_config<'de, D>(deserializer: D) -> Result<Option<VendorConfig>, D::Error>
+fn deserialize_vendor_config<'de, D>(deserializer: D) -> Result<VendorConfig, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct VendorConfigVisitor;
 
     impl<'de> Visitor<'de> for VendorConfigVisitor {
-        type Value = Option<VendorConfig>;
+        type Value = VendorConfig;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("[vendor] section, or `vendor = false`")
@@ -289,14 +307,30 @@ where
         {
             // `vendor = true`: default configuration with vendoring.
             // `vendor = false`: do not vendor.
-            Ok(value.then(VendorConfig::default))
+            Ok(if value {
+                VendorConfig::default()
+            } else {
+                VendorConfig::Off
+            })
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            if v == "compressed" {
+                Ok(VendorConfig::Compressed)
+            } else {
+                Err(E::custom("unknown vendor type"))
+            }
         }
 
         fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
         where
             M: MapAccess<'de>,
         {
-            VendorConfig::deserialize(MapAccessDeserializer::new(map)).map(Some)
+            VendorSourceConfig::deserialize(MapAccessDeserializer::new(map))
+                .map(VendorConfig::Source)
         }
     }
 

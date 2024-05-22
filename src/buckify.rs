@@ -33,6 +33,7 @@ use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::Common;
+use crate::buck::CompressedCrate;
 use crate::buck::Filegroup;
 use crate::buck::GitFetch;
 use crate::buck::HttpArchive;
@@ -56,6 +57,7 @@ use crate::cargo::Source;
 use crate::cargo::TargetReq;
 use crate::collection::SetOrMap;
 use crate::config::Config;
+use crate::config::VendorConfig;
 use crate::fixups::ExportSources;
 use crate::fixups::Fixups;
 use crate::glob::Globs;
@@ -219,7 +221,7 @@ fn generate_rules<'scope>(
                     for rule in rules {
                         let _ = rule_tx.send(Ok(rule));
                     }
-                    if context.config.vendor.is_none() {
+                    if context.config.vendor.is_not_source() {
                         deps.push((pkg, TargetReq::Sources));
                     }
                 }
@@ -258,7 +260,13 @@ fn generate_nonvendored_sources_archive<'scope>(
 
     match &lockfile_package.source {
         Source::Local => Ok(None),
-        Source::CratesIo => generate_http_archive(context, pkg, lockfile_package).map(Some),
+        Source::CratesIo => match context.config.vendor {
+            VendorConfig::Off => generate_http_archive(context, pkg, lockfile_package).map(Some),
+            VendorConfig::Compressed => {
+                generate_extract_archive(context, pkg, lockfile_package).map(Some)
+            }
+            VendorConfig::Source(_) => unreachable!(),
+        },
         Source::Git {
             repo, commit_hash, ..
         } => generate_git_fetch(repo, commit_hash).map(Some),
@@ -270,6 +278,43 @@ fn generate_nonvendored_sources_archive<'scope>(
             );
         }
     }
+}
+
+fn generate_extract_archive<'scope>(
+    context: &'scope RuleContext<'scope>,
+    pkg: &'scope Manifest,
+    lockfile_package: &LockfilePackage,
+) -> anyhow::Result<Rule> {
+    let sha256 = match &lockfile_package.checksum {
+        Some(checksum) => checksum.clone(),
+        None => {
+            // Dependencies from Source::CratesIo should almost certainly be
+            // associated with a checksum so a failure here is not expected.
+            bail!(
+                "No sha256 checksum available for \"{}\" {} in lockfile {}",
+                pkg.name,
+                pkg.version,
+                context.paths.lockfile_path.display(),
+            );
+        }
+    };
+
+    // HACK: hardcoded index version.
+    // Need to copy these to a vendor/ directory too
+    let cache = ".cargo/registry/cache/index.crates.io-6f17d22bba15001f";
+
+    Ok(Rule::ExtractArchive(CompressedCrate {
+        name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
+        sha256,
+        src: BuckPath(PathBuf::from(format!(
+            "{cache}/{}-{}.crate",
+            pkg.name, pkg.version
+        ))),
+        strip_prefix: format!("{}-{}", pkg.name, pkg.version),
+        sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
+        visibility: Visibility::Private,
+        sort_key: Name(format!("{}-{}", pkg.name, pkg.version)),
+    }))
 }
 
 fn generate_http_archive<'scope>(
@@ -414,7 +459,7 @@ fn generate_target_rules<'scope>(
 
     let manifest_dir = pkg.manifest_dir();
     let mapped_manifest_dir =
-        if context.config.vendor.is_some() || matches!(pkg.source, Source::Local) {
+        if context.config.vendor.is_source() || matches!(pkg.source, Source::Local) {
             relative_path(&paths.third_party_dir, manifest_dir)
         } else if let Source::Git { repo, .. } = &pkg.source {
             let git_fetch = short_name_for_git_repo(repo)?;
@@ -428,7 +473,7 @@ fn generate_target_rules<'scope>(
     let edition = tgt.edition.unwrap_or(pkg.edition);
 
     let mut licenses = BTreeSet::new();
-    if config.vendor.is_none() {
+    if !config.vendor.is_source() {
         // The `licenses` attribute takes `attrs.source()` which is the file
         // containing the custom license text. For `vendor = false` mode, we
         // don't have such a file on disk, and we don't have a Buck label either
@@ -458,7 +503,7 @@ fn generate_target_rules<'scope>(
     // filename, or a list of globs.
     // If we're configured to get precise sources and we're using 2018+ edition source, then
     // parse the crate to see what files are actually used.
-    let mut srcs = if (config.vendor.is_some() || matches!(pkg.source, Source::Local))
+    let mut srcs = if (config.vendor.is_source() || matches!(pkg.source, Source::Local))
         && fixups.precise_srcs()
         && edition >= Edition::Rust2018
     {
@@ -504,7 +549,7 @@ fn generate_target_rules<'scope>(
     )
     .context("rustc_flags")?;
 
-    if config.vendor.is_some() || matches!(pkg.source, Source::Local) {
+    if config.vendor.is_source() || matches!(pkg.source, Source::Local) {
         unzip_platform(
             config,
             &mut base,
@@ -870,7 +915,7 @@ fn generate_target_rules<'scope>(
         // For non-disk sources (i.e. non-vendor mode git_fetch and
         // http_archive), `srcs` and `exclude` are ignored because
         // we can't look at the files to match globs.
-        let srcs = if config.vendor.is_some() || matches!(pkg.source, Source::Local) {
+        let srcs = if config.vendor.is_source() || matches!(pkg.source, Source::Local) {
             // e.g. {"src/lib.rs": "vendor/foo-1.0.0/src/lib.rs"}
             let mut globs = Globs::new(srcs, exclude).context("export sources")?;
             let srcs = globs
@@ -985,7 +1030,7 @@ fn buckify_for_universe(
 
     // Fill in all http_archive rules with all the sub_targets which got
     // mentioned by fixups.
-    if config.vendor.is_none() {
+    if !config.vendor.is_source() {
         let mut need_subtargets = HashMap::<Name, BTreeSet<BuckPath>>::new();
         let mut insert = |subtarget_or_path: &SubtargetOrPath| {
             if let SubtargetOrPath::Subtarget(subtarget) = subtarget_or_path {

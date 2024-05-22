@@ -21,6 +21,7 @@ use crate::buckify::relative_path;
 use crate::cargo;
 use crate::config::Config;
 use crate::config::VendorConfig;
+use crate::config::VendorSourceConfig;
 use crate::remap::RemapConfig;
 use crate::Args;
 use crate::Paths;
@@ -68,8 +69,8 @@ pub(crate) fn cargo_vendor(
         assert!(is_vendored(paths)?);
     }
 
-    if let Some(vendor_config) = &config.vendor {
-        filter_checksum_files(&paths.third_party_dir, vendordir, vendor_config)?;
+    if let VendorConfig::Source(source_config) = &config.vendor {
+        filter_checksum_files(&paths.third_party_dir, vendordir, source_config)?;
     }
 
     if audit_sec {
@@ -115,7 +116,7 @@ pub(crate) fn is_vendored(paths: &Paths) -> anyhow::Result<bool> {
 fn filter_checksum_files(
     third_party_dir: &Path,
     vendordir: &Path,
-    config: &VendorConfig,
+    config: &VendorSourceConfig,
 ) -> anyhow::Result<()> {
     if config.checksum_exclude.is_empty() && config.gitignore_checksum_exclude.is_empty() {
         return Ok(());

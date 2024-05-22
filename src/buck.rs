@@ -449,6 +449,41 @@ impl Serialize for HttpArchive {
 }
 
 #[derive(Debug)]
+pub struct CompressedCrate {
+    pub name: Name,
+    pub src: BuckPath,
+    pub sha256: String,
+    pub strip_prefix: String,
+    pub sub_targets: BTreeSet<BuckPath>,
+    pub visibility: Visibility,
+    pub sort_key: Name,
+}
+
+impl Serialize for CompressedCrate {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            name,
+            src,
+            sha256,
+            strip_prefix,
+            sub_targets,
+            visibility,
+            sort_key: _,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("name", name)?;
+        map.serialize_entry("src", src)?;
+        map.serialize_entry("sha256", sha256)?;
+        map.serialize_entry("strip_prefix", strip_prefix)?;
+        if !sub_targets.is_empty() {
+            map.serialize_entry("sub_targets", sub_targets)?;
+        }
+        map.serialize_entry("visibility", visibility)?;
+        map.end()
+    }
+}
+
+#[derive(Debug)]
 pub struct GitFetch {
     pub name: Name,
     pub repo: String,
@@ -1025,6 +1060,7 @@ impl Serialize for PrebuiltCxxLibrary {
 pub enum Rule {
     Alias(Alias),
     Filegroup(Filegroup),
+    ExtractArchive(CompressedCrate),
     HttpArchive(HttpArchive),
     GitFetch(GitFetch),
     Binary(RustBinary),
@@ -1066,6 +1102,7 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
         // Make the alias rule come before the actual rule. Note that aliases
         // emitted by reindeer are always to a target within the same package.
         Rule::Alias(Alias { actual, .. }) => RuleSortKey::Other(actual, 0),
+        Rule::ExtractArchive(CompressedCrate { sort_key, .. }) => RuleSortKey::Other(sort_key, 1),
         Rule::HttpArchive(HttpArchive { sort_key, .. }) => RuleSortKey::Other(sort_key, 1),
         Rule::GitFetch(GitFetch { name, .. }) => RuleSortKey::GitFetch(name),
         Rule::Filegroup(_)
@@ -1091,6 +1128,7 @@ impl Rule {
             Rule::Alias(Alias { name, .. })
             | Rule::Filegroup(Filegroup { name, .. })
             | Rule::HttpArchive(HttpArchive { name, .. })
+            | Rule::ExtractArchive(CompressedCrate { name, .. })
             | Rule::GitFetch(GitFetch { name, .. })
             | Rule::Binary(RustBinary {
                 common:
@@ -1142,6 +1180,9 @@ impl Rule {
             Rule::Alias(alias) => FunctionCall::new(&config.alias, alias).serialize(Serializer),
             Rule::Filegroup(filegroup) => {
                 FunctionCall::new(&config.filegroup, filegroup).serialize(Serializer)
+            }
+            Rule::ExtractArchive(compressed_crate) => {
+                FunctionCall::new(&config.extract_archive, compressed_crate).serialize(Serializer)
             }
             Rule::HttpArchive(http_archive) => {
                 FunctionCall::new(&config.http_archive, http_archive).serialize(Serializer)
