@@ -299,15 +299,13 @@ fn generate_extract_archive<'scope>(
         }
     };
 
-    // HACK: hardcoded index version.
-    // Need to copy these to a vendor/ directory too
-    let cache = ".cargo/registry/cache/index.crates.io-6f17d22bba15001f";
+    let vendordir = "vendor";
 
     Ok(Rule::ExtractArchive(CompressedCrate {
         name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
         sha256,
         src: BuckPath(PathBuf::from(format!(
-            "{cache}/{}-{}.crate",
+            "{vendordir}/{}-{}.crate",
             pkg.name, pkg.version
         ))),
         strip_prefix: format!("{}-{}", pkg.name, pkg.version),
@@ -1071,10 +1069,18 @@ fn buckify_for_universe(
         rules = rules
             .into_iter()
             .map(|mut rule| {
-                if let Rule::HttpArchive(rule) = &mut rule {
-                    if let Some(need_subtargets) = need_subtargets.remove(&rule.name) {
-                        rule.sub_targets = need_subtargets;
+                match &mut rule {
+                    Rule::HttpArchive(rule) => {
+                        if let Some(need_subtargets) = need_subtargets.remove(&rule.name) {
+                            rule.sub_targets = need_subtargets;
+                        }
                     }
+                    Rule::ExtractArchive(rule) => {
+                        if let Some(need_subtargets) = need_subtargets.remove(&rule.name) {
+                            rule.sub_targets = need_subtargets;
+                        }
+                    }
+                    _ => (),
                 }
                 rule
             })

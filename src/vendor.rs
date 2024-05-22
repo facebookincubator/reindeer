@@ -42,35 +42,62 @@ pub(crate) fn cargo_vendor(
 ) -> anyhow::Result<()> {
     let vendordir = Path::new("vendor"); // relative to third_party_dir
 
-    let mut cmdline = vec![
-        "vendor",
-        "--manifest-path",
-        paths.manifest_path.to_str().unwrap(),
-        vendordir.to_str().unwrap(),
-        "--versioned-dirs",
-    ];
-    if no_delete {
-        cmdline.push("--no-delete");
-    }
+    match &config.vendor {
+        VendorConfig::Compressed => {
+            let mut cmdline = vec![
+                "local-registry",
+                "-s",
+                paths.lockfile_path.to_str().unwrap(),
+                vendordir.to_str().unwrap(),
+            ];
+            if no_delete {
+                cmdline.push("--no-delete");
+            }
+            log::info!("Running cargo {:?}", cmdline);
+            let mut cargoconfig = cargo::run_cargo(
+                config,
+                Some(&paths.cargo_home),
+                &paths.third_party_dir,
+                args,
+                &cmdline,
+            )?;
+            cargoconfig.splice(0..0, b"# ".iter().copied());
+            fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
+            // if !cargoconfig.is_empty() {
+            //     assert!(is_vendored(paths)?);
+            // }
+        }
+        VendorConfig::Source(source_config) => {
+            let mut cmdline = vec![
+                "vendor",
+                "--manifest-path",
+                paths.manifest_path.to_str().unwrap(),
+                vendordir.to_str().unwrap(),
+                "--versioned-dirs",
+            ];
+            if no_delete {
+                cmdline.push("--no-delete");
+            }
 
-    fs::create_dir_all(&paths.cargo_home)?;
+            fs::create_dir_all(&paths.cargo_home)?;
 
-    log::info!("Running cargo {:?}", cmdline);
-    let cargoconfig = cargo::run_cargo(
-        config,
-        Some(&paths.cargo_home),
-        &paths.third_party_dir,
-        args,
-        &cmdline,
-    )?;
+            log::info!("Running cargo {:?}", cmdline);
+            let cargoconfig = cargo::run_cargo(
+                config,
+                Some(&paths.cargo_home),
+                &paths.third_party_dir,
+                args,
+                &cmdline,
+            )?;
 
-    fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
-    if !cargoconfig.is_empty() {
-        assert!(is_vendored(paths)?);
-    }
+            fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
+            if !cargoconfig.is_empty() {
+                assert!(is_vendored(paths)?);
+            }
 
-    if let VendorConfig::Source(source_config) = &config.vendor {
-        filter_checksum_files(&paths.third_party_dir, vendordir, source_config)?;
+            filter_checksum_files(&paths.third_party_dir, vendordir, source_config)?;
+        }
+        _ => (),
     }
 
     if audit_sec {
