@@ -70,11 +70,10 @@ replace-with = 'local-registry'
 local-registry = {vendordir:?}
 "#
             );
-            // cargoconfig.splice(0..0, b"# ".iter().copied());
             fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
-            // if !cargoconfig.is_empty() {
-            //     assert!(is_vendored(paths)?);
-            // }
+            if !cargoconfig.is_empty() {
+                assert!(is_vendored(config, paths)?);
+            }
         }
         VendorConfig::Source(source_config) => {
             let mut cmdline = vec![
@@ -101,7 +100,7 @@ local-registry = {vendordir:?}
 
             fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
             if !cargoconfig.is_empty() {
-                assert!(is_vendored(paths)?);
+                assert!(is_vendored(config, paths)?);
             }
 
             filter_checksum_files(&paths.third_party_dir, vendordir, source_config)?;
@@ -116,7 +115,7 @@ local-registry = {vendordir:?}
     Ok(())
 }
 
-pub(crate) fn is_vendored(paths: &Paths) -> anyhow::Result<bool> {
+pub(crate) fn is_vendored(config: &Config, paths: &Paths) -> anyhow::Result<bool> {
     // .cargo/config.toml is Cargo's preferred name for the config, but .cargo/config
     // is the older name so it takes priority if present.
     let mut cargo_config_path = paths.cargo_home.join("config");
@@ -143,8 +142,17 @@ pub(crate) fn is_vendored(paths: &Paths) -> anyhow::Result<bool> {
     let remap_config: RemapConfig = toml::from_str(&content)
         .context(format!("Failed to parse {}", cargo_config_path.display()))?;
 
-    match remap_config.sources.get("vendored-sources") {
-        Some(vendored_sources) => Ok(vendored_sources.directory.is_some()),
+    let source_name = match config.vendor {
+        VendorConfig::Compressed => "local-registry",
+        VendorConfig::Source(_) => "vendored-sources",
+        _ => return Ok(false),
+    };
+    match remap_config.sources.get(source_name) {
+        Some(source) => match config.vendor {
+            VendorConfig::Compressed => Ok(source.local_registry.is_some()),
+            VendorConfig::Source(_) => Ok(source.directory.is_some()),
+            VendorConfig::Off => Ok(false),
+        },
         None => Ok(false),
     }
 }

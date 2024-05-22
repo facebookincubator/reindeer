@@ -147,10 +147,15 @@ fn try_main() -> anyhow::Result<()> {
         }
 
         SubCommand::Buckify { stdout } => {
-            if config.vendor.is_source() && !vendor::is_vendored(&paths)? {
-                // If you ran `reindeer buckify` without `reindeer vendor`, then
-                // default to generating non-vendored targets.
-                config.vendor = VendorConfig::Off;
+            match &config.vendor {
+                VendorConfig::Compressed | VendorConfig::Source(..)
+                    if !vendor::is_vendored(&config, &paths)? =>
+                {
+                    // If you ran `reindeer buckify` without `reindeer vendor`, then
+                    // default to generating non-vendored targets.
+                    config.vendor = VendorConfig::Off;
+                }
+                _ => {}
             }
             buckify::buckify(&config, &args, &paths, *stdout)?;
         }
