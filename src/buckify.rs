@@ -272,8 +272,7 @@ fn generate_nonvendored_sources_archive<'scope>(
         } => match context.config.vendor {
             VendorConfig::Off => generate_git_fetch(repo, commit_hash).map(Some),
             VendorConfig::LocalRegistry => {
-                generate_extract_archive_git(context, pkg, lockfile_package, repo, commit_hash)
-                    .map(Some)
+                generate_extract_archive(context, pkg, lockfile_package).map(Some)
             }
             VendorConfig::Source(_) => unreachable!(),
         },
@@ -295,32 +294,6 @@ fn generate_extract_archive<'scope>(
     let vendordir = "vendor";
     Ok(Rule::ExtractArchive(ExtractArchive {
         name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
-        src: BuckPath(PathBuf::from(format!(
-            "{vendordir}/{}-{}.crate",
-            pkg.name, pkg.version
-        ))),
-        strip_prefix: format!("{}-{}", pkg.name, pkg.version),
-        sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
-        visibility: Visibility::Private,
-        sort_key: Name(format!("{}-{}", pkg.name, pkg.version)),
-    }))
-}
-
-fn generate_extract_archive_git<'scope>(
-    _context: &'scope RuleContext<'scope>,
-    pkg: &'scope Manifest,
-    _lockfile_package: &LockfilePackage,
-    repo: &str,
-    _commit_hash: &str,
-) -> anyhow::Result<Rule> {
-    let vendordir = "vendor";
-    let short_name = short_name_for_git_repo(repo)?;
-    Ok(Rule::ExtractArchive(ExtractArchive {
-        name: Name(format!("{}.git", short_name)),
-        //
-        // Would be nice if cargo local-registry wrote out a git-related name instead
-        // of `mycrate-0.1.0.crate`. However it does not.
-        //
         src: BuckPath(PathBuf::from(format!(
             "{vendordir}/{}-{}.crate",
             pkg.name, pkg.version
@@ -476,13 +449,10 @@ fn generate_target_rules<'scope>(
     let mapped_manifest_dir =
         if context.config.vendor.is_source() || matches!(pkg.source, Source::Local) {
             relative_path(&paths.third_party_dir, manifest_dir)
+        } else if let VendorConfig::LocalRegistry = context.config.vendor {
+            PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
         } else if let Source::Git { repo, .. } = &pkg.source {
-            let mut git_fetch = short_name_for_git_repo(repo)?;
-            if matches!(context.config.vendor, VendorConfig::LocalRegistry) {
-                // Subtle difference -- git_fetch rules will strip the `.git` off the name
-                // when used as a dependency. extract_archive will not.
-                git_fetch += ".git";
-            }
+            let git_fetch = short_name_for_git_repo(repo)?;
             let repository_root = find_repository_root(manifest_dir)?;
             let path_within_repo = relative_path(repository_root, manifest_dir);
             PathBuf::from(git_fetch).join(path_within_repo)
@@ -581,6 +551,10 @@ fn generate_target_rules<'scope>(
             fixups.compute_srcs(srcs)?,
         )
         .context("srcs")?;
+    } else if let VendorConfig::LocalRegistry = config.vendor {
+        let http_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
+        base.srcs
+            .insert(BuckPath(PathBuf::from(http_archive_target)));
     } else if let Source::Git { repo, .. } = &pkg.source {
         let short_name = short_name_for_git_repo(repo)?;
         let git_fetch_target = format!(":{}.git", short_name);
@@ -949,6 +923,14 @@ fn generate_target_rules<'scope>(
                 globs.check_all_globs_used()?;
             }
             srcs
+        } else if let VendorConfig::LocalRegistry = config.vendor {
+            // e.g. {":foo-1.0.0.git": "foo-1.0.0"}
+            let http_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
+            [(
+                BuckPath(mapped_manifest_dir.clone()),
+                SubtargetOrPath::Path(BuckPath(PathBuf::from(http_archive_target))),
+            )]
+            .into()
         } else if let Source::Git { repo, .. } = &pkg.source {
             // e.g. {":foo-123.git": "foo-123"}
             let short_name = short_name_for_git_repo(repo)?;

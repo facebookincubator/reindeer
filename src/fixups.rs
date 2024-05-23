@@ -42,6 +42,7 @@ use crate::cargo::NodeDepKind;
 use crate::cargo::Source;
 use crate::collection::SetOrMap;
 use crate::config::Config;
+use crate::config::VendorConfig;
 use crate::glob::Globs;
 use crate::glob::SerializableGlobSet as GlobSet;
 use crate::glob::NO_EXCLUDE;
@@ -882,6 +883,11 @@ impl<'meta> Fixups<'meta> {
                                 &self.third_party_dir,
                                 self.manifest_dir,
                             )))
+                        } else if let VendorConfig::LocalRegistry = self.config.vendor {
+                            StringOrPath::String(format!(
+                                "{}-{}.crate",
+                                self.package.name, self.package.version,
+                            ))
                         } else if let Source::Git { repo, .. } = &self.package.source {
                             let short_name = short_name_for_git_repo(repo)?;
                             StringOrPath::String(short_name.to_owned())
