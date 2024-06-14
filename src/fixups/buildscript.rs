@@ -54,7 +54,7 @@ impl Deref for BuildscriptFixups {
 pub enum BuildscriptFixup {
     /// Unresolved build script (string with helpful message)
     Unresolved(String),
-    /// Run the buildscript and extact command line args. Linker -l/-L args ignored so in
+    /// Run the buildscript and extract command line args. Linker -l/-L args ignored so in
     /// practice this is just --cfg options.
     RustcFlags(RustcFlags),
     /// Generated sources - give list of generated paths which are mapped into target sources
