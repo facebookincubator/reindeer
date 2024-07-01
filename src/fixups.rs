@@ -304,7 +304,6 @@ impl<'meta> Fixups<'meta> {
             package_name: self.package.name.clone(),
             version: self.package.version.clone(),
             features: buck::Selectable::Value(features.clone()),
-            cfgs: Vec::new(),
             env: BTreeMap::new(),
             path_env: BTreeMap::new(),
             args_env: BTreeMap::new(),

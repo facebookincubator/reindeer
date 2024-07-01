@@ -796,7 +796,6 @@ pub struct BuildscriptGenrule {
     pub package_name: String,
     pub version: Version,
     pub features: Selectable<UniverseName, BTreeSet<String>>,
-    pub cfgs: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub path_env: BTreeMap<String, String>,
     pub args_env: BTreeMap<String, String>,
@@ -810,7 +809,6 @@ impl Serialize for BuildscriptGenrule {
             package_name,
             version,
             features,
-            cfgs,
             env,
             path_env,
             args_env,
@@ -822,9 +820,6 @@ impl Serialize for BuildscriptGenrule {
             map.serialize_entry("args_env", args_env)?;
         }
         map.serialize_entry("buildscript_rule", &NameAsLabel(buildscript_rule))?;
-        if !cfgs.is_empty() {
-            map.serialize_entry("cfgs", cfgs)?;
-        }
         if !env.is_empty() {
             map.serialize_entry("env", env)?;
         }
