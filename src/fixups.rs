@@ -305,8 +305,6 @@ impl<'meta> Fixups<'meta> {
             version: self.package.version.clone(),
             features: buck::Selectable::Value(features.clone()),
             env: BTreeMap::new(),
-            path_env: BTreeMap::new(),
-            args_env: BTreeMap::new(),
         };
 
         for fix in fixes {
@@ -336,32 +334,24 @@ impl<'meta> Fixups<'meta> {
             match fix {
                 // Build and run it, and filter the output for --cfg options
                 // for the main target's rustc command line
-                BuildscriptFixup::RustcFlags(RustcFlags { env, path_env, .. }) => {
+                BuildscriptFixup::RustcFlags(RustcFlags { env, .. }) => {
                     // Emit the build script itself
                     res.push(Rule::BuildscriptBinary(buildscript.clone()));
 
                     // Emit rule to get its stdout and filter it into args
                     let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
                     buildscript_run.env.extend(env.clone());
-                    buildscript_run.path_env.extend(path_env.clone());
                 }
 
                 // Generated source files - given a list, set up rules to extract them from
                 // the buildscript.
-                BuildscriptFixup::GenSrcs(GenSrcs {
-                    env,      // env set while running
-                    path_env, // env pointing to pathnames set while running
-                    args_env, // space-separated args like CFLAGS
-                    ..
-                }) => {
+                BuildscriptFixup::GenSrcs(GenSrcs { env, .. }) => {
                     // Emit the build script itself
                     res.push(Rule::BuildscriptBinary(buildscript.clone()));
 
                     // Emit rules to extract generated sources
                     let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
                     buildscript_run.env.extend(env.clone());
-                    buildscript_run.path_env.extend(path_env.clone());
-                    buildscript_run.args_env.extend(args_env.clone());
                 }
 
                 // Emit a C++ library build rule (elsewhere - add a dependency to it)
