@@ -61,7 +61,7 @@ pub fn cargo_get_lockfile_and_metadata(
 
     let cargo_home;
     let lockfile;
-    if config.vendor.is_none() {
+    if config.vendor.is_not_source() {
         cargo_home = None;
 
         // Whether or not there is a Cargo.lock already, do not read it yet.

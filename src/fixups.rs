@@ -42,6 +42,7 @@ use crate::cargo::NodeDepKind;
 use crate::cargo::Source;
 use crate::collection::SetOrMap;
 use crate::config::Config;
+use crate::config::VendorConfig;
 use crate::glob::Globs;
 use crate::glob::SerializableGlobSet as GlobSet;
 use crate::glob::NO_EXCLUDE;
@@ -166,7 +167,7 @@ impl<'meta> Fixups<'meta> {
         &self,
         relative_to_manifest_dir: &Path,
     ) -> anyhow::Result<SubtargetOrPath> {
-        if self.config.vendor.is_some() || matches!(self.package.source, Source::Local) {
+        if self.config.vendor.is_source() || matches!(self.package.source, Source::Local) {
             // Path to vendored file looks like "vendor/foo-1.0.0/src/lib.rs"
             let manifest_dir = relative_path(&self.third_party_dir, self.manifest_dir);
             let path = manifest_dir.join(relative_to_manifest_dir);
@@ -308,7 +309,7 @@ impl<'meta> Fixups<'meta> {
         };
 
         for fix in fixes {
-            if self.config.vendor.is_none() {
+            if self.config.vendor.is_not_source() {
                 if let Source::Git { repo, .. } = &self.package.source {
                     // Cxx_library fixups only work if the sources are vendored
                     // or from an http_archive. They do not work with sources
@@ -864,13 +865,18 @@ impl<'meta> Fixups<'meta> {
             for cargo_env in config.cargo_env.iter() {
                 let v = match cargo_env {
                     CargoEnv::CARGO_MANIFEST_DIR => {
-                        if self.config.vendor.is_some()
+                        if self.config.vendor.is_source()
                             || matches!(self.package.source, Source::Local)
                         {
                             StringOrPath::Path(BuckPath(relative_path(
                                 &self.third_party_dir,
                                 self.manifest_dir,
                             )))
+                        } else if let VendorConfig::LocalRegistry = self.config.vendor {
+                            StringOrPath::String(format!(
+                                "{}-{}.crate",
+                                self.package.name, self.package.version,
+                            ))
                         } else if let Source::Git { repo, .. } = &self.package.source {
                             let short_name = short_name_for_git_repo(repo)?;
                             StringOrPath::String(short_name.to_owned())
@@ -925,7 +931,7 @@ impl<'meta> Fixups<'meta> {
 
         // This function is only used in vendoring mode, so it's guaranteed that
         // manifest_dir is a subdirectory of third_party_dir.
-        assert!(self.config.vendor.is_some() || matches!(self.package.source, Source::Local));
+        assert!(self.config.vendor.is_source() || matches!(self.package.source, Source::Local));
         let manifest_rel = relative_path(&self.third_party_dir, self.manifest_dir);
 
         let srcs_globs: Vec<String> = srcs

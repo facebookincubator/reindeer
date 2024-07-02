@@ -11,13 +11,13 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RemapConfig {
     #[serde(rename = "source", default)]
     pub sources: Map<String, RemapSource>,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct RemapSource {
     pub directory: Option<PathBuf>,
     pub git: Option<String>,
@@ -26,4 +26,6 @@ pub struct RemapSource {
     pub tag: Option<String>,
     #[serde(rename = "replace-with")]
     pub replace_with: Option<String>,
+    #[serde(rename = "local-registry")]
+    pub local_registry: Option<String>,
 }

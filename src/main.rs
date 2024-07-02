@@ -25,6 +25,8 @@ use std::path::PathBuf;
 use clap::Parser;
 use clap::Subcommand;
 
+use crate::config::VendorConfig;
+
 mod audit_sec;
 mod buck;
 mod buckify;
@@ -145,10 +147,15 @@ fn try_main() -> anyhow::Result<()> {
         }
 
         SubCommand::Buckify { stdout } => {
-            if config.vendor.is_some() && !vendor::is_vendored(&paths)? {
-                // If you ran `reindeer buckify` without `reindeer vendor`, then
-                // default to generating non-vendored targets.
-                config.vendor = None;
+            match &config.vendor {
+                VendorConfig::LocalRegistry | VendorConfig::Source(..)
+                    if !vendor::is_vendored(&config, &paths)? =>
+                {
+                    // If you ran `reindeer buckify` without `reindeer vendor`, then
+                    // default to generating non-vendored targets.
+                    config.vendor = VendorConfig::Off;
+                }
+                _ => {}
             }
             buckify::buckify(&config, &args, &paths, *stdout)?;
         }
