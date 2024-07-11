@@ -45,14 +45,6 @@ gitignore_checksum_exclude = [".gitignore"]
 checksum_exclude = [
 ]
 
-# Configuration for rustsec auditing
-[audit]
-# Name of a package which is expected to always have an advisory to make sure
-# the mechanism is working.
-never_autofix = [
-  "rustsec-example-crate", # never fix because this is a canary
-]
-
 # Platforms we want to support.
 #
 # A Reindeer platform is a collection of predicates, which are closely related

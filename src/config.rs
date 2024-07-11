@@ -83,9 +83,6 @@ pub struct Config {
     )]
     pub vendor: Option<VendorConfig>,
 
-    #[serde(default)]
-    pub audit: AuditConfig,
-
     #[serde(default = "default_platforms")]
     pub platform: HashMap<PlatformName, PlatformConfig>,
 
@@ -163,14 +160,6 @@ pub struct VendorConfig {
     /// Set of globs to remove from Cargo's checksun files in vendored dirs
     #[serde(default)]
     pub checksum_exclude: HashSet<String>,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AuditConfig {
-    /// List of package names to never attempt to autofix
-    #[serde(default)]
-    pub never_autofix: HashSet<String>,
 }
 
 #[derive(Clone)]

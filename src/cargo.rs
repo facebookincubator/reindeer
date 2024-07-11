@@ -11,7 +11,6 @@
 //! get metadata about a crate. It also defines all the types for deserializing from Cargo's
 //! JSON output.
 
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::env;
 use std::fmt;
@@ -247,13 +246,6 @@ pub struct Metadata {
     pub resolve: Resolve,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum VecStringOrBool {
-    VecString(Vec<String>),
-    Bool(bool),
-}
-
 /// Package manifest
 // https://doc.rust-lang.org/cargo/reference/manifest.html#the-package-section
 #[derive(Debug, Deserialize)]
@@ -264,8 +256,6 @@ pub struct Manifest {
     pub version: semver::Version,
     /// Canonical ID for package
     pub id: PkgId,
-    /// License name
-    pub license: Option<String>,
     /// Path to license
     pub license_file: Option<PathBuf>,
     /// Package description
@@ -278,33 +268,15 @@ pub struct Manifest {
     /// Targets in package
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub targets: BTreeSet<ManifestTarget>,
-    /// Features - mapping from feature name to additional features or dependencies
-    #[serde(deserialize_with = "deserialize_default_from_null")]
-    pub features: BTreeMap<String, Vec<String>>,
     /// Path to Cargo.toml
     pub manifest_path: PathBuf,
-    /// Additional arbitrary metadata
-    #[serde(deserialize_with = "deserialize_default_from_null")]
-    pub metadata: BTreeMap<String, serde_json::Value>,
     /// List of authors
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub authors: Vec<String>,
-    /// List of categories in crates.io
-    #[serde(deserialize_with = "deserialize_default_from_null")]
-    pub categories: BTreeSet<String>,
-    /// List of keywords in crates.io
-    #[serde(deserialize_with = "deserialize_default_from_null")]
-    pub keywords: BTreeSet<String>,
-    /// Path to README file
-    pub readme: Option<PathBuf>,
     /// Source repository
     pub repository: Option<String>,
     /// Default edition for the package (if targets don't have it)
     pub edition: Edition,
-    /// Native library which should be linked to package(? All targets?)
-    #[serde(deserialize_with = "deserialize_default_from_null")]
-    pub links: Option<String>,
-    pub publish: Option<VecStringOrBool>,
 }
 
 impl Manifest {

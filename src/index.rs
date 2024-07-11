@@ -12,7 +12,6 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 
 use anyhow::Context as _;
-use serde::Deserialize;
 
 use crate::buck::Name;
 use crate::cargo::DepKind;
@@ -45,12 +44,6 @@ pub struct Index<'meta> {
     /// - root_pkg, if it is being made public (aka "real", and not just a pseudo package)
     /// - first-order dependencies of root_pkg, including artifact dependencies
     public_targets: BTreeMap<(&'meta PkgId, TargetReq<'meta>), Option<&'meta str>>,
-}
-
-/// Extra per-package metadata to be kept in sync with the package list
-#[derive(Debug, Deserialize)]
-pub struct ExtraMetadata {
-    pub oncall: String, // oncall shortname for use as maintainer
 }
 
 #[derive(Debug, Clone)]
