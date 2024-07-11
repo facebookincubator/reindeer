@@ -17,6 +17,7 @@ use crate::Paths;
 
 #[derive(Deserialize, Debug)]
 pub struct Lockfile {
+    #[allow(dead_code)]
     pub version: Hopefully3,
     #[serde(rename = "package")]
     pub packages: Vec<LockfilePackage>,

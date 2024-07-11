@@ -33,19 +33,25 @@ pub struct Error {
 #[derive(Debug)]
 pub enum ErrorKind {
     FileError {
+        #[allow(dead_code)]
         source_path: PathBuf,
         source: io::Error,
     },
     IncludeNotFound {
+        #[allow(dead_code)]
         source_path: PathBuf,
     },
     ModuleNotFound {
+        #[allow(dead_code)]
         default_path: PathBuf,
+        #[allow(dead_code)]
         secondary_path: Option<PathBuf>,
     },
     ParserError {
+        #[allow(dead_code)]
         source_path: PathBuf,
         source: syn::Error,
+        #[allow(dead_code)]
         line: usize,
     },
 }
