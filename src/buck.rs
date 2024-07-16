@@ -836,6 +836,7 @@ pub struct CxxLibrary {
     pub include_directories: Vec<SubtargetOrPath>,
     pub deps: BTreeSet<RuleRef>,
     pub preferred_linkage: Option<String>,
+    pub undefined_symbols: bool,
 }
 
 impl Serialize for CxxLibrary {
@@ -857,6 +858,7 @@ impl Serialize for CxxLibrary {
             include_directories,
             deps,
             preferred_linkage,
+            undefined_symbols,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
@@ -885,7 +887,9 @@ impl Serialize for CxxLibrary {
         if !licenses.is_empty() {
             map.serialize_entry("licenses", licenses)?;
         }
-        map.serialize_entry("preferred_linkage", preferred_linkage)?;
+        if let Some(preferred_linkage) = preferred_linkage {
+            map.serialize_entry("preferred_linkage", preferred_linkage)?;
+        }
         if !preprocessor_flags.is_empty()
             || include_directories
                 .iter()
@@ -898,6 +902,9 @@ impl Serialize for CxxLibrary {
                     preprocessor_flags,
                 },
             )?;
+        }
+        if *undefined_symbols {
+            map.serialize_entry("undefined_symbols", undefined_symbols)?;
         }
         map.serialize_entry("visibility", visibility)?;
         if !deps.is_empty() {

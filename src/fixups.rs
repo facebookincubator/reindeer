@@ -369,6 +369,8 @@ impl<'meta> Fixups<'meta> {
                     header_namespace,
                     deps,
                     compatible_with,
+                    preferred_linkage,
+                    undefined_symbols,
                     ..
                 }) => {
                     let actual = Name(format!(
@@ -469,7 +471,8 @@ impl<'meta> Fixups<'meta> {
                         preprocessor_flags: preprocessor_flags.clone(),
                         header_namespace: header_namespace.clone(),
                         deps: deps.iter().cloned().map(RuleRef::new).collect(),
-                        preferred_linkage: Some("static".to_string()),
+                        preferred_linkage: preferred_linkage.clone(),
+                        undefined_symbols: undefined_symbols.clone(),
                     };
 
                     res.push(Rule::CxxLibrary(rule));

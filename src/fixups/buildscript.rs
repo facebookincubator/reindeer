@@ -141,6 +141,12 @@ pub struct CxxLibraryFixup {
     pub deps: Vec<String>,
     #[serde(default)]
     pub compatible_with: Vec<String>,
+    /// Cxx library preferred linkage (how dependents should link you)
+    pub preferred_linkage: Option<String>,
+    /// Whether to allow undefined symbols during compilation (e.g. when a rust library
+    /// and cxx library depend on each other for symbols)
+    #[serde(default)]
+    pub undefined_symbols: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
