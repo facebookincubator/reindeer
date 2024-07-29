@@ -698,6 +698,23 @@ fn generate_target_rules<'scope>(
     )
     .context("link_style")?;
 
+    unzip_platform(
+        config,
+        &mut bin_base,
+        &mut bin_perplat,
+        |rule, linker_flags| {
+            log::debug!(
+                "pkg {} target {}: linker_flags {:?}",
+                pkg,
+                tgt.name,
+                linker_flags
+            );
+            rule.linker_flags = linker_flags;
+        },
+        fixups.compute_linker_flags(),
+    )
+    .context("linker_flags")?;
+
     // "preferred_linkage" only really applies to libraries, so maintain separate library base &
     // perplat
     let mut lib_base = base.clone();

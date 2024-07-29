@@ -184,6 +184,9 @@ pub struct FixupConfig {
     pub link_style: Option<String>,
     /// Rust library preferred linkage (how dependents should link you)
     pub preferred_linkage: Option<String>,
+    /// Extra flags for linker
+    #[serde(default)]
+    pub linker_flags: Vec<String>,
 
     // Table/map-like values must come after everything else
     /// Additional env variables

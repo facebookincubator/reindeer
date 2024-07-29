@@ -494,6 +494,7 @@ pub struct PlatformRustCommon {
 
     // This isn't really "common" (Binaries only), but does need to be platform
     pub link_style: Option<String>,
+    pub linker_flags: Vec<String>,
 
     pub preferred_linkage: Option<String>,
 }
@@ -509,6 +510,7 @@ impl Serialize for PlatformRustCommon {
             named_deps,
             env,
             link_style,
+            linker_flags,
             preferred_linkage,
         } = self;
         let mut map = ser.serialize_map(None)?;
@@ -523,6 +525,9 @@ impl Serialize for PlatformRustCommon {
         }
         if let Some(link_style) = link_style {
             map.serialize_entry("link_style", link_style)?;
+        }
+        if !linker_flags.is_empty() {
+            map.serialize_entry("linker_flags", linker_flags)?;
         }
         if !mapped_srcs.is_empty() {
             map.serialize_entry("mapped_srcs", mapped_srcs)?;
@@ -641,6 +646,7 @@ impl Serialize for RustLibrary {
                             named_deps,
                             env,
                             link_style,
+                            linker_flags,
                             preferred_linkage,
                         },
                     platform,
@@ -675,6 +681,9 @@ impl Serialize for RustLibrary {
         }
         if let Some(link_style) = link_style {
             map.serialize_entry("link_style", link_style)?;
+        }
+        if !linker_flags.is_empty() {
+            map.serialize_entry("linker_flags", linker_flags)?;
         }
         if let Some(linkable_alias) = linkable_alias {
             map.serialize_entry("linkable_alias", linkable_alias)?;
@@ -738,6 +747,7 @@ impl Serialize for RustBinary {
                             named_deps,
                             env,
                             link_style,
+                            linker_flags,
                             preferred_linkage,
                         },
                     platform,
@@ -765,6 +775,9 @@ impl Serialize for RustBinary {
         }
         if let Some(link_style) = link_style {
             map.serialize_entry("link_style", link_style)?;
+        }
+        if !linker_flags.is_empty() {
+            map.serialize_entry("linker_flags", linker_flags)?;
         }
         if !mapped_srcs.is_empty() {
             map.serialize_entry("mapped_srcs", mapped_srcs)?;
