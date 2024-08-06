@@ -10,6 +10,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::Context;
+use cargo_toml::OptionalFile;
 use globset::GlobBuilder;
 use globset::GlobSetBuilder;
 use ignore::gitignore::GitignoreBuilder;
@@ -70,6 +71,7 @@ pub(crate) fn cargo_vendor(
 
     if let Some(vendor_config) = &config.vendor {
         filter_checksum_files(&paths.third_party_dir, vendordir, vendor_config)?;
+        write_excluded_build_scripts(&paths.third_party_dir, vendordir)?;
     }
 
     if audit_sec {
@@ -158,8 +160,8 @@ fn filter_checksum_files(
 
     for entry in fs::read_dir(third_party_dir.join(vendordir))? {
         let entry = entry?;
-        let path = entry.path(); // full/path/to/vendor/foo-1.2.3
-        let checksum = path.join(".cargo-checksum.json"); // full/path/to/vendor/foo-1.2.3/.cargo-checksum.json
+        let manifest_dir = entry.path(); // full/path/to/vendor/foo-1.2.3
+        let checksum = manifest_dir.join(".cargo-checksum.json"); // full/path/to/vendor/foo-1.2.3/.cargo-checksum.json
 
         log::trace!("Reading checksum {}", checksum.display());
 
@@ -181,7 +183,7 @@ fn filter_checksum_files(
 
         let mut changed = false;
 
-        let pkgdir = relative_path(third_party_dir, &path); // vendor/foo-1.2.3
+        let pkgdir = relative_path(third_party_dir, &manifest_dir); // vendor/foo-1.2.3
 
         checksums.files.retain(|k, _| {
             log::trace!("{}: checking {}", checksum.display(), k);
@@ -199,6 +201,65 @@ fn filter_checksum_files(
         if changed {
             log::info!("Rewriting checksum {}", checksum.display());
             fs::write(checksum, serde_json::to_vec(&checksums)?)?;
+        }
+    }
+
+    Ok(())
+}
+
+// Work around https://github.com/rust-lang/cargo/issues/14348.
+//
+// This step can be deleted if that `cargo vendor` bug is fixed in a future
+// version of Cargo.
+fn write_excluded_build_scripts(third_party_dir: &Path, vendordir: &Path) -> anyhow::Result<()> {
+    type TomlManifest = cargo_toml::Manifest<serde::de::IgnoredAny>;
+
+    let third_party_vendor = third_party_dir.join(vendordir);
+    if !third_party_vendor.try_exists()? {
+        // If there are no dependencies from a remote registry (because there
+        // are no dependencies whatsoever, or all dependencies are local path
+        // dependencies) then `cargo vendor` won't have created a "vendor"
+        // directory.
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(third_party_vendor)? {
+        let entry = entry?;
+        let manifest_dir = entry.path(); // full/path/to/vendor/foo-1.2.3
+        let cargo_toml = manifest_dir.join("Cargo.toml");
+
+        log::trace!("Reading manifest {}", cargo_toml.display());
+
+        let content = match fs::read_to_string(&cargo_toml) {
+            Ok(file) => file,
+            Err(err) => {
+                log::warn!("Failed to read {}: {}", cargo_toml.display(), err);
+                continue;
+            }
+        };
+
+        let manifest: TomlManifest = match toml::from_str(&content) {
+            Ok(cs) => cs,
+            Err(err) => {
+                log::warn!("Failed to deserialize {}: {}", cargo_toml.display(), err);
+                continue;
+            }
+        };
+
+        let Some(package) = &manifest.package else {
+            continue;
+        };
+        let Some(OptionalFile::Path(build_script_path)) = &package.build else {
+            continue;
+        };
+
+        let expected_build_script = manifest_dir.join(build_script_path);
+        if !expected_build_script.try_exists()? {
+            log::trace!(
+                "Synthesizing build script {}",
+                expected_build_script.display(),
+            );
+            fs::write(expected_build_script, "fn main() {}\n")?;
         }
     }
 
