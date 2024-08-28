@@ -37,7 +37,7 @@ termcolor = "1.0"
 toml = "0.8.4"
 toml_edit = { version = "0.20.5", features = ["serde"] }
 unicode-ident = "1.0.10"
-url = "2.2.2"
+url = "2.5.2"
 walkdir = "2.3"
 
 [dev-dependencies]
