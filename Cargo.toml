@@ -9,7 +9,7 @@ repository = "https://github.com/facebookincubator/reindeer"
 license = "MIT"
 
 [dependencies]
-anyhow = "1.0.75"
+anyhow = "1.0.86"
 cached = "0.39.0"
 cargo_toml = "0.17.2"
 clap = { version = "4.5.11", features = ["derive", "env", "string", "unicode", "wrap_help"] }
