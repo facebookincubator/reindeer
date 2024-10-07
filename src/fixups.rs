@@ -126,7 +126,8 @@ impl<'meta> Fixups<'meta> {
             fixup
         };
 
-        if fixup_config.custom_visibility.is_some() && !index.is_public_package(package) {
+        if fixup_config.custom_visibility.is_some() && !index.is_public_package_name(&package.name)
+        {
             return Err(anyhow!(
                 "only public packages can have a fixup `visibility`."
             ))
