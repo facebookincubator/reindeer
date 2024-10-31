@@ -27,7 +27,7 @@ nom = "7.1"
 proc-macro2 = { version = "1.0.70", features = ["span-locations"] }
 rayon = "1.9.0"
 rustsec = "0.26"
-semver = { version = "1.0.17", features = ["serde"] }
+semver = { version = "1.0.23", features = ["serde"] }
 serde = { version = "1.0.185", features = ["derive", "rc"] }
 serde_json = { version = "1.0.125", features = ["float_roundtrip", "unbounded_depth"] }
 serde_starlark = "0.1.13"
