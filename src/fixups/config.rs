@@ -102,7 +102,7 @@ impl FixupConfigFile {
     pub fn platform_configs<'a>(
         &'a self,
         version: &'a semver::Version,
-    ) -> impl Iterator<Item = (&PlatformExpr, &FixupConfig)> + 'a {
+    ) -> impl Iterator<Item = (&'a PlatformExpr, &'a FixupConfig)> + 'a {
         self.platform_fixup
             .iter()
             .filter(move |(_, cfg)| cfg.version_applies(version))
@@ -111,7 +111,7 @@ impl FixupConfigFile {
     pub fn configs<'a>(
         &'a self,
         version: &'a semver::Version,
-    ) -> impl Iterator<Item = (Option<&PlatformExpr>, &FixupConfig)> + 'a {
+    ) -> impl Iterator<Item = (Option<&'a PlatformExpr>, &'a FixupConfig)> + 'a {
         self.base(version)
             .into_iter()
             .map(|base| (None, base))
