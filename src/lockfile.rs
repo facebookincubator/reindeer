@@ -18,7 +18,7 @@ use crate::Paths;
 #[derive(Deserialize, Debug)]
 pub struct Lockfile {
     #[allow(dead_code)]
-    pub version: Hopefully3,
+    pub version: Hopefully4,
     #[serde(rename = "package")]
     pub packages: Vec<LockfilePackage>,
 }
@@ -53,7 +53,7 @@ impl Lockfile {
 }
 
 #[derive(Debug)]
-pub struct Hopefully3;
+pub struct Hopefully4;
 
 #[derive(Deserialize, Debug)]
 pub struct LockfilePackage {
@@ -63,15 +63,15 @@ pub struct LockfilePackage {
     pub checksum: Option<String>,
 }
 
-impl<'de> Deserialize<'de> for Hopefully3 {
+impl<'de> Deserialize<'de> for Hopefully4 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         let version = usize::deserialize(deserializer)?;
-        if version != 3 {
+        if version != 4 {
             log::warn!("Unrecognized Cargo.lock format version: {}", version);
         }
-        Ok(Hopefully3)
+        Ok(Hopefully4)
     }
 }
