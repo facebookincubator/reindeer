@@ -26,7 +26,7 @@ monostate = "0.1.8"
 nom = "7.1"
 proc-macro2 = { version = "1.0.70", features = ["span-locations"] }
 rayon = "1.9.0"
-rustsec = "0.26"
+rustsec = "0.30"
 semver = { version = "1.0.23", features = ["serde"] }
 serde = { version = "1.0.185", features = ["derive", "rc"] }
 serde_json = { version = "1.0.132", features = ["float_roundtrip", "unbounded_depth"] }
@@ -43,7 +43,3 @@ walkdir = "2.3"
 [dev-dependencies]
 indoc = "2.0.2"
 tempfile = "3.8"
-
-[features]
-vendored-libgit2 = ["rustsec/vendored-libgit2"]
-vendored-openssl = ["rustsec/vendored-openssl"]
