@@ -22,7 +22,9 @@ use crate::buckify::relative_path;
 use crate::cargo;
 use crate::config::Config;
 use crate::config::VendorConfig;
+use crate::config::VendorSourceConfig;
 use crate::remap::RemapConfig;
+use crate::remap::RemapSource;
 use crate::Args;
 use crate::Paths;
 
@@ -42,36 +44,76 @@ pub(crate) fn cargo_vendor(
 ) -> anyhow::Result<()> {
     let vendordir = Path::new("vendor"); // relative to third_party_dir
 
-    let mut cmdline = vec![
-        "vendor",
-        "--manifest-path",
-        paths.manifest_path.to_str().unwrap(),
-        vendordir.to_str().unwrap(),
-        "--versioned-dirs",
-    ];
-    if no_delete {
-        cmdline.push("--no-delete");
-    }
+    if let VendorConfig::LocalRegistry = config.vendor {
+        let mut cmdline = vec![
+            "local-registry",
+            "-s",
+            paths.lockfile_path.to_str().unwrap(),
+            vendordir.to_str().unwrap(),
+            "--git",
+        ];
+        if no_delete {
+            cmdline.push("--no-delete");
+        }
+        log::info!("Running cargo {:?}", cmdline);
+        let _ = cargo::run_cargo(
+            config,
+            Some(&paths.cargo_home),
+            &paths.third_party_dir,
+            args,
+            &cmdline,
+        )?;
+        let mut remap = RemapConfig::default();
+        remap.sources.insert(
+            "crates-io".to_owned(),
+            RemapSource {
+                registry: Some("sparse+https://index.crates.io/".to_owned()),
+                replace_with: Some("local-registry".to_owned()),
+                ..RemapSource::default()
+            },
+        );
+        remap.sources.insert(
+            "local-registry".to_owned(),
+            RemapSource {
+                local_registry: Some(vendordir.to_owned()),
+                ..RemapSource::default()
+            },
+        );
+        let config_toml = toml::to_string(&remap).context("failed to serialize config.toml")?;
+        fs::write(paths.cargo_home.join("config.toml"), config_toml)?;
+        assert!(is_vendored(config, paths)?);
+    } else {
+        let mut cmdline = vec![
+            "vendor",
+            "--manifest-path",
+            paths.manifest_path.to_str().unwrap(),
+            vendordir.to_str().unwrap(),
+            "--versioned-dirs",
+        ];
+        if no_delete {
+            cmdline.push("--no-delete");
+        }
 
-    fs::create_dir_all(&paths.cargo_home)?;
+        fs::create_dir_all(&paths.cargo_home)?;
 
-    log::info!("Running cargo {:?}", cmdline);
-    let cargoconfig = cargo::run_cargo(
-        config,
-        Some(&paths.cargo_home),
-        &paths.third_party_dir,
-        args,
-        &cmdline,
-    )?;
+        log::info!("Running cargo {:?}", cmdline);
+        let cargoconfig = cargo::run_cargo(
+            config,
+            Some(&paths.cargo_home),
+            &paths.third_party_dir,
+            args,
+            &cmdline,
+        )?;
 
-    fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
-    if !cargoconfig.is_empty() {
-        assert!(is_vendored(paths)?);
-    }
+        fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
+        if !cargoconfig.is_empty() {
+            assert!(is_vendored(config, paths)?);
+        }
 
-    if let Some(vendor_config) = &config.vendor {
-        filter_checksum_files(&paths.third_party_dir, vendordir, vendor_config)?;
-        write_excluded_build_scripts(&paths.third_party_dir, vendordir)?;
+        if let VendorConfig::Source(source_config) = &config.vendor {
+            filter_checksum_files(&paths.third_party_dir, vendordir, source_config)?;
+            write_excluded_build_scripts(&paths.third_party_dir, vendordir)?;
+        }
     }
 
     if audit_sec {
@@ -81,7 +123,7 @@ pub(crate) fn cargo_vendor(
     Ok(())
 }
 
-pub(crate) fn is_vendored(paths: &Paths) -> anyhow::Result<bool> {
+pub(crate) fn is_vendored(config: &Config, paths: &Paths) -> anyhow::Result<bool> {
     // .cargo/config.toml is Cargo's preferred name for the config, but .cargo/config
     // is the older name so it takes priority if present.
     let mut cargo_config_path = paths.cargo_home.join("config");
@@ -108,8 +150,17 @@ pub(crate) fn is_vendored(paths: &Paths) -> anyhow::Result<bool> {
     let remap_config: RemapConfig = toml::from_str(&content)
         .context(format!("Failed to parse {}", cargo_config_path.display()))?;
 
-    match remap_config.sources.get("vendored-sources") {
-        Some(vendored_sources) => Ok(vendored_sources.directory.is_some()),
+    let source_name = match config.vendor {
+        VendorConfig::LocalRegistry => "local-registry",
+        VendorConfig::Source(_) => "vendored-sources",
+        _ => return Ok(false),
+    };
+    match remap_config.sources.get(source_name) {
+        Some(source) => match config.vendor {
+            VendorConfig::LocalRegistry => Ok(source.local_registry.is_some()),
+            VendorConfig::Source(_) => Ok(source.directory.is_some()),
+            VendorConfig::Off => Ok(false),
+        },
         None => Ok(false),
     }
 }
@@ -117,7 +168,7 @@ pub(crate) fn is_vendored(paths: &Paths) -> anyhow::Result<bool> {
 fn filter_checksum_files(
     third_party_dir: &Path,
     vendordir: &Path,
-    config: &VendorConfig,
+    config: &VendorSourceConfig,
 ) -> anyhow::Result<()> {
     if config.checksum_exclude.is_empty() && config.gitignore_checksum_exclude.is_empty() {
         return Ok(());

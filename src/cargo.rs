@@ -30,6 +30,7 @@ use serde::Deserializer;
 use serde::Serialize;
 
 use crate::config::Config;
+use crate::config::VendorConfig;
 use crate::lockfile::Lockfile;
 use crate::platform::PlatformExpr;
 use crate::Args;
@@ -60,7 +61,7 @@ pub fn cargo_get_lockfile_and_metadata(
 
     let cargo_home;
     let lockfile;
-    if config.vendor.is_none() {
+    if !matches!(config.vendor, VendorConfig::Source(_)) {
         cargo_home = None;
 
         // Whether or not there is a Cargo.lock already, do not read it yet.
