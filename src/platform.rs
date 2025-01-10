@@ -11,8 +11,8 @@ use std::error;
 use std::fmt;
 use std::fmt::Display;
 
-use nom::error::convert_error;
 use nom::error::VerboseError;
+use nom::error::convert_error;
 use serde::Deserialize;
 use serde::Serialize;
 

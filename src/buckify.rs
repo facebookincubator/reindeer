@@ -19,16 +19,18 @@ use std::io::Write;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::sync::Mutex;
+use std::sync::mpsc;
 
-use anyhow::bail;
 use anyhow::Context;
+use anyhow::bail;
 use cached::proc_macro::cached;
 use fnv::FnvHasher;
 use itertools::Itertools;
 use url::Url;
 
+use crate::Args;
+use crate::Paths;
 use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
@@ -47,7 +49,6 @@ use crate::buck::RustLibrary;
 use crate::buck::StringOrPath;
 use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
-use crate::cargo::cargo_get_lockfile_and_metadata;
 use crate::cargo::ArtifactKind;
 use crate::cargo::Edition;
 use crate::cargo::Manifest;
@@ -55,6 +56,7 @@ use crate::cargo::ManifestTarget;
 use crate::cargo::PkgId;
 use crate::cargo::Source;
 use crate::cargo::TargetReq;
+use crate::cargo::cargo_get_lockfile_and_metadata;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
@@ -65,13 +67,11 @@ use crate::glob::NO_EXCLUDE;
 use crate::index;
 use crate::lockfile::Lockfile;
 use crate::lockfile::LockfilePackage;
-use crate::platform::platform_names_for_expr;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
+use crate::platform::platform_names_for_expr;
 use crate::srcfiles::crate_srcfiles;
 use crate::universe::UniverseName;
-use crate::Args;
-use crate::Paths;
 
 // normalize a/b/../c => a/c and a/./b => a/b
 pub fn normalize_path(path: &Path) -> PathBuf {
@@ -1015,15 +1015,10 @@ fn buckify_for_universe(
         measure_time::info_time!("Generating buck rules");
         rayon::scope(move |scope| {
             for &workspace_member in &context.index.workspace_members {
-                generate_dep_rules(
-                    context,
-                    scope,
-                    tx.clone(),
-                    [
-                        (workspace_member, TargetReq::Lib),
-                        (workspace_member, TargetReq::EveryBin),
-                    ],
-                );
+                generate_dep_rules(context, scope, tx.clone(), [
+                    (workspace_member, TargetReq::Lib),
+                    (workspace_member, TargetReq::EveryBin),
+                ]);
             }
         });
     }

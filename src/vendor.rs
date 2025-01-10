@@ -18,6 +18,8 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::Args;
+use crate::Paths;
 use crate::buckify::relative_path;
 use crate::cargo;
 use crate::config::Config;
@@ -25,8 +27,6 @@ use crate::config::VendorConfig;
 use crate::config::VendorSourceConfig;
 use crate::remap::RemapConfig;
 use crate::remap::RemapSource;
-use crate::Args;
-use crate::Paths;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CargoChecksums {
@@ -64,21 +64,17 @@ pub(crate) fn cargo_vendor(
             &cmdline,
         )?;
         let mut remap = RemapConfig::default();
-        remap.sources.insert(
-            "crates-io".to_owned(),
-            RemapSource {
-                registry: Some("sparse+https://index.crates.io/".to_owned()),
-                replace_with: Some("local-registry".to_owned()),
-                ..RemapSource::default()
-            },
-        );
-        remap.sources.insert(
-            "local-registry".to_owned(),
-            RemapSource {
+        remap.sources.insert("crates-io".to_owned(), RemapSource {
+            registry: Some("sparse+https://index.crates.io/".to_owned()),
+            replace_with: Some("local-registry".to_owned()),
+            ..RemapSource::default()
+        });
+        remap
+            .sources
+            .insert("local-registry".to_owned(), RemapSource {
                 local_registry: Some(vendordir.to_owned()),
                 ..RemapSource::default()
-            },
-        );
+            });
         let config_toml = toml::to_string(&remap).context("failed to serialize config.toml")?;
         fs::write(paths.cargo_home.join("config.toml"), config_toml)?;
         assert!(is_vendored(config, paths)?);

@@ -18,10 +18,10 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use semver::Version;
+use serde::Serialize;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
 use serde::ser::Serializer;
-use serde::Serialize;
 use serde_starlark::FunctionCall;
 
 use crate::collection::SelectSet;
@@ -922,12 +922,9 @@ impl Serialize for CxxLibrary {
             map.serialize_entry("compiler_flags", compiler_flags)?;
         }
         if include_directories.iter().any(SubtargetOrPath::is_path) {
-            map.serialize_entry(
-                "include_directories",
-                &IncludeDirectories {
-                    include_directories,
-                },
-            )?;
+            map.serialize_entry("include_directories", &IncludeDirectories {
+                include_directories,
+            })?;
         }
         if !licenses.is_empty() {
             map.serialize_entry("licenses", licenses)?;
@@ -940,13 +937,10 @@ impl Serialize for CxxLibrary {
                 .iter()
                 .any(SubtargetOrPath::is_subtarget)
         {
-            map.serialize_entry(
-                "preprocessor_flags",
-                &PreprocessorFlags {
-                    include_directories,
-                    preprocessor_flags,
-                },
-            )?;
+            map.serialize_entry("preprocessor_flags", &PreprocessorFlags {
+                include_directories,
+                preprocessor_flags,
+            })?;
         }
         if *undefined_symbols {
             map.serialize_entry("undefined_symbols", undefined_symbols)?;

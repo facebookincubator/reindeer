@@ -8,14 +8,14 @@
 use std::io::Write;
 
 use anyhow::Context;
-use rustsec::advisory::Informational;
-use rustsec::report::Report;
-use rustsec::report::Settings;
 use rustsec::Database;
 use rustsec::Lockfile;
 use rustsec::Repository;
 use rustsec::Warning;
 use rustsec::WarningKind;
+use rustsec::advisory::Informational;
+use rustsec::report::Report;
+use rustsec::report::Settings;
 use termcolor::Color;
 use termcolor::ColorChoice;
 use termcolor::ColorSpec;
