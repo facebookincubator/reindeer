@@ -43,26 +43,21 @@ pub(crate) fn cargo_vendor(
     paths: &Paths,
 ) -> anyhow::Result<()> {
     let vendordir = Path::new("vendor"); // relative to third_party_dir
+    let full_vendor_dir = paths.third_party_dir.join("vendor");
 
     if let VendorConfig::LocalRegistry = config.vendor {
         let mut cmdline = vec![
             "local-registry",
             "-s",
             paths.lockfile_path.to_str().unwrap(),
-            vendordir.to_str().unwrap(),
+            full_vendor_dir.to_str().unwrap(),
             "--git",
         ];
         if no_delete {
             cmdline.push("--no-delete");
         }
         log::info!("Running cargo {:?}", cmdline);
-        let _ = cargo::run_cargo(
-            config,
-            Some(&paths.cargo_home),
-            &paths.third_party_dir,
-            args,
-            &cmdline,
-        )?;
+        let _ = cargo::run_cargo(config, Some(&paths.cargo_home), None, args, &cmdline)?;
         let mut remap = RemapConfig::default();
         remap.sources.insert("crates-io".to_owned(), RemapSource {
             registry: Some("sparse+https://index.crates.io/".to_owned()),
@@ -83,7 +78,7 @@ pub(crate) fn cargo_vendor(
             "vendor",
             "--manifest-path",
             paths.manifest_path.to_str().unwrap(),
-            vendordir.to_str().unwrap(),
+            full_vendor_dir.to_str().unwrap(),
             "--versioned-dirs",
         ];
         if no_delete {
@@ -93,13 +88,7 @@ pub(crate) fn cargo_vendor(
         fs::create_dir_all(&paths.cargo_home)?;
 
         log::info!("Running cargo {:?}", cmdline);
-        let cargoconfig = cargo::run_cargo(
-            config,
-            Some(&paths.cargo_home),
-            &paths.third_party_dir,
-            args,
-            &cmdline,
-        )?;
+        let cargoconfig = cargo::run_cargo(config, Some(&paths.cargo_home), None, args, &cmdline)?;
 
         fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
         if !cargoconfig.is_empty() {

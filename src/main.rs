@@ -61,6 +61,9 @@ pub struct Args {
     third_party_dir: PathBuf,
     #[command(subcommand)]
     subcommand: SubCommand,
+    /// Path to the `Cargo.toml to generate from
+    #[arg(long, value_name = "PATH")]
+    manifest_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -110,9 +113,13 @@ fn try_main() -> anyhow::Result<()> {
     let third_party_dir = dunce::canonicalize(&args.third_party_dir)?;
     let mut config = config::read_config(&third_party_dir)?;
 
+    let manifest_path = args
+        .manifest_path
+        .clone()
+        .unwrap_or_else(|| third_party_dir.join("Cargo.toml"));
     let paths = Paths {
-        manifest_path: third_party_dir.join("Cargo.toml"),
-        lockfile_path: third_party_dir.join("Cargo.lock"),
+        lockfile_path: manifest_path.with_file_name("Cargo.lock"),
+        manifest_path,
         cargo_home: third_party_dir.join(".cargo"),
         third_party_dir,
     };
@@ -133,17 +140,11 @@ fn try_main() -> anyhow::Result<()> {
         }
 
         SubCommand::Update { .. } => {
-            let _ = cargo::run_cargo(
-                &config,
-                Some(&paths.cargo_home),
-                &paths.third_party_dir,
-                &args,
-                &[
-                    "generate-lockfile",
-                    "--manifest-path",
-                    paths.manifest_path.to_str().unwrap(),
-                ],
-            )?;
+            let _ = cargo::run_cargo(&config, Some(&paths.cargo_home), None, &args, &[
+                "generate-lockfile",
+                "--manifest-path",
+                paths.manifest_path.to_str().unwrap(),
+            ])?;
         }
 
         SubCommand::Buckify { stdout } => {
