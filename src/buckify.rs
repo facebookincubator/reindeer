@@ -209,15 +209,22 @@ fn generate_rules<'scope>(
         if !matching_kind {
             continue;
         }
-        match generate_target_rules(context, pkg, tgt) {
+
+        let will_use_rules = {
+            let is_private_root_pkg =
+                context.index.is_root_package(pkg) && !context.index.is_public_package(pkg);
+            let is_ignored_workspace_package = !context.config.include_workspace_members
+                && context.index.is_workspace_package(&pkg);
+            !is_private_root_pkg && !is_ignored_workspace_package
+        };
+
+        match generate_target_rules(context, pkg, tgt, will_use_rules) {
             Ok((rules, _)) if rules.is_empty() => {
                 // Don't generate rules for dependencies if we're not emitting
                 // any rules for this target.
             }
             Ok((rules, mut deps)) => {
-                let is_private_root_pkg =
-                    context.index.is_root_package(pkg) && !context.index.is_public_package(pkg);
-                if !is_private_root_pkg {
+                if will_use_rules {
                     for rule in rules {
                         let _ = rule_tx.send(Ok(rule));
                     }
@@ -418,6 +425,7 @@ fn generate_target_rules<'scope>(
     context: &'scope RuleContext<'scope>,
     pkg: &'scope Manifest,
     tgt: &'scope ManifestTarget,
+    will_use_rules: bool,
 ) -> anyhow::Result<(Vec<Rule>, Vec<(&'scope Manifest, TargetReq<'scope>)>)> {
     let RuleContext {
         config,
@@ -428,7 +436,7 @@ fn generate_target_rules<'scope>(
 
     log::debug!("Generating rules for package {} target {}", pkg, tgt.name);
 
-    let fixups = Fixups::new(config, paths, index, pkg, tgt)?;
+    let fixups = Fixups::new(config, paths, index, pkg, tgt, will_use_rules)?;
 
     if fixups.omit_target() {
         return Ok((vec![], vec![]));

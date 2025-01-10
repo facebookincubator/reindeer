@@ -67,6 +67,14 @@ pub struct Config {
     #[serde(default)]
     pub include_top_level: bool,
 
+    /// Include workspace members in the generated BUCK file.
+    ///
+    /// Generlly workspace members are located outside the third party directory.
+    /// So this is probably only relevant if you are keeping a workspace
+    /// Cargo.toml and its generated BUCK file in the same directory.
+    #[serde(default)]
+    pub include_workspace_members: bool,
+
     /// Use strict glob matching
     #[serde(default)]
     pub strict_globs: bool,

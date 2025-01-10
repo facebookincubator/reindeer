@@ -98,6 +98,7 @@ impl<'meta> Fixups<'meta> {
         index: &'meta Index,
         package: &'meta Manifest,
         target: &'meta ManifestTarget,
+        will_use_rules: bool,
     ) -> anyhow::Result<Self> {
         let fixup_dir = paths.third_party_dir.join("fixups").join(&package.name);
         let fixup_path = fixup_dir.join("fixups.toml");
@@ -108,7 +109,8 @@ impl<'meta> Fixups<'meta> {
         } else {
             log::debug!("no fixups at {}", fixup_path.display());
             let fixup = FixupConfigFile::template(&paths.third_party_dir, target);
-            if config.fixup_templates && target.kind_custom_build() {
+            // will_use_rules: avoid writing for e.g. `include_workspace_members = false`
+            if config.fixup_templates && target.kind_custom_build() && will_use_rules {
                 log::debug!(
                     "Writing template for {} to {}",
                     package,
