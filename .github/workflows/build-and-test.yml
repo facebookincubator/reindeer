@@ -24,13 +24,11 @@ jobs:
         run: |-
           cd example
           reindeer --third-party-dir third-party buckify
-          buck2 init --git
           buck2 run "//project:test"
         if: matrix.os == 'ubuntu' || matrix.os == 'macos'
       - name: Build example project (Windows)
         run: |-
           cd example
           & reindeer --third-party-dir third-party buckify
-          & buck2 init --git
           & buck2 run "//project:test"
         if: matrix.os == 'windows'
