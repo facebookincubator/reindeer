@@ -1,0 +1,5 @@
+# Ignore Cargo
+# If you need to adjust settings in .cargo/config.toml, put one in a parent directory.
+.cargo
+target
+

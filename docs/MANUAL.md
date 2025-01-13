@@ -30,16 +30,19 @@ environment matches this.)
 
 ## An Example
 
-See the [example directory](../example/README.md) as a starting point. This has:
+See the [first example directory](../examples/01-intro/) as a starting point. 
+This has:
 
 - Your first-party code in "project" (though of course it can be anywhere and
   everywhere), and
-- A [third-party](../example/third-party) directory which is managed by Reindeer
-- A [`setup.sh`](../example/setup.sh) script to get you bootstrapped
+- A [third-party](../examples/01-intro/third-party) directory which is managed 
+  by Reindeer
+- A [`setup.sh`](../examples/01-intro/setup.sh) script to get you bootstrapped
 
 Running `setup.sh` will build Reindeer (using Cargo) and then use it to vendor
 the small number of third-party dependencies defined in
-[`third-party/Cargo.toml`](../third-party/Cargo.toml) and generate build rules
+[`third-party/Cargo.toml`](../examples/01-intro/third-party/Cargo.toml) and 
+generate build rules
 for them in `third-party/BUCK`.
 
 I recommend using this as a starting template for your own project, at least

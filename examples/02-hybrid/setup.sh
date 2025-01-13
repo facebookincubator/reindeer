@@ -4,11 +4,11 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-# Generate file 'example/third-party/BUCK'.
+# Generate file 'third-party/BUCK'.
 
 set -e
 
-(cd ..; cargo build)
+(cd ../..; cargo build)
 
 # Build a BUCK file to build third-party crates.
 #
@@ -19,4 +19,4 @@ set -e
 # typically commit these fixups and the generated third-party/BUCK in the same
 # commit as above.
 
-../target/debug/reindeer --third-party-dir third-party buckify
+../../target/debug/reindeer buckify

@@ -1,0 +1,21 @@
+[repositories]
+root = .
+prelude = prelude
+toolchains = toolchains
+none = none
+
+[repository_aliases]
+config = prelude
+fbcode = none
+fbsource = none
+buck = none
+
+[external_cells]
+prelude = bundled
+
+[parser]
+target_platform_detector_spec = target:root//...->prelude//platforms:default
+
+[rust]
+default_edition = 2021
+remap_src_paths = yes

@@ -1,0 +1,22 @@
+load("@prelude//cfg/modifier:set_cfg_modifiers.bzl", "set_cfg_modifiers")
+load("@prelude//rust:with_workspace.bzl", "with_rust_workspace")
+load("@root//config:set_cfg_constructor.bzl", "set_cfg_constructor")
+
+# This enables the Config Modifiers RFC.
+# Described at
+# https://github.com/facebook/buck2/blob/main/docs/rfcs/cfg-modifiers/api.md
+#
+# This function can only be called from the repository root `PACKAGE` file.
+ALIASES = {
+    "debug": "root//config/mode:debug",
+    "release": "root//config/mode:release",
+}
+set_cfg_constructor(aliases = ALIASES)
+
+set_cfg_modifiers(
+    cfg_modifiers = [
+        # default is debug mode.
+        # override with -m release
+        "root//config/mode:debug",
+    ],
+)

@@ -9,11 +9,8 @@ use once_cell::sync::Lazy;
 
 const MAGIC: &str = "this is a magic string";
 
-static SPECIAL: Lazy<String> = Lazy::new(|| {
-    let hash = blake3::hash(MAGIC.as_bytes());
-    hash.to_hex().to_string()
-});
+static SPECIAL: Lazy<String> = Lazy::new(|| MAGIC.to_string());
 
 fn main() {
-    println!("blake3({:?}) = {}", MAGIC, &*SPECIAL);
+    println!("static {}", &*SPECIAL);
 }
