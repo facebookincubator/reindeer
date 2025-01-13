@@ -20,8 +20,10 @@
 //!
 //! (TBD - rest of it)
 
+use std::path::Path;
 use std::path::PathBuf;
 
+use anyhow::Context;
 use clap::Parser;
 use clap::Subcommand;
 
@@ -56,14 +58,23 @@ pub struct Args {
     /// Extra cargo options
     #[arg(long, value_name = "ARGUMENT")]
     cargo_options: Vec<String>,
-    /// Path to third-party dir
-    #[arg(long, default_value = ".", value_name = "PATH")]
-    third_party_dir: PathBuf,
+    /// Path to third-party dir. Overrides configuration from `reindeer.toml`.
+    ///
+    /// Path is relative to current dir, whereas the one in `reindeer.toml` is relative to the
+    /// parent directory of the `reindeer.toml` file.
+    #[arg(long, value_name = "PATH")]
+    third_party_dir: Option<PathBuf>,
     #[command(subcommand)]
     subcommand: SubCommand,
-    /// Path to the `Cargo.toml to generate from
+    /// Path to the `Cargo.toml to generate from. Overrides configuration from `reindeer.toml`.
+    ///
+    /// Path is relative to current dir, whereas the one in `reindeer.toml` is relative to the
+    /// parent directory of the `reindeer.toml` file.
     #[arg(long, value_name = "PATH")]
     manifest_path: Option<PathBuf>,
+    /// Path to a `reindeer.toml` file to read configuration from.
+    #[arg(short = 'c', long, value_name = "PATH")]
+    config: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -110,19 +121,74 @@ pub struct Paths {
 fn try_main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let third_party_dir = dunce::canonicalize(&args.third_party_dir)?;
-    let mut config = config::read_config(&third_party_dir)?;
+    let paths;
+    let mut config;
 
-    let manifest_path = args
-        .manifest_path
-        .clone()
-        .unwrap_or_else(|| third_party_dir.join("Cargo.toml"));
-    let paths = Paths {
-        lockfile_path: manifest_path.with_file_name("Cargo.lock"),
-        manifest_path,
-        cargo_home: third_party_dir.join(".cargo"),
-        third_party_dir,
-    };
+    if let Some(from_args) = args.third_party_dir.as_deref() {
+        let third_party_dir = dunce::canonicalize(&from_args)?;
+        config = config::read_config(&third_party_dir.join("reindeer.toml"))?;
+
+        let manifest_path = args
+            .manifest_path
+            .clone()
+            .unwrap_or_else(|| third_party_dir.join("Cargo.toml"));
+
+        paths = Paths {
+            lockfile_path: manifest_path.with_file_name("Cargo.lock"),
+            manifest_path,
+            cargo_home: third_party_dir.join(".cargo"),
+            third_party_dir,
+        };
+    } else {
+        let config_path = args.config.as_deref().unwrap_or(Path::new("reindeer.toml"));
+        config = config::read_config(config_path)?;
+
+        // These unwrap sequences look gnarly, but essentially
+        // - `reindeer` (no flags) == `reindeer -c reindeer.toml`
+        // - config.third_party_dir and config.manifest_path are new, and many projects
+        //   don't have them
+        // - third_party_dir defaulted to . before, and remains so
+        // - manifest_path was not configurable before, so absent configuration remains
+        //   {third_party_dir}/Cargo.toml
+        let third_party_dir = args
+            .third_party_dir
+            .clone()
+            .or_else(|| Some(config.config_dir.join(config.third_party_dir.as_deref()?)))
+            .unwrap_or_else(|| ".".into());
+        let third_party_dir = dunce::canonicalize(&third_party_dir)?;
+
+        let manifest_path = args
+            .manifest_path
+            .clone()
+            .or_else(|| Some(config.config_dir.join(config.manifest_path.as_deref()?)))
+            .unwrap_or_else(|| third_party_dir.join("Cargo.toml"));
+
+        let lockfile_path = manifest_path.with_file_name("Cargo.lock");
+
+        paths = Paths {
+            lockfile_path,
+            manifest_path,
+            cargo_home: third_party_dir.join(".cargo"),
+            third_party_dir,
+        };
+    }
+
+    if !paths.manifest_path.is_file() {
+        return Err(anyhow::anyhow!(
+            "Path {} is not a file",
+            paths.manifest_path.display()
+        ));
+    }
+
+    if !paths.third_party_dir.exists() {
+        std::fs::create_dir_all(&paths.third_party_dir)
+            .with_context(|| format!("Creating directory {}", paths.third_party_dir.display()))?;
+    } else if !paths.third_party_dir.is_dir() {
+        return Err(anyhow::anyhow!(
+            "Path {} must be a directory",
+            paths.manifest_path.display()
+        ));
+    }
 
     log::debug!("Args = {:#?}, paths {:#?}", args, paths);
 

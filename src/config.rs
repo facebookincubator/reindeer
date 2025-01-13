@@ -41,7 +41,17 @@ use crate::universe::UniverseName;
 pub struct Config {
     /// Path the config was read from
     #[serde(skip)]
-    pub config_path: PathBuf,
+    pub config_dir: PathBuf,
+
+    /// Path to the Cargo.toml we are buckifying
+    #[serde(default)]
+    pub manifest_path: Option<PathBuf>,
+
+    /// Where to write the output.
+    ///
+    /// (Default = "", i.e. current directory)
+    #[serde(default)]
+    pub third_party_dir: Option<PathBuf>,
 
     /// Try to compute a precise list of sources rather than using globbing
     #[serde(default)]
@@ -325,11 +335,13 @@ where
     deserializer.deserialize_any(VendorConfigVisitor)
 }
 
-pub fn read_config(dir: &Path) -> anyhow::Result<Config> {
-    let reindeer_toml = dir.join("reindeer.toml");
+pub fn read_config(reindeer_toml: &Path) -> anyhow::Result<Config> {
+    let dir = reindeer_toml
+        .parent()
+        .context("Invalid path to reindeer.toml")?;
     let mut config = try_read_config(&reindeer_toml)?;
 
-    config.config_path = dir.to_path_buf();
+    config.config_dir = dir.to_path_buf();
 
     if config.buck.buckfile_imports.is_default {
         // Fill in some prelude imports so Reindeer generates working targets

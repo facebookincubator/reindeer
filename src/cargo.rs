@@ -120,7 +120,7 @@ pub(crate) fn run_cargo(
     let mut cargo_command = if let Some(cargo_path) = args.cargo_path.as_ref() {
         Command::new(cargo_path)
     } else if let Some(bin) = config.cargo.cargo.as_ref() {
-        Command::new(config.config_path.join(bin))
+        Command::new(config.config_dir.join(bin))
     } else {
         Command::new("cargo")
     };
@@ -143,7 +143,7 @@ pub(crate) fn run_cargo(
             }
         }
     } else if let Some(bin) = config.cargo.rustc.as_ref() {
-        cargo_command.env("RUSTC", config.config_path.join(bin));
+        cargo_command.env("RUSTC", config.config_dir.join(bin));
     }
 
     if let Some(cargo_home) = cargo_home {
