@@ -440,7 +440,19 @@ fn generate_target_rules<'scope>(
     let mapped_manifest_dir = if matches!(config.vendor, VendorConfig::Source(_))
         || matches!(pkg.source, Source::Local)
     {
-        relative_path(&paths.third_party_dir, manifest_dir)
+        match manifest_dir
+            .strip_prefix(&paths.third_party_dir)
+			.with_context(|| format!(
+					"crate sources would be inaccessible from the generated BUCK file, cannot refer to {} from {}.",
+					relative_path(&paths.third_party_dir, manifest_dir).display(),
+					paths.third_party_dir.join(&config.buck.file_name).display(),
+				))
+			.map(ToOwned::to_owned){
+				Err(_) if !will_use_rules => {
+					PathBuf::from("__unused__")
+				}
+				res => res?
+			}
     } else if let VendorConfig::LocalRegistry = config.vendor {
         PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
     } else if let Source::Git { repo, .. } = &pkg.source {
