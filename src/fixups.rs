@@ -16,10 +16,11 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
+use anyhow::Context;
 use anyhow::anyhow;
 use anyhow::bail;
-use anyhow::Context;
 
+use crate::Paths;
 use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
@@ -44,14 +45,13 @@ use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::glob::Globs;
-use crate::glob::SerializableGlobSet as GlobSet;
 use crate::glob::NO_EXCLUDE;
+use crate::glob::SerializableGlobSet as GlobSet;
 use crate::index::Index;
 use crate::index::ResolvedDep;
-use crate::platform::platform_names_for_expr;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformPredicate;
-use crate::Paths;
+use crate::platform::platform_names_for_expr;
 
 mod buildscript;
 mod config;
@@ -98,6 +98,7 @@ impl<'meta> Fixups<'meta> {
         index: &'meta Index,
         package: &'meta Manifest,
         target: &'meta ManifestTarget,
+        will_use_rules: bool,
     ) -> anyhow::Result<Self> {
         let fixup_dir = paths.third_party_dir.join("fixups").join(&package.name);
         let fixup_path = fixup_dir.join("fixups.toml");
@@ -108,7 +109,8 @@ impl<'meta> Fixups<'meta> {
         } else {
             log::debug!("no fixups at {}", fixup_path.display());
             let fixup = FixupConfigFile::template(&paths.third_party_dir, target);
-            if config.fixup_templates && target.kind_custom_build() {
+            // will_use_rules: avoid writing for e.g. `include_workspace_members = false`
+            if config.fixup_templates && target.kind_custom_build() && will_use_rules {
                 log::debug!(
                     "Writing template for {} to {}",
                     package,

@@ -191,13 +191,12 @@ impl SourceFinder<'_> {
             }
             Err(err) if err.kind() == io::ErrorKind::NotFound => false,
             Err(err) => {
-                self.sources.errors.push(Error::new(
-                    self.current,
-                    ErrorKind::FileError {
+                self.sources
+                    .errors
+                    .push(Error::new(self.current, ErrorKind::FileError {
                         source_path: source_path.to_owned(),
                         source: err,
-                    },
-                ));
+                    }));
                 true
             }
         }
@@ -406,8 +405,8 @@ impl syn::parse::Parse for CfgIf {
 mod tests {
     use std::io;
 
-    use tempfile::tempdir;
     use tempfile::TempDir;
+    use tempfile::tempdir;
 
     use super::*;
 
