@@ -12,7 +12,7 @@ license = "MIT"
 anyhow = "1.0.95"
 cached = "0.39.0"
 cargo_toml = "0.20.5"
-clap = { version = "4.5.27", features = ["derive", "env", "string", "unicode", "wrap_help"] }
+clap = { version = "4.5.20", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 dunce = "1.0.2"
 env_logger = "0.10"
 fnv = "1.0"
