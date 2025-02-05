@@ -19,16 +19,18 @@ use std::io::Write;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::sync::Mutex;
+use std::sync::mpsc;
 
-use anyhow::bail;
 use anyhow::Context;
+use anyhow::bail;
 use cached::proc_macro::cached;
 use fnv::FnvHasher;
 use itertools::Itertools;
 use url::Url;
 
+use crate::Args;
+use crate::Paths;
 use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
@@ -47,7 +49,6 @@ use crate::buck::RustLibrary;
 use crate::buck::StringOrPath;
 use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
-use crate::cargo::cargo_get_lockfile_and_metadata;
 use crate::cargo::ArtifactKind;
 use crate::cargo::Edition;
 use crate::cargo::Manifest;
@@ -55,6 +56,7 @@ use crate::cargo::ManifestTarget;
 use crate::cargo::PkgId;
 use crate::cargo::Source;
 use crate::cargo::TargetReq;
+use crate::cargo::cargo_get_lockfile_and_metadata;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
@@ -65,13 +67,11 @@ use crate::glob::NO_EXCLUDE;
 use crate::index;
 use crate::lockfile::Lockfile;
 use crate::lockfile::LockfilePackage;
-use crate::platform::platform_names_for_expr;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
+use crate::platform::platform_names_for_expr;
 use crate::srcfiles::crate_srcfiles;
 use crate::universe::UniverseName;
-use crate::Args;
-use crate::Paths;
 
 // normalize a/b/../c => a/c and a/./b => a/b
 pub fn normalize_path(path: &Path) -> PathBuf {
@@ -209,15 +209,22 @@ fn generate_rules<'scope>(
         if !matching_kind {
             continue;
         }
-        match generate_target_rules(context, pkg, tgt) {
+
+        let will_use_rules = {
+            let is_private_root_pkg =
+                context.index.is_root_package(pkg) && !context.index.is_public_package(pkg);
+            let is_ignored_workspace_package = !context.config.include_workspace_members
+                && context.index.is_workspace_package(&pkg);
+            !is_private_root_pkg && !is_ignored_workspace_package
+        };
+
+        match generate_target_rules(context, pkg, tgt, will_use_rules) {
             Ok((rules, _)) if rules.is_empty() => {
                 // Don't generate rules for dependencies if we're not emitting
                 // any rules for this target.
             }
             Ok((rules, mut deps)) => {
-                let is_private_root_pkg =
-                    context.index.is_root_package(pkg) && !context.index.is_public_package(pkg);
-                if !is_private_root_pkg {
+                if will_use_rules {
                     for rule in rules {
                         let _ = rule_tx.send(Ok(rule));
                     }
@@ -418,6 +425,7 @@ fn generate_target_rules<'scope>(
     context: &'scope RuleContext<'scope>,
     pkg: &'scope Manifest,
     tgt: &'scope ManifestTarget,
+    will_use_rules: bool,
 ) -> anyhow::Result<(Vec<Rule>, Vec<(&'scope Manifest, TargetReq<'scope>)>)> {
     let RuleContext {
         config,
@@ -428,7 +436,7 @@ fn generate_target_rules<'scope>(
 
     log::debug!("Generating rules for package {} target {}", pkg, tgt.name);
 
-    let fixups = Fixups::new(config, paths, index, pkg, tgt)?;
+    let fixups = Fixups::new(config, paths, index, pkg, tgt, will_use_rules)?;
 
     if fixups.omit_target() {
         return Ok((vec![], vec![]));
@@ -440,7 +448,19 @@ fn generate_target_rules<'scope>(
     let mapped_manifest_dir = if matches!(config.vendor, VendorConfig::Source(_))
         || matches!(pkg.source, Source::Local)
     {
-        relative_path(&paths.third_party_dir, manifest_dir)
+        match manifest_dir
+            .strip_prefix(&paths.third_party_dir)
+			.with_context(|| format!(
+					"crate sources would be inaccessible from the generated BUCK file, cannot refer to {} from {}.",
+					relative_path(&paths.third_party_dir, manifest_dir).display(),
+					paths.third_party_dir.join(&config.buck.file_name).display(),
+				))
+			.map(ToOwned::to_owned){
+				Err(_) if !will_use_rules => {
+					PathBuf::from("__unused__")
+				}
+				res => res?
+			}
     } else if let VendorConfig::LocalRegistry = config.vendor {
         PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
     } else if let Source::Git { repo, .. } = &pkg.source {
@@ -1015,15 +1035,10 @@ fn buckify_for_universe(
         measure_time::info_time!("Generating buck rules");
         rayon::scope(move |scope| {
             for &workspace_member in &context.index.workspace_members {
-                generate_dep_rules(
-                    context,
-                    scope,
-                    tx.clone(),
-                    [
-                        (workspace_member, TargetReq::Lib),
-                        (workspace_member, TargetReq::EveryBin),
-                    ],
-                );
+                generate_dep_rules(context, scope, tx.clone(), [
+                    (workspace_member, TargetReq::Lib),
+                    (workspace_member, TargetReq::EveryBin),
+                ]);
             }
         });
     }
