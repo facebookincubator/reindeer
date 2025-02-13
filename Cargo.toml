@@ -34,7 +34,7 @@ serde_starlark = "0.1.13"
 strum = { version = "0.26.2", features = ["derive"] }
 syn = { version = "2.0.96", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 termcolor = "1.0"
-toml = "0.8.4"
+toml = "0.8.19"
 toml_edit = { version = "0.20.5", features = ["serde"] }
 unicode-ident = "1.0.12"
 url = "2.5.2"
@@ -42,4 +42,4 @@ walkdir = "2.3"
 
 [dev-dependencies]
 indoc = "2.0.2"
-tempfile = "3.8"
+tempfile = "3.15"
