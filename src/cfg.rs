@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use nom::IResult;
 use nom::branch::alt;
 use nom::bytes::complete::escaped;
 use nom::bytes::complete::tag;
@@ -18,9 +19,9 @@ use nom::combinator::map;
 use nom::combinator::opt;
 use nom::combinator::recognize;
 use nom::combinator::verify;
-use nom::error::context;
 use nom::error::ContextError;
 use nom::error::ParseError;
+use nom::error::context;
 use nom::multi::many0_count;
 use nom::multi::separated_list0;
 use nom::multi::separated_list1;
@@ -29,7 +30,6 @@ use nom::sequence::pair;
 use nom::sequence::preceded;
 use nom::sequence::separated_pair;
 use nom::sequence::terminated;
-use nom::IResult;
 use unicode_ident::is_xid_continue;
 use unicode_ident::is_xid_start;
 
@@ -209,13 +209,10 @@ mod test {
         println!("res = {:?}", res);
         assert_eq!(
             res,
-            Ok((
-                "",
-                Value {
-                    key: "feature",
-                    value: "bloop"
-                }
-            ))
+            Ok(("", Value {
+                key: "feature",
+                value: "bloop"
+            }))
         )
     }
 
@@ -225,13 +222,10 @@ mod test {
         println!("res = {:?}", res);
         assert_eq!(
             res,
-            Ok((
-                "",
-                Value {
-                    key: "target_env",
-                    value: ""
-                }
-            ))
+            Ok(("", Value {
+                key: "target_env",
+                value: ""
+            }))
         )
     }
 

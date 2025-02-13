@@ -12,13 +12,13 @@ use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 
-use serde::de::value::SeqAccessDeserializer;
-use serde::de::SeqAccess;
-use serde::de::Visitor;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
+use serde::de::SeqAccess;
+use serde::de::Visitor;
+use serde::de::value::SeqAccessDeserializer;
 use strum::IntoEnumIterator as _;
 use walkdir::WalkDir;
 
