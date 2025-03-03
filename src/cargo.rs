@@ -653,6 +653,8 @@ pub enum Edition {
     Rust2018,
     #[serde(rename = "2021")]
     Rust2021,
+    #[serde(rename = "2024")]
+    Rust2024,
 }
 
 impl Display for Edition {
@@ -661,6 +663,7 @@ impl Display for Edition {
             Edition::Rust2015 => "2015",
             Edition::Rust2018 => "2018",
             Edition::Rust2021 => "2021",
+            Edition::Rust2024 => "2024",
         };
         fmt.write_str(edition)
     }
