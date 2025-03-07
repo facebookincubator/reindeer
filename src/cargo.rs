@@ -24,17 +24,17 @@ use std::process::Stdio;
 use std::thread;
 
 use anyhow::Context;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
+use crate::Args;
+use crate::Paths;
 use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::lockfile::Lockfile;
 use crate::platform::PlatformExpr;
-use crate::Args;
-use crate::Paths;
 
 pub fn cargo_get_lockfile_and_metadata(
     config: &Config,
@@ -80,14 +80,8 @@ pub fn cargo_get_lockfile_and_metadata(
         lockfile = Some(Lockfile::load(paths)?);
     };
 
-    let metadata: Metadata = run_cargo_json(
-        config,
-        cargo_home,
-        &paths.third_party_dir,
-        args,
-        &cargo_flags,
-    )
-    .context("parsing metadata")?;
+    let metadata: Metadata =
+        run_cargo_json(config, cargo_home, None, args, &cargo_flags).context("parsing metadata")?;
 
     let lockfile = match lockfile {
         Some(existing_lockfile) => existing_lockfile,
@@ -101,7 +95,7 @@ pub fn cargo_get_lockfile_and_metadata(
 pub(crate) fn run_cargo(
     config: &Config,
     cargo_home: Option<&Path>,
-    current_dir: &Path,
+    current_dir: Option<&Path>,
     args: &Args,
     opts: &[&str],
 ) -> anyhow::Result<Vec<u8>> {
@@ -118,15 +112,15 @@ pub(crate) fn run_cargo(
     }
 
     log::debug!(
-        "Running Cargo command {:?} in {}",
+        "Running Cargo command {:?} in dir {:?}",
         cmdline,
-        current_dir.display()
+        current_dir
     );
 
     let mut cargo_command = if let Some(cargo_path) = args.cargo_path.as_ref() {
         Command::new(cargo_path)
     } else if let Some(bin) = config.cargo.cargo.as_ref() {
-        Command::new(config.config_path.join(bin))
+        Command::new(config.config_dir.join(bin))
     } else {
         Command::new("cargo")
     };
@@ -149,15 +143,18 @@ pub(crate) fn run_cargo(
             }
         }
     } else if let Some(bin) = config.cargo.rustc.as_ref() {
-        cargo_command.env("RUSTC", config.config_path.join(bin));
+        cargo_command.env("RUSTC", config.config_dir.join(bin));
     }
 
     if let Some(cargo_home) = cargo_home {
         cargo_command.env("CARGO_HOME", cargo_home);
     }
 
+    if let Some(current_dir) = current_dir {
+        cargo_command.current_dir(current_dir);
+    }
+
     cargo_command
-        .current_dir(current_dir)
         .args(&cmdline)
         .envs(envs)
         .stdout(Stdio::piped())
@@ -208,7 +205,7 @@ pub(crate) fn run_cargo(
 pub(crate) fn run_cargo_json<T: DeserializeOwned>(
     config: &Config,
     cargo_home: Option<&Path>,
-    current_dir: &Path,
+    current_dir: Option<&Path>,
     args: &Args,
     opts: &[&str],
 ) -> anyhow::Result<T> {
@@ -716,8 +713,8 @@ fn parse_source(source: &str) -> Option<Source> {
 
 #[cfg(test)]
 mod test {
-    use super::parse_source;
     use super::Source;
+    use super::parse_source;
 
     #[test]
     fn test_parses_source_git() {
