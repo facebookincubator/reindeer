@@ -11,9 +11,9 @@ use anyhow::Context;
 use serde::Deserialize;
 use serde::Deserializer;
 
+use crate::Paths;
 use crate::cargo::Manifest;
 use crate::cargo::Source;
-use crate::Paths;
 
 #[derive(Deserialize, Debug)]
 pub struct Lockfile {

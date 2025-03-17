@@ -1,0 +1,9 @@
+rust_binary(
+    name = "test",
+    srcs = ["src/main.rs"],
+    deps = [
+        "//third-party:once_cell",
+        # see README.md
+        # "//third-party:rand",
+    ],
+)
