@@ -11,14 +11,14 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::PathBuf;
 
-use serde::de::Error as DeError;
-use serde::de::MapAccess;
-use serde::de::Visitor;
-use serde::ser::SerializeMap;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
+use serde::de::Error as DeError;
+use serde::de::MapAccess;
+use serde::de::Visitor;
+use serde::ser::SerializeMap;
 
 use crate::cargo::TargetKind;
 use crate::collection::SetOrMap;
