@@ -1,7 +1,0 @@
-[[buildscript]]
-
-[buildscript.cxx_library]
-name = "blake3_avx512"
-srcs = ["c/blake3_avx512.c"]
-compiler_flags = ["-mavx512f", "-mavx512vl"]
-headers = ["c/*.h"]
