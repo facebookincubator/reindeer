@@ -1,10 +1,13 @@
-[repositories]
+[external_cells]
+prelude = bundled
+
+[cells]
 root = .
 prelude = prelude
 toolchains = toolchains
 none = none
 
-[repository_aliases]
+[cell_aliases]
 config = prelude
 fbcode = none
 fbsource = none

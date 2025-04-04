@@ -87,7 +87,7 @@ jobs:
           mkdir artifacts
           zstd -z ${{ steps.set_variables.outputs.cargo_out }} -o ${{ steps.set_variables.outputs.reindeer_zst }}
       - name: Upload
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: reindeer-${{ matrix.target.triple }}
           path: ${{ steps.set_variables.outputs.reindeer_zst }}
@@ -103,7 +103,7 @@ jobs:
       - shell: bash
         run: |
           mkdir -p ${{github.workspace}}/artifacts
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           path: ${{github.workspace}}/artifacts
       - name: Display structure of downloaded files
