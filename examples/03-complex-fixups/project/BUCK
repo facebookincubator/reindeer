@@ -1,0 +1,10 @@
+rust_binary(
+    name = "test",
+    srcs = ["test.rs"],
+    deps = [
+        "//third-party:blake3",
+        "//third-party:once_cell",
+        "//third-party:libc",
+        "//third-party:crossbeam-queue",
+    ],
+)

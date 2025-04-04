@@ -10,6 +10,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use anyhow::Context as _;
 
@@ -35,6 +36,8 @@ pub struct Index<'meta> {
     pub root_pkg: Option<&'meta Manifest>,
     /// All packages considered part of the workspace.
     pub workspace_members: Vec<&'meta Manifest>,
+    /// Faster lookup for workspace members
+    workspace_packages: HashSet<&'meta PkgId>,
     /// Set of package IDs from which at least one target is public mapped to an optional rename
     public_packages: BTreeMap<&'meta PkgId, Option<&'meta str>>,
     /// The (possibly renamed) names of all packages which have at least one
@@ -77,7 +80,7 @@ impl<'meta> Index<'meta> {
             None
         };
 
-        let workspace_members = metadata
+        let workspace_members: Vec<_> = metadata
             .workspace_default_members
             .iter()
             .filter_map(|pkgid| pkgid_to_pkg.get(pkgid).copied())
@@ -87,6 +90,7 @@ impl<'meta> Index<'meta> {
             pkgid_to_pkg,
             pkgid_to_node: metadata.resolve.nodes.iter().map(|n| (&n.id, n)).collect(),
             root_pkg,
+            workspace_packages: workspace_members.iter().map(|x| &x.id).collect(),
             workspace_members,
             public_packages: BTreeMap::new(),
             public_package_names: BTreeSet::new(),
@@ -151,6 +155,11 @@ impl<'meta> Index<'meta> {
     /// Test if there is any target from the package which is public
     pub fn is_public_package(&self, pkg: &Manifest) -> bool {
         self.public_packages.contains_key(&pkg.id)
+    }
+
+    /// Test if this is a workspace member
+    pub fn is_workspace_package(&self, pkg: &Manifest) -> bool {
+        self.workspace_packages.contains(&pkg.id)
     }
 
     /// Test if there is any target from any package with the given (possibly
