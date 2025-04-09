@@ -159,7 +159,7 @@ impl<'meta> Fixups<'meta> {
             (Some([]), None) | (None, None) => false,
             (Some(tgts), _) => tgts.iter().any(|(kind, name)| {
                 self.target.kind.contains(kind)
-                    && name.as_ref().map_or(true, |name| &self.target.name == name)
+                    && name.as_ref().is_none_or(|name| &self.target.name == name)
             }),
         }
     }

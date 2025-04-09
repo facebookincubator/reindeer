@@ -137,7 +137,7 @@ impl<'a> PlatformPredicate<'a> {
                 // [target.'cfg(feature = "...")'.dependencies] never get applied by Cargo
                 false
             }
-            Value { key, value } => config.0.get(*key).map_or(false, |set| set.contains(*value)),
+            Value { key, value } => config.0.get(*key).is_some_and(|set| set.contains(*value)),
             Not(pred) => !pred.eval(config),
             Any(preds) => preds.iter().any(|pred| pred.eval(config)),
             All(preds) => preds.iter().all(|pred| pred.eval(config)),

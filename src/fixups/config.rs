@@ -230,7 +230,7 @@ impl FixupConfig {
 
     /// Return true if config applies to given version
     pub fn version_applies(&self, ver: &semver::Version) -> bool {
-        self.version.as_ref().map_or(true, |req| req.matches(ver))
+        self.version.as_ref().is_none_or(|req| req.matches(ver))
     }
 }
 
