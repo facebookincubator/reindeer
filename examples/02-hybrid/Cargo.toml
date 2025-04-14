@@ -1,0 +1,7 @@
+[workspace]
+
+members = ["project"]
+resolver = "2"
+
+# Local patches - typically git references
+[patch.crates-io]

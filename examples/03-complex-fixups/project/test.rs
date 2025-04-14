@@ -7,6 +7,10 @@
 
 use once_cell::sync::Lazy;
 
+// Use these crates without really using them
+extern crate crossbeam_queue;
+extern crate libc;
+
 const MAGIC: &str = "this is a magic string";
 
 static SPECIAL: Lazy<String> = Lazy::new(|| {
