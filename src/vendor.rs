@@ -18,6 +18,8 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::Args;
+use crate::Paths;
 use crate::buckify::relative_path;
 use crate::cargo;
 use crate::config::Config;
@@ -25,8 +27,6 @@ use crate::config::VendorConfig;
 use crate::config::VendorSourceConfig;
 use crate::remap::RemapConfig;
 use crate::remap::RemapSource;
-use crate::Args;
-use crate::Paths;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CargoChecksums {

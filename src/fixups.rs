@@ -16,10 +16,11 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
+use anyhow::Context;
 use anyhow::anyhow;
 use anyhow::bail;
-use anyhow::Context;
 
+use crate::Paths;
 use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
@@ -44,14 +45,13 @@ use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::glob::Globs;
-use crate::glob::SerializableGlobSet as GlobSet;
 use crate::glob::NO_EXCLUDE;
+use crate::glob::SerializableGlobSet as GlobSet;
 use crate::index::Index;
 use crate::index::ResolvedDep;
-use crate::platform::platform_names_for_expr;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformPredicate;
-use crate::Paths;
+use crate::platform::platform_names_for_expr;
 
 mod buildscript;
 mod config;

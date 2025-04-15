@@ -24,12 +24,12 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use monostate::MustBe;
-use serde::de::value::MapAccessDeserializer;
+use serde::Deserialize;
+use serde::Serialize;
 use serde::de::Deserializer;
 use serde::de::MapAccess;
 use serde::de::Visitor;
-use serde::Deserialize;
-use serde::Serialize;
+use serde::de::value::MapAccessDeserializer;
 
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;

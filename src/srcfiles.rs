@@ -406,8 +406,8 @@ impl syn::parse::Parse for CfgIf {
 mod tests {
     use std::io;
 
-    use tempfile::tempdir;
     use tempfile::TempDir;
+    use tempfile::tempdir;
 
     use super::*;
 

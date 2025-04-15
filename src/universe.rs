@@ -252,10 +252,10 @@ pub fn mutate_manifest(
     config: &UniverseConfig,
     path: &Path,
 ) -> anyhow::Result<MutatedManifestGuard> {
-    use toml_edit::visit_mut::visit_table_like_kv_mut;
-    use toml_edit::visit_mut::VisitMut;
     use toml_edit::Item;
     use toml_edit::Value;
+    use toml_edit::visit_mut::VisitMut;
+    use toml_edit::visit_mut::visit_table_like_kv_mut;
 
     let original_contents = std::fs::read_to_string(path)
         .with_context(|| format!("reading manifest {}", path.display()))?;

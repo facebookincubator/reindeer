@@ -18,10 +18,10 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use semver::Version;
+use serde::Serialize;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
 use serde::ser::Serializer;
-use serde::Serialize;
 use serde_starlark::FunctionCall;
 
 use crate::collection::SelectSet;

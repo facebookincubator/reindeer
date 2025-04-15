@@ -24,17 +24,17 @@ use std::process::Stdio;
 use std::thread;
 
 use anyhow::Context;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
+use crate::Args;
+use crate::Paths;
 use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::lockfile::Lockfile;
 use crate::platform::PlatformExpr;
-use crate::Args;
-use crate::Paths;
 
 pub fn cargo_get_lockfile_and_metadata(
     config: &Config,
@@ -713,8 +713,8 @@ fn parse_source(source: &str) -> Option<Source> {
 
 #[cfg(test)]
 mod test {
-    use super::parse_source;
     use super::Source;
+    use super::parse_source;
 
     #[test]
     fn test_parses_source_git() {
