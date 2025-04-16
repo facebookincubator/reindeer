@@ -262,6 +262,7 @@ pub enum CargoEnvs {
 )]
 #[allow(non_camel_case_types)]
 pub enum CargoEnv {
+    CARGO_CRATE_NAME,
     CARGO_MANIFEST_DIR,
     CARGO_PKG_AUTHORS,
     CARGO_PKG_DESCRIPTION,

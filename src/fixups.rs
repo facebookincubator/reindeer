@@ -872,6 +872,9 @@ impl<'meta> Fixups<'meta> {
 
             for cargo_env in config.cargo_env.iter() {
                 let v = match cargo_env {
+                    CargoEnv::CARGO_CRATE_NAME => {
+                        StringOrPath::String(self.target.name.replace('-', "_"))
+                    }
                     CargoEnv::CARGO_MANIFEST_DIR => {
                         if matches!(self.config.vendor, VendorConfig::Source(_))
                             || matches!(self.package.source, Source::Local)
