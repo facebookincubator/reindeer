@@ -18,7 +18,7 @@ env_logger = "0.10"
 fnv = "1.0"
 globset = { version = "0.4.13", features = ["serde1"] }
 ignore = "0.4"
-indexmap = { version = "2.2.6", features = ["arbitrary", "rayon", "serde"] }
+indexmap = { version = "2.9.0", features = ["arbitrary", "rayon", "serde"] }
 itertools = "0.14.0"
 log = { version = "0.4.22", features = ["kv_unstable"] }
 measure_time = "0.8.2"
