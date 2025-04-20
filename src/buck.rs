@@ -413,7 +413,7 @@ impl Serialize for Filegroup {
     }
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Debug)]
 pub struct HttpArchive {
     pub name: Name,
     pub sha256: String,

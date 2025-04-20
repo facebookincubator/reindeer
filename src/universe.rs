@@ -204,6 +204,14 @@ pub fn merge_universes(
                             panic!("expected alias rules to be identical in every universe")
                         }
                     }
+                    Rule::HttpArchive(old) => {
+                        let Rule::HttpArchive(new) = rule else {
+                            panic!("expected http_archive")
+                        };
+                        if *old != new {
+                            panic!("expected http_archive rules to be identical in every universe")
+                        }
+                    }
                     _ => {
                         log::warn!(
                             "Skipping unhandled rule while merging universes: {:?}",
