@@ -153,32 +153,28 @@ pub fn merge_universes(
     };
 
     // set select keys to universe name; construct Name -> Rule map for merging
-    let mut universes: BTreeMap<UniverseName, BTreeMap<buck::Name, Rule>> = universes
-        .into_iter()
-        .map(|(name, rules)| {
-            let universe = rules
-                .into_iter()
-                .map(|mut rule| {
-                    match &mut rule {
-                        Rule::Library(rule) | Rule::RootPackage(rule) => {
-                            set_library_keys(name.clone(), rule)
-                        }
-                        Rule::Binary(rule) | Rule::BuildscriptBinary(rule) => {
-                            set_binary_keys(name.clone(), rule)
-                        }
-                        Rule::BuildscriptGenrule(rule) => set_genrule_keys(name.clone(), rule),
-                        _ => {}
+    let mut universes = universes.into_iter().map(|(name, rules)| {
+        rules
+            .into_iter()
+            .map(|mut rule| {
+                match &mut rule {
+                    Rule::Library(rule) | Rule::RootPackage(rule) => {
+                        set_library_keys(name.clone(), rule)
                     }
-                    (rule.get_name().clone(), rule)
-                })
-                .collect();
-            (name, universe)
-        })
-        .collect();
+                    Rule::Binary(rule) | Rule::BuildscriptBinary(rule) => {
+                        set_binary_keys(name.clone(), rule)
+                    }
+                    Rule::BuildscriptGenrule(rule) => set_genrule_keys(name.clone(), rule),
+                    _ => {}
+                }
+                (rule.get_name().clone(), rule)
+            })
+            .collect::<BTreeMap<buck::Name, Rule>>()
+    });
 
     // merge universes
-    let mut rules = universes.remove(&Default::default()).unwrap();
-    for (universe_name, universe_rules) in universes {
+    let mut rules = universes.next().unwrap();
+    for universe_rules in universes {
         for (name, rule) in universe_rules {
             if let Some(old_rule) = rules.get_mut(&name) {
                 match old_rule {
@@ -210,7 +206,7 @@ pub fn merge_universes(
                     }
                     _ => {
                         log::warn!(
-                            "Skipping unhandled rule while merging universe {universe_name}: {:?}",
+                            "Skipping unhandled rule while merging universes: {:?}",
                             rule
                         );
                     }
