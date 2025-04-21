@@ -34,7 +34,7 @@ pub struct UniverseConfig {
     pub include_crates: BTreeSet<String>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[derive(Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct UniverseName(String);
@@ -44,11 +44,21 @@ impl Default for UniverseName {
         Self("DEFAULT".to_owned())
     }
 }
+
 impl fmt::Display for UniverseName {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(f)
     }
 }
+
+impl fmt::Debug for UniverseName {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // More compact than a derived Debug impl
+        let UniverseName(name) = self;
+        write!(f, "UniverseName({name:?})")
+    }
+}
+
 impl From<String> for UniverseName {
     fn from(s: String) -> Self {
         Self(s)

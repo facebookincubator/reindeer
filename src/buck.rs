@@ -35,13 +35,21 @@ use crate::platform::PredicateParseError;
 use crate::universe::UniverseName;
 
 /// Only the name of a target. Does not include package path, nor leading colon.
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
 pub struct Name(pub String);
 
 impl Display for Name {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         Display::fmt(&self.0, formatter)
+    }
+}
+
+impl Debug for Name {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        // More compact than a derived Debug impl
+        let Name(name) = self;
+        write!(formatter, "Name({name:?})")
     }
 }
 
@@ -109,8 +117,16 @@ impl Serialize for RuleRef {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct BuckPath(pub PathBuf);
+
+impl Debug for BuckPath {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // More compact than a derived Debug impl
+        let BuckPath(path) = self;
+        write!(f, "BuckPath({path:?})")
+    }
+}
 
 impl Serialize for BuckPath {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
@@ -315,7 +331,25 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Value(v) => fmt::Debug::fmt(v, f),
-            Self::Select(s) => f.debug_tuple("Select").field(&s.0).finish(),
+            Self::Select(s) => {
+                // Render as:
+                //
+                //     Select({
+                //         ...
+                //     })
+                //
+                // instead of what `f.debug_tuple("Select").field(&s.0).finish()` would do:
+                //
+                //     Select(
+                //         {
+                //             ...
+                //         }
+                //     )
+                //
+                f.write_str("Select(")?;
+                Debug::fmt(&s.0, f)?;
+                f.write_str(")")
+            }
         }
     }
 }

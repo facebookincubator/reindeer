@@ -14,6 +14,7 @@
 use std::collections::BTreeSet;
 use std::env;
 use std::fmt;
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::io::BufRead;
 use std::io::BufReader;
@@ -224,12 +225,20 @@ where
     Ok(Option::deserialize(deserializer)?.unwrap_or_default())
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Deserialize, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct PkgId(pub String);
 
 impl Display for PkgId {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        String::fmt(&self.0, fmt)
+        Display::fmt(&self.0, fmt)
+    }
+}
+
+impl Debug for PkgId {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        // More compact than a derived Debug impl
+        let PkgId(id) = self;
+        write!(fmt, "PkgId({id:?})")
     }
 }
 

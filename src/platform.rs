@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error;
 use std::fmt;
+use std::fmt::Debug;
 use std::fmt::Display;
 
 use nom::error::VerboseError;
@@ -22,8 +23,18 @@ use crate::config::Config;
 /// A single PlatformConfig represents a single platform. Each field represents a set of
 /// platform attributes which are true for this platform. A non-present attribute means
 /// "doesn't matter" or "all possible values".
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub struct PlatformConfig(HashMap<String, HashSet<String>>);
+
+impl Debug for PlatformConfig {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        // More compact than a derived Debug impl
+        let PlatformConfig(map) = self;
+        fmt.write_str("PlatformConfig(")?;
+        Debug::fmt(map, fmt)?;
+        fmt.write_str(")")
+    }
+}
 
 pub fn platform_names_for_expr<'config>(
     config: &'config Config,
@@ -44,7 +55,7 @@ pub fn platform_names_for_expr<'config>(
 const DEFAULT_PLATFORM: &str = "DEFAULT";
 
 /// A name of a platform, as used in Config.
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[derive(Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PlatformName(String);
@@ -57,7 +68,15 @@ impl PlatformName {
 
 impl Display for PlatformName {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(fmt)
+        Display::fmt(&self.0, fmt)
+    }
+}
+
+impl Debug for PlatformName {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        // More compact than a derived Debug impl
+        let PlatformName(name) = self;
+        write!(fmt, "PlatformName({name:?})")
     }
 }
 
@@ -76,7 +95,7 @@ impl From<String> for PlatformExpr {
 
 impl Display for PlatformExpr {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(fmt)
+        Display::fmt(&self.0, fmt)
     }
 }
 
