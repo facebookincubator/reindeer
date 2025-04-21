@@ -237,7 +237,7 @@ impl FixupConfig {
 /// `cargo_env` selection.
 ///
 /// Deserializes from `true`, `false` or `["CARGO_MANIFEST_DIR", ...]`.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub enum CargoEnvs {
     All,
     #[default]
