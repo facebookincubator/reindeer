@@ -694,7 +694,7 @@ fn generate_target_rules<'scope>(
                         let target_name = dep.target.strip_prefix(':').unwrap();
                         let bin_name = dep_kind.bin_name.as_ref().unwrap();
                         let env = format!("{}-{}", target_name, bin_name);
-                        let location = format!("$(location {}-{}#check)", dep.target, bin_name);
+                        let location = format!("$(location {}-{}[check])", dep.target, bin_name);
                         recipient
                             .env
                             .unwrap_mut()
@@ -719,7 +719,7 @@ fn generate_target_rules<'scope>(
                 let target_name = dep.target.strip_prefix(':').unwrap();
                 let bin_name = dep_kind.bin_name.as_ref().unwrap();
                 let env = format!("{}-{}", target_name, bin_name);
-                let location = format!("$(location {}-{}#check)", dep.target, bin_name);
+                let location = format!("$(location {}-{}[check])", dep.target, bin_name);
                 base.env
                     .unwrap_mut()
                     .insert(env, StringOrPath::String(location));

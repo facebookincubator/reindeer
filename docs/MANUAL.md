@@ -63,8 +63,8 @@ crates.io. What do you do?
 3. Run `reindeer --third-party-dir third-party buckify`. This will analyze the
    Cargo dependencies and (re)generate the BUCK file accordingly. If this
    succeeds silently then there's a good chance that nothing more is needed.
-4. Do a test build with `buck build //third-party:new-package#check` to make
-   sure it is basically buildable.
+4. Do a test build with `buck build //third-party:new-package` to make sure it
+   is basically buildable.
 
 Points to note:
 
