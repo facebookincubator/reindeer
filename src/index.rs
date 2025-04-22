@@ -190,7 +190,10 @@ impl<'meta> Index<'meta> {
     }
 
     /// Return the set of features resolved for a particular package
-    pub fn resolved_features(&self, pkg: &Manifest) -> impl Iterator<Item = &'meta str> {
+    pub fn resolved_features(
+        &self,
+        pkg: &Manifest,
+    ) -> impl Iterator<Item = &'meta str> + use<'meta> {
         self.pkgid_to_node
             .get(&pkg.id)
             .unwrap()
@@ -204,7 +207,8 @@ impl<'meta> Index<'meta> {
     fn resolved_deps(
         &self,
         pkg: &Manifest,
-    ) -> impl Iterator<Item = (&'meta str, &'meta NodeDepKind, &'meta Manifest)> + '_ {
+    ) -> impl Iterator<Item = (&'meta str, &'meta NodeDepKind, &'meta Manifest)> + '_ + use<'meta, '_>
+    {
         self.pkgid_to_node
             .get(&pkg.id)
             .unwrap()
@@ -259,7 +263,7 @@ impl<'meta> Index<'meta> {
                     compile_target,
                     bin_name,
                 } = dep_kind;
-                let (ref mut unconditional_deps, ref mut conditional_deps) = resolved_deps
+                let (unconditional_deps, conditional_deps) = resolved_deps
                     .entry((
                         &dep.id,
                         kind,

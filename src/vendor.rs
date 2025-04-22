@@ -102,7 +102,7 @@ pub(crate) fn cargo_vendor(
         //     directory = "vendor"
         cargoconfig = cargoconfig.replace(
             &*full_vendor_dir.to_string_lossy(),
-            &*vendordir.to_string_lossy(),
+            &vendordir.to_string_lossy(),
         );
 
         fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;

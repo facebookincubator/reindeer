@@ -106,7 +106,7 @@ impl Globs {
     }
 
     /// Returns relative paths (relative to `dir`) of all the matching files.
-    pub fn walk(&mut self, dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
+    pub fn walk<T: AsRef<Path>>(&mut self, dir: T) -> impl Iterator<Item = PathBuf> + use<T> {
         let dir = dir.as_ref();
         WalkDir::new(dir)
             .into_iter()
