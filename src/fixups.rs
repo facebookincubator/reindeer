@@ -62,6 +62,7 @@ use buildscript::GenSrcs;
 use buildscript::PrebuiltCxxLibraryFixup;
 use buildscript::RustcFlags;
 use config::CargoEnv;
+use config::CargoEnvs;
 pub use config::ExportSources;
 use config::FixupConfigFile;
 
@@ -870,7 +871,38 @@ impl<'meta> Fixups<'meta> {
                 .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone())))
                 .collect();
 
-            for cargo_env in config.cargo_env.iter() {
+            let mut cargo_env_vars = config.cargo_env.clone();
+
+            // A Rust ':*-build-script-run' target needs a filegroup to access the crate's source files. However,
+            // for local crates, Reindeer won't generate filegroups in the BUCK file. In this case, Buck2 rules
+            // try to create additional filegroups, named "{CARGO_PKG_NAME}-{CARGO_PKG_VERSION}.crate", with files
+            // under the "{CARGO_MANIFEST_DIR}" path. Therefore, we need to pass these three environment variables
+            // for these targets to function correctly.
+            if (matches!(self.config.vendor, VendorConfig::Source(_))
+                || matches!(self.package.source, Source::Local | Source::Git { .. }))
+                && config.buildscript.iter().any(|bs| {
+                    matches!(
+                        bs,
+                        BuildscriptFixup::RustcFlags(_) | BuildscriptFixup::GenSrcs(_)
+                    )
+                })
+            {
+                let required_vars = [
+                    CargoEnv::CARGO_MANIFEST_DIR,
+                    CargoEnv::CARGO_PKG_NAME,
+                    CargoEnv::CARGO_PKG_VERSION,
+                ];
+                cargo_env_vars = match cargo_env_vars {
+                    CargoEnvs::All => CargoEnvs::All,
+                    CargoEnvs::None => CargoEnvs::Some(required_vars.into_iter().collect()),
+                    CargoEnvs::Some(mut set) => {
+                        set.extend(required_vars);
+                        CargoEnvs::Some(set)
+                    }
+                };
+            }
+
+            for cargo_env in cargo_env_vars.iter() {
                 let v = match cargo_env {
                     CargoEnv::CARGO_CRATE_NAME => {
                         StringOrPath::String(self.target.name.replace('-', "_"))
