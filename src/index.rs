@@ -81,7 +81,7 @@ impl<'meta> Index<'meta> {
         };
 
         let workspace_members: Vec<_> = metadata
-            .workspace_default_members
+            .workspace_members
             .iter()
             .filter_map(|pkgid| pkgid_to_pkg.get(pkgid).copied())
             .collect();
