@@ -343,6 +343,7 @@ fn generate_git_fetch(repo: &str, commit_hash: &str) -> anyhow::Result<Rule> {
         name: Name(format!("{}.git", short_name)),
         repo: repo.to_owned(),
         rev: commit_hash.to_owned(),
+        sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
         visibility: Visibility::Private,
     }))
 }
@@ -1112,6 +1113,11 @@ fn buckify_for_universe(
                         }
                     }
                     Rule::ExtractArchive(rule) => {
+                        if let Some(need_subtargets) = need_subtargets.remove(&rule.name) {
+                            rule.sub_targets = need_subtargets;
+                        }
+                    }
+                    Rule::GitFetch(rule) => {
                         if let Some(need_subtargets) = need_subtargets.remove(&rule.name) {
                             rule.sub_targets = need_subtargets;
                         }

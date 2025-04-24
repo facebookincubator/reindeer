@@ -519,6 +519,7 @@ pub struct GitFetch {
     pub name: Name,
     pub repo: String,
     pub rev: String,
+    pub sub_targets: BTreeSet<BuckPath>,
     pub visibility: Visibility,
 }
 
@@ -528,12 +529,16 @@ impl Serialize for GitFetch {
             name,
             repo,
             rev,
+            sub_targets,
             visibility,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
         map.serialize_entry("repo", repo)?;
         map.serialize_entry("rev", rev)?;
+        if !sub_targets.is_empty() {
+            map.serialize_entry("sub_targets", sub_targets)?;
+        }
         map.serialize_entry("visibility", visibility)?;
         map.end()
     }
