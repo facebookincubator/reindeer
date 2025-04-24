@@ -61,7 +61,7 @@ pub struct FixupConfigFile {
     pub export_sources: Option<ExportSources>,
 
     /// Common config
-    #[serde(flatten, deserialize_with = "FixupConfig::deserialize_with_unresolved")]
+    #[serde(flatten)]
     base: FixupConfig,
 
     /// Platform-specific configs
@@ -201,19 +201,6 @@ pub struct FixupConfig {
 }
 
 impl FixupConfig {
-    fn deserialize_with_unresolved<'de, D>(deser: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let mut value = Self::deserialize(deser)?;
-        // For the top-level fixup configs, we want to present an error if build scripts
-        // are unhandled. For the platform fixup configs, buildscript field is optional.
-        if value.buildscript.0.is_empty() {
-            value.buildscript = BuildscriptFixups::new_unresolved();
-        }
-        Ok(value)
-    }
-
     /// Return set of overlay files, relative to the overlay dir (and therefore
     /// relative to manifest dir).
     pub fn overlay_files(&self, fixup_dir: &Path) -> anyhow::Result<HashSet<PathBuf>> {

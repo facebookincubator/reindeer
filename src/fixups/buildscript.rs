@@ -23,15 +23,8 @@ use serde::ser::SerializeMap;
 use crate::cargo::TargetKind;
 use crate::collection::SetOrMap;
 
-#[derive(Deserialize, Debug, Default, Serialize)]
+#[derive(Deserialize, Debug, Serialize)]
 pub struct BuildscriptFixups(pub Vec<BuildscriptFixup>);
-
-impl BuildscriptFixups {
-    pub fn new_unresolved() -> Self {
-        let unresolved = BuildscriptFixup::Unresolved("No build script fixups defined".to_string());
-        BuildscriptFixups(vec![unresolved])
-    }
-}
 
 impl<'a> IntoIterator for &'a BuildscriptFixups {
     type Item = &'a BuildscriptFixup;
@@ -39,6 +32,13 @@ impl<'a> IntoIterator for &'a BuildscriptFixups {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
+    }
+}
+
+impl Default for BuildscriptFixups {
+    fn default() -> Self {
+        let unresolved = BuildscriptFixup::Unresolved("No build script fixups defined".to_string());
+        BuildscriptFixups(vec![unresolved])
     }
 }
 

@@ -16,6 +16,7 @@ cfgs = [
   "blake3_avx2_ffi",
   "blake3_avx512_ffi",
 ]
+buildscript = []
 
 # , any(target_env = "fbcode", target_env = "gnu")
 [[platform_fixup.'cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "macos")))'.buildscript]]
@@ -76,6 +77,7 @@ compatible_with = ["prelude//os/constraints:windows"]
 
 [platform_fixup.'cfg(any(target_arch = "aarch64", target_arch = "arm"))']
 cfgs = ["blake3_neon"]
+buildscript = []
 
 [[platform_fixup.'cfg(target_arch = "aarch64")'.buildscript]]
 [platform_fixup.'cfg(target_arch = "aarch64")'.buildscript.cxx_library]
