@@ -950,6 +950,33 @@ impl<'meta> Fixups<'meta> {
         Ok(ret)
     }
 
+    /// Additional environment variable settings that are passed through flags
+    pub fn compute_env_flags(&self) -> Vec<(Option<PlatformExpr>, BTreeSet<String>)> {
+        let mut ret = vec![];
+
+        if self.buildscript_target().is_none() {
+            return ret; // no buildscript
+        }
+
+        for (platform, config) in self.fixup_config.configs(&self.package.version) {
+            if config.buildscript.iter().any(|fix| {
+                self.target_match(fix)
+                    && matches!(
+                        fix,
+                        BuildscriptFixup::RustcFlags(_) | BuildscriptFixup::GenSrcs(_)
+                    )
+            }) {
+                let flags = BTreeSet::from_iter([format!(
+                    "@$(location :{}[env_flags])",
+                    self.buildscript_genrule_name()
+                )]);
+                ret.push((platform.cloned(), flags));
+            }
+        }
+
+        ret
+    }
+
     /// Given a glob for the srcs, walk the filesystem to get the full set.
     /// `srcs` is the normal source glob rooted at the package's manifest dir.
     pub fn compute_srcs(
