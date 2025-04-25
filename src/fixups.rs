@@ -31,7 +31,6 @@ use crate::buck::Rule;
 use crate::buck::RuleRef;
 use crate::buck::RustBinary;
 use crate::buck::StringOrPath;
-use crate::buck::Subtarget;
 use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
 use crate::buckify::normalize_path;
@@ -52,6 +51,7 @@ use crate::index::ResolvedDep;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformPredicate;
 use crate::platform::platform_names_for_expr;
+use crate::subtarget::Subtarget;
 
 mod buildscript;
 mod config;

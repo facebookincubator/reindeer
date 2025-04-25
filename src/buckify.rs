@@ -9,7 +9,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::hash::Hash;
@@ -71,6 +70,7 @@ use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
 use crate::platform::platform_names_for_expr;
 use crate::srcfiles::crate_srcfiles;
+use crate::subtarget::CollectSubtargets;
 use crate::universe::UniverseName;
 
 // normalize a/b/../c => a/c and a/./b => a/b
@@ -1066,39 +1066,31 @@ fn buckify_for_universe(
     // Fill in all http_archive rules with all the sub_targets which got
     // mentioned by fixups.
     if !matches!(config.vendor, VendorConfig::Source(_)) {
-        let mut need_subtargets = HashMap::<Name, BTreeSet<BuckPath>>::new();
-        let mut insert = |subtarget_or_path: &SubtargetOrPath| {
-            if let SubtargetOrPath::Subtarget(subtarget) = subtarget_or_path {
-                need_subtargets
-                    .entry(subtarget.target.clone())
-                    .or_insert_with(BTreeSet::new)
-                    .insert(subtarget.relative.clone());
-            }
-        };
+        let mut subtargets = CollectSubtargets::new();
 
         for rule in &rules {
             match rule {
                 Rule::Binary(rule) | Rule::BuildscriptBinary(rule) => {
-                    rule.common.base.mapped_srcs.keys().for_each(&mut insert);
+                    subtargets.insert_all(rule.common.base.mapped_srcs.keys());
                     for plat in rule.common.platform.values() {
-                        plat.mapped_srcs.keys().for_each(&mut insert);
+                        subtargets.insert_all(plat.mapped_srcs.keys());
                     }
                 }
                 Rule::Library(rule) => {
-                    rule.common.base.mapped_srcs.keys().for_each(&mut insert);
+                    subtargets.insert_all(rule.common.base.mapped_srcs.keys());
                     for plat in rule.common.platform.values() {
-                        plat.mapped_srcs.keys().for_each(&mut insert);
+                        subtargets.insert_all(plat.mapped_srcs.keys());
                     }
                 }
                 Rule::CxxLibrary(rule) => {
-                    rule.srcs.iter().for_each(&mut insert);
-                    rule.headers.iter().for_each(&mut insert);
+                    subtargets.insert_all(&rule.srcs);
+                    subtargets.insert_all(&rule.headers);
                     match &rule.exported_headers {
-                        SetOrMap::Set(set) => set.iter().for_each(&mut insert),
-                        SetOrMap::Map(map) => map.values().for_each(&mut insert),
+                        SetOrMap::Set(set) => subtargets.insert_all(set),
+                        SetOrMap::Map(map) => subtargets.insert_all(map.values()),
                     }
                 }
-                Rule::PrebuiltCxxLibrary(rule) => insert(&rule.static_lib),
+                Rule::PrebuiltCxxLibrary(rule) => subtargets.insert(&rule.static_lib),
                 _ => {}
             }
         }
@@ -1108,17 +1100,17 @@ fn buckify_for_universe(
             .map(|mut rule| {
                 match &mut rule {
                     Rule::HttpArchive(rule) => {
-                        if let Some(need_subtargets) = need_subtargets.remove(&rule.name) {
+                        if let Some(need_subtargets) = subtargets.remove(&rule.name) {
                             rule.sub_targets = need_subtargets;
                         }
                     }
                     Rule::ExtractArchive(rule) => {
-                        if let Some(need_subtargets) = need_subtargets.remove(&rule.name) {
+                        if let Some(need_subtargets) = subtargets.remove(&rule.name) {
                             rule.sub_targets = need_subtargets;
                         }
                     }
                     Rule::GitFetch(rule) => {
-                        if let Some(need_subtargets) = need_subtargets.remove(&rule.name) {
+                        if let Some(need_subtargets) = subtargets.remove(&rule.name) {
                             rule.sub_targets = need_subtargets;
                         }
                     }

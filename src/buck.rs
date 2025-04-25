@@ -32,6 +32,7 @@ use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
 use crate::platform::PredicateParseError;
+use crate::subtarget::Subtarget;
 use crate::universe::UniverseName;
 
 /// Only the name of a target. Does not include package path, nor leading colon.
@@ -181,18 +182,6 @@ impl SubtargetOrPath {
 
     fn is_path(&self) -> bool {
         matches!(self, SubtargetOrPath::Path(_))
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct Subtarget {
-    pub target: Name,
-    pub relative: BuckPath,
-}
-
-impl Serialize for Subtarget {
-    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        ser.collect_str(&format_args!(":{}[{}]", self.target, self.relative))
     }
 }
 

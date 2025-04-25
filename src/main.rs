@@ -43,6 +43,7 @@ mod lockfile;
 mod platform;
 mod remap;
 mod srcfiles;
+mod subtarget;
 mod universe;
 mod vendor;
 
