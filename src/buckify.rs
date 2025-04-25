@@ -71,6 +71,7 @@ use crate::platform::PlatformName;
 use crate::platform::platform_names_for_expr;
 use crate::srcfiles::crate_srcfiles;
 use crate::subtarget::CollectSubtargets;
+use crate::subtarget::Subtarget;
 use crate::universe::UniverseName;
 
 // normalize a/b/../c => a/c and a/./b => a/b
@@ -446,6 +447,7 @@ fn generate_target_rules<'scope>(
     log::debug!("pkg {} target {} fixups {:#?}", pkg, tgt.name, fixups);
 
     let manifest_dir = pkg.manifest_dir();
+    let mut manifest_dir_subtarget = None;
     let mapped_manifest_dir = if matches!(config.vendor, VendorConfig::Source(_))
         || matches!(pkg.source, Source::Local)
     {
@@ -465,10 +467,14 @@ fn generate_target_rules<'scope>(
     } else if let VendorConfig::LocalRegistry = config.vendor {
         PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
     } else if let Source::Git { repo, .. } = &pkg.source {
-        let git_fetch = short_name_for_git_repo(repo)?;
+        let short_name = short_name_for_git_repo(repo)?;
         let repository_root = find_repository_root(manifest_dir)?;
         let path_within_repo = relative_path(repository_root, manifest_dir);
-        PathBuf::from(git_fetch).join(path_within_repo)
+        manifest_dir_subtarget = Some(Subtarget {
+            target: Name(format!("{}.git", short_name)),
+            relative: BuckPath(path_within_repo.clone()),
+        });
+        PathBuf::from(short_name).join(path_within_repo)
     } else {
         PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
     };
@@ -888,7 +894,7 @@ fn generate_target_rules<'scope>(
                 platform: bin_perplat,
             },
         };
-        fixups.emit_buildscript_rules(buildscript, config)?
+        fixups.emit_buildscript_rules(buildscript, config, manifest_dir_subtarget)?
     } else if tgt.kind_bin() && tgt.crate_bin() {
         let mut rules = vec![];
         let actual = Name(format!("{}-{}", index.private_rule_name(pkg), tgt.name));
@@ -1081,6 +1087,9 @@ fn buckify_for_universe(
                     for plat in rule.common.platform.values() {
                         subtargets.insert_all(plat.mapped_srcs.keys());
                     }
+                }
+                Rule::BuildscriptGenrule(rule) => {
+                    subtargets.insert_all(&rule.manifest_dir);
                 }
                 Rule::CxxLibrary(rule) => {
                     subtargets.insert_all(&rule.srcs);

@@ -256,6 +256,7 @@ impl<'meta> Fixups<'meta> {
         &self,
         buildscript: RustBinary,
         config: &'meta Config,
+        manifest_dir: Option<Subtarget>,
     ) -> anyhow::Result<Vec<Rule>> {
         let mut res = Vec::new();
 
@@ -312,6 +313,7 @@ impl<'meta> Fixups<'meta> {
             version: self.package.version.clone(),
             features: buck::Selectable::Value(features.clone()),
             env: BTreeMap::new(),
+            manifest_dir: manifest_dir.clone(),
         };
 
         for fix in fixes {

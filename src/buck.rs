@@ -121,6 +121,12 @@ impl Serialize for RuleRef {
 #[derive(Clone, Eq, PartialEq)]
 pub struct BuckPath(pub PathBuf);
 
+impl BuckPath {
+    pub fn is_empty(&self) -> bool {
+        self.0.as_os_str().is_empty()
+    }
+}
+
 impl Debug for BuckPath {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // More compact than a derived Debug impl
@@ -870,6 +876,7 @@ pub struct BuildscriptGenrule {
     pub version: Version,
     pub features: Selectable<UniverseName, BTreeSet<String>>,
     pub env: BTreeMap<String, String>,
+    pub manifest_dir: Option<Subtarget>,
 }
 
 impl Serialize for BuildscriptGenrule {
@@ -881,6 +888,7 @@ impl Serialize for BuildscriptGenrule {
             version,
             features,
             env,
+            manifest_dir,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
@@ -891,6 +899,9 @@ impl Serialize for BuildscriptGenrule {
         }
         if !features.is_empty() {
             map.serialize_entry("features", features)?;
+        }
+        if let Some(manifest_dir) = manifest_dir {
+            map.serialize_entry("manifest_dir", manifest_dir)?;
         }
         map.serialize_entry("version", version)?;
         map.end()

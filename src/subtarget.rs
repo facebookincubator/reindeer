@@ -18,12 +18,19 @@ use crate::buck::SubtargetOrPath;
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Subtarget {
     pub target: Name,
+    // Can be empty string. TODO: consider replacing with Option<BuckPath>, or
+    // adding a variant to SubtargetOrPath that holds only a target name without
+    // subtarget.
     pub relative: BuckPath,
 }
 
 impl Serialize for Subtarget {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        ser.collect_str(&format_args!(":{}[{}]", self.target, self.relative))
+        if self.relative.is_empty() {
+            ser.collect_str(&format_args!(":{}", self.target))
+        } else {
+            ser.collect_str(&format_args!(":{}[{}]", self.target, self.relative))
+        }
     }
 }
 
@@ -58,11 +65,13 @@ pub trait MaybeHasSubtarget {
 
 impl MaybeHasSubtarget for Subtarget {
     fn insert_into(&self, collect: &mut CollectSubtargets) {
-        collect
-            .0
-            .entry(self.target.clone())
-            .or_insert_with(BTreeSet::new)
-            .insert(self.relative.clone());
+        if !self.relative.is_empty() {
+            collect
+                .0
+                .entry(self.target.clone())
+                .or_insert_with(BTreeSet::new)
+                .insert(self.relative.clone());
+        }
     }
 }
 
