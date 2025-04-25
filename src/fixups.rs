@@ -40,6 +40,7 @@ use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
 use crate::cargo::NodeDepKind;
 use crate::cargo::Source;
+use crate::cargo::TargetKind;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
@@ -154,16 +155,22 @@ impl<'meta> Fixups<'meta> {
     // - if the script doesn't specify a target, then it applies to the main "lib" target of the package
     // - otherwise it applies to the matching kind and (optionally) name (all names if not specified)
     fn target_match(&self, script: &BuildscriptFixup) -> bool {
-        let default = self.package.dependency_target();
+        let Some(applies_to_targets) = script.targets() else {
+            // Applies to all targets except the build script
+            return !self.target.kind.contains(&TargetKind::CustomBuild);
+        };
 
-        match (script.targets(), default) {
-            (Some([]), Some(default)) | (None, Some(default)) => self.target == default,
-            (Some([]), None) | (None, None) => false,
-            (Some(tgts), _) => tgts.iter().any(|(kind, name)| {
-                self.target.kind.contains(kind)
-                    && name.as_ref().is_none_or(|name| &self.target.name == name)
-            }),
+        if applies_to_targets.is_empty() {
+            // Applies to default target (the main "lib" target)
+            let default_target = self.package.dependency_target();
+            return Some(self.target) == default_target;
         }
+
+        // Applies to the targets specified by the fixup
+        applies_to_targets.iter().any(|(kind, name)| {
+            self.target.kind.contains(kind)
+                && name.as_ref().is_none_or(|name| &self.target.name == name)
+        })
     }
 
     fn subtarget_or_path(

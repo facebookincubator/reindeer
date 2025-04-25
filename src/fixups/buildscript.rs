@@ -68,13 +68,13 @@ pub enum BuildscriptFixup {
 impl BuildscriptFixup {
     pub fn targets(&self) -> Option<&[(TargetKind, Option<String>)]> {
         let targets = match self {
-            BuildscriptFixup::RustcFlags(RustcFlags { targets, .. }) => targets,
-            BuildscriptFixup::GenSrcs(GenSrcs { targets, .. }) => targets,
             BuildscriptFixup::CxxLibrary(CxxLibraryFixup { targets, .. }) => targets,
             BuildscriptFixup::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup { targets, .. }) => {
                 targets
             }
-            BuildscriptFixup::Unresolved(_) => return None,
+            BuildscriptFixup::RustcFlags(_)
+            | BuildscriptFixup::GenSrcs(_)
+            | BuildscriptFixup::Unresolved(_) => return None,
         };
 
         Some(&targets[..])
@@ -84,10 +84,6 @@ impl BuildscriptFixup {
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RustcFlags {
-    // Which targets are we generating flags for. List in the form
-    // of kind and name (eg `["bin","cargo"]`). Empty means apply to main lib target.
-    #[serde(default)]
-    pub targets: Vec<(TargetKind, Option<String>)>,
     // Runtime environment for the gensrc program
     #[serde(default)]
     pub env: BTreeMap<String, String>,
@@ -96,10 +92,6 @@ pub struct RustcFlags {
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GenSrcs {
-    // Which targets are we generating source for. List in the form
-    // of kind and name (eg `["bin","cargo"]`). Empty means apply to main lib target.
-    #[serde(default)]
-    pub targets: Vec<(TargetKind, Option<String>)>,
     // Runtime environment for the gensrc program
     #[serde(default)]
     pub env: BTreeMap<String, String>,
