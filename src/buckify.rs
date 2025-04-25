@@ -451,29 +451,33 @@ fn generate_target_rules<'scope>(
     let mapped_manifest_dir = if matches!(config.vendor, VendorConfig::Source(_))
         || matches!(pkg.source, Source::Local)
     {
-        match manifest_dir
+        let relative_manifest_dir = match manifest_dir
             .strip_prefix(&paths.third_party_dir)
 			.with_context(|| format!(
-					"crate sources would be inaccessible from the generated BUCK file, cannot refer to {} from {}.",
-					relative_path(&paths.third_party_dir, manifest_dir).display(),
-					paths.third_party_dir.join(&config.buck.file_name).display(),
-				))
-			.map(ToOwned::to_owned){
-				Err(_) if !will_use_rules => {
-					PathBuf::from("__unused__")
-				}
-				res => res?
-			}
+                "crate sources would be inaccessible from the generated BUCK file, cannot refer to {} from {}.",
+                relative_path(&paths.third_party_dir, manifest_dir).display(),
+                paths.third_party_dir.join(&config.buck.file_name).display(),
+            ))
+        {
+            Err(_) if !will_use_rules => Path::new("__unused__"),
+            res => res?,
+        };
+        if !matches!(config.vendor, VendorConfig::Source(_)) {
+            manifest_dir_subtarget = Some(SubtargetOrPath::Path(BuckPath(
+                relative_manifest_dir.to_owned(),
+            )));
+        }
+        relative_manifest_dir.to_owned()
     } else if let VendorConfig::LocalRegistry = config.vendor {
         PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
     } else if let Source::Git { repo, .. } = &pkg.source {
         let short_name = short_name_for_git_repo(repo)?;
         let repository_root = find_repository_root(manifest_dir)?;
         let path_within_repo = relative_path(repository_root, manifest_dir);
-        manifest_dir_subtarget = Some(Subtarget {
+        manifest_dir_subtarget = Some(SubtargetOrPath::Subtarget(Subtarget {
             target: Name(format!("{}.git", short_name)),
             relative: BuckPath(path_within_repo.clone()),
-        });
+        }));
         PathBuf::from(short_name).join(path_within_repo)
     } else {
         PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))

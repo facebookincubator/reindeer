@@ -256,7 +256,7 @@ impl<'meta> Fixups<'meta> {
         &self,
         buildscript: RustBinary,
         config: &'meta Config,
-        manifest_dir: Option<Subtarget>,
+        manifest_dir: Option<SubtargetOrPath>,
     ) -> anyhow::Result<Vec<Rule>> {
         let mut res = Vec::new();
 
@@ -306,6 +306,11 @@ impl<'meta> Fixups<'meta> {
             .flat_map(|(_platform, fixup)| fixup.buildscript.iter());
 
         let mut buildscript_run = None;
+        let (local_manifest_dir, manifest_dir) = match manifest_dir {
+            None => (None, None),
+            Some(SubtargetOrPath::Path(path)) => (Some(path), None),
+            Some(SubtargetOrPath::Subtarget(subtarget)) => (None, Some(subtarget)),
+        };
         let default_genrule = || BuildscriptGenrule {
             name: self.buildscript_genrule_name(),
             buildscript_rule: buildscript_rule_name.clone(),
@@ -313,6 +318,7 @@ impl<'meta> Fixups<'meta> {
             version: self.package.version.clone(),
             features: buck::Selectable::Value(features.clone()),
             env: BTreeMap::new(),
+            local_manifest_dir: local_manifest_dir.clone(),
             manifest_dir: manifest_dir.clone(),
         };
 

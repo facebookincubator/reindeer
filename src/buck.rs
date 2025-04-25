@@ -876,6 +876,7 @@ pub struct BuildscriptGenrule {
     pub version: Version,
     pub features: Selectable<UniverseName, BTreeSet<String>>,
     pub env: BTreeMap<String, String>,
+    pub local_manifest_dir: Option<BuckPath>,
     pub manifest_dir: Option<Subtarget>,
 }
 
@@ -888,6 +889,7 @@ impl Serialize for BuildscriptGenrule {
             version,
             features,
             env,
+            local_manifest_dir,
             manifest_dir,
         } = self;
         let mut map = ser.serialize_map(None)?;
@@ -899,6 +901,9 @@ impl Serialize for BuildscriptGenrule {
         }
         if !features.is_empty() {
             map.serialize_entry("features", features)?;
+        }
+        if let Some(local_manifest_dir) = local_manifest_dir {
+            map.serialize_entry("local_manifest_dir", local_manifest_dir)?;
         }
         if let Some(manifest_dir) = manifest_dir {
             map.serialize_entry("manifest_dir", manifest_dir)?;
