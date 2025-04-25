@@ -588,7 +588,7 @@ impl Serialize for PlatformRustCommon {
         if !env.is_empty() {
             map.serialize_entry("env", env)?;
         }
-        if !env.is_empty() {
+        if !env_flags.is_empty() {
             map.serialize_entry("env_flags", env_flags)?;
         }
         if !features.is_empty() {
