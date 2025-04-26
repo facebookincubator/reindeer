@@ -12,6 +12,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
 
+use log::error;
 use nom::error::VerboseError;
 use nom::error::convert_error;
 use serde::Deserialize;
@@ -45,7 +46,7 @@ pub fn platform_names_for_expr<'config>(
     let res = config
         .platform
         .iter()
-        .filter(|(_name, platconfig)| pred.eval(platconfig))
+        .filter(|(_name, platconfig)| pred.eval(platconfig, None))
         .map(|(name, _config)| name)
         .collect();
     Ok(res)
@@ -147,7 +148,7 @@ impl<'a> PlatformPredicate<'a> {
         }
     }
 
-    pub fn eval(&self, config: &PlatformConfig) -> bool {
+    pub fn eval(&self, config: &PlatformConfig, version: Option<&semver::Version>) -> bool {
         use PlatformPredicate::*;
 
         match self {
@@ -156,20 +157,31 @@ impl<'a> PlatformPredicate<'a> {
                 // [target.'cfg(feature = "...")'.dependencies] never get applied by Cargo
                 false
             }
+            Value {
+                key: "version",
+                value,
+            } => match (version, semver::VersionReq::parse(value)) {
+                (None, _) => true,
+                (Some(_), Err(e)) => {
+                    error!("malformed version requirement in fixup predicate: {}", e);
+                    false
+                }
+                (Some(version), Ok(req)) => req.matches(version),
+            },
             Value { key, value } => config.0.get(*key).is_some_and(|set| set.contains(*value)),
-            Not(pred) => !pred.eval(config),
-            Any(preds) => preds.iter().any(|pred| pred.eval(config)),
-            All(preds) => preds.iter().all(|pred| pred.eval(config)),
+            Not(pred) => !pred.eval(config, version),
+            Any(preds) => preds.iter().any(|pred| pred.eval(config, version)),
+            All(preds) => preds.iter().all(|pred| pred.eval(config, version)),
             Unix => PlatformPredicate::Value {
                 key: "target_family",
                 value: "unix",
             }
-            .eval(config),
+            .eval(config, version),
             Windows => PlatformPredicate::Value {
                 key: "target_family",
                 value: "windows",
             }
-            .eval(config),
+            .eval(config, version),
         }
     }
 }

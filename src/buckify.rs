@@ -688,10 +688,10 @@ fn generate_target_rules<'scope>(
                     dep,
                     name,
                     platform,
-                    dep.filter(platform)
+                    dep.filter(platform, &pkg.version)
                 );
 
-                if dep.filter(platform)? {
+                if dep.filter(platform, &pkg.version)? {
                     let dep = dep.clone();
 
                     let recipient = if is_default {
