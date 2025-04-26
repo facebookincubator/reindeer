@@ -323,7 +323,7 @@ impl<'meta> Fixups<'meta> {
             package_name: self.package.name.clone(),
             version: self.package.version.clone(),
             features: buck::Selectable::Value(features.clone()),
-            env: BTreeMap::new(),
+            env: buildscript.common.base.env.unwrap_ref().clone(),
             local_manifest_dir: local_manifest_dir.clone(),
             manifest_dir: manifest_dir.clone(),
         };
@@ -361,7 +361,9 @@ impl<'meta> Fixups<'meta> {
 
                     // Emit rule to get its stdout and filter it into args
                     let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
-                    buildscript_run.env.extend(env.clone());
+                    buildscript_run
+                        .env
+                        .extend(env.iter().map(|(k, v)| (k.clone(), v.clone().into())));
                 }
 
                 // Generated source files - given a list, set up rules to extract them from
@@ -372,7 +374,9 @@ impl<'meta> Fixups<'meta> {
 
                     // Emit rules to extract generated sources
                     let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
-                    buildscript_run.env.extend(env.clone());
+                    buildscript_run
+                        .env
+                        .extend(env.iter().map(|(k, v)| (k.clone(), v.clone().into())))
                 }
 
                 // Emit a C++ library build rule (elsewhere - add a dependency to it)

@@ -174,6 +174,12 @@ pub enum StringOrPath {
     Path(BuckPath),
 }
 
+impl From<String> for StringOrPath {
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 #[serde(untagged)]
 pub enum SubtargetOrPath {
@@ -875,7 +881,7 @@ pub struct BuildscriptGenrule {
     pub package_name: String,
     pub version: Version,
     pub features: Selectable<UniverseName, BTreeSet<String>>,
-    pub env: BTreeMap<String, String>,
+    pub env: BTreeMap<String, StringOrPath>,
     pub local_manifest_dir: Option<BuckPath>,
     pub manifest_dir: Option<Subtarget>,
 }
