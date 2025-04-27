@@ -913,6 +913,9 @@ impl<'meta> Fixups<'meta> {
                             ))
                         }
                     }
+                    CargoEnv::CARGO_MANIFEST_LINKS => {
+                        StringOrPath::String(self.package.links.clone().unwrap_or_default())
+                    }
                     CargoEnv::CARGO_PKG_AUTHORS => {
                         StringOrPath::String(self.package.authors.join(":"))
                     }

@@ -284,6 +284,8 @@ pub struct Manifest {
     pub repository: Option<String>,
     /// Default edition for the package (if targets don't have it)
     pub edition: Edition,
+    /// Name of a native library that the build script links
+    pub links: Option<String>,
 }
 
 impl Manifest {
