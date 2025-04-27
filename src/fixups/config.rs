@@ -272,6 +272,7 @@ pub enum CargoEnv {
     CARGO_PKG_VERSION_MAJOR,
     CARGO_PKG_VERSION_MINOR,
     CARGO_PKG_VERSION_PATCH,
+    CARGO_PKG_VERSION_PRE,
 }
 
 impl CargoEnvs {

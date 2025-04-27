@@ -934,6 +934,9 @@ impl<'meta> Fixups<'meta> {
                     CargoEnv::CARGO_PKG_VERSION_PATCH => {
                         StringOrPath::String(self.package.version.patch.to_string())
                     }
+                    CargoEnv::CARGO_PKG_VERSION_PRE => {
+                        StringOrPath::String(self.package.version.pre.to_string())
+                    }
                     CargoEnv::CARGO_PKG_NAME => StringOrPath::String(self.package.name.clone()),
                 };
                 map.insert(cargo_env.to_string(), v);
