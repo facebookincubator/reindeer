@@ -237,12 +237,16 @@ impl FixupConfig {
 /// `cargo_env` selection.
 ///
 /// Deserializes from `true`, `false` or `["CARGO_MANIFEST_DIR", ...]`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub enum CargoEnvs {
     All,
-    #[default]
-    None,
     Some(BTreeSet<CargoEnv>),
+}
+
+impl Default for CargoEnvs {
+    fn default() -> Self {
+        CargoEnvs::Some(BTreeSet::new())
+    }
 }
 
 /// Supported Cargo environment variable names.
@@ -279,7 +283,6 @@ impl CargoEnvs {
     pub fn iter(&self) -> Box<dyn Iterator<Item = CargoEnv> + '_> {
         match self {
             CargoEnvs::All => Box::new(CargoEnv::iter()),
-            CargoEnvs::None => Box::new(std::iter::empty()),
             CargoEnvs::Some(envs) => Box::new(envs.iter().cloned()),
         }
     }
@@ -309,7 +312,7 @@ impl<'de> Visitor<'de> for CargoEnvsVisitor {
         if value {
             Ok(CargoEnvs::All)
         } else {
-            Ok(CargoEnvs::None)
+            Ok(CargoEnvs::Some(BTreeSet::new()))
         }
     }
 
@@ -335,8 +338,13 @@ impl Serialize for CargoEnvs {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         match self {
             CargoEnvs::All => true.serialize(ser),
-            CargoEnvs::None => false.serialize(ser),
-            CargoEnvs::Some(envs) => envs.serialize(ser),
+            CargoEnvs::Some(envs) => {
+                if envs.is_empty() {
+                    false.serialize(ser)
+                } else {
+                    envs.serialize(ser)
+                }
+            }
         }
     }
 }
