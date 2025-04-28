@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::btree_map;
 use std::fmt;
 use std::fs;
 use std::path::Path;
@@ -361,7 +362,10 @@ impl<'meta> Fixups<'meta> {
 
                     // Emit rule to get its stdout and filter it into args
                     let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
-                    buildscript_run.env.extend(env.clone());
+                    buildscript_run.env.extend(
+                        env.iter()
+                            .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
+                    );
                 }
 
                 // Generated source files - given a list, set up rules to extract them from
@@ -372,7 +376,10 @@ impl<'meta> Fixups<'meta> {
 
                     // Emit rules to extract generated sources
                     let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
-                    buildscript_run.env.extend(env.clone());
+                    buildscript_run.env.extend(
+                        env.iter()
+                            .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
+                    );
                 }
 
                 // Emit a C++ library build rule (elsewhere - add a dependency to it)
@@ -569,7 +576,32 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        if let Some(buildscript_run) = buildscript_run {
+        if let Some(mut buildscript_run) = buildscript_run {
+            for (_platform, fixup) in self.fixup_config.configs(&self.package.version) {
+                for cargo_env in fixup.cargo_env.iter() {
+                    match cargo_env {
+                        // Not set for build scripts.
+                        CargoEnv::CARGO_CRATE_NAME => continue,
+                        // Set by prelude//rust/tools/buildscript_run.py
+                        CargoEnv::CARGO_MANIFEST_DIR => continue,
+                        // Set by prelude//rust/cargo_buildscript.bzl
+                        CargoEnv::CARGO_PKG_NAME | CargoEnv::CARGO_PKG_VERSION => continue,
+                        CargoEnv::CARGO_PKG_AUTHORS
+                        | CargoEnv::CARGO_PKG_DESCRIPTION
+                        | CargoEnv::CARGO_PKG_REPOSITORY
+                        | CargoEnv::CARGO_PKG_VERSION_MAJOR
+                        | CargoEnv::CARGO_PKG_VERSION_MINOR
+                        | CargoEnv::CARGO_PKG_VERSION_PATCH
+                        | CargoEnv::CARGO_PKG_VERSION_PRE => {}
+                    }
+                    if let btree_map::Entry::Vacant(entry) =
+                        buildscript_run.env.entry(cargo_env.to_string())
+                    {
+                        let value = self.cargo_env_value(cargo_env)?;
+                        entry.insert(value);
+                    }
+                }
+            }
             res.push(Rule::BuildscriptGenrule(buildscript_run));
         }
 
@@ -886,60 +918,8 @@ impl<'meta> Fixups<'meta> {
                 .collect();
 
             for cargo_env in config.cargo_env.iter() {
-                let v = match cargo_env {
-                    CargoEnv::CARGO_CRATE_NAME => {
-                        StringOrPath::String(self.target.name.replace('-', "_"))
-                    }
-                    CargoEnv::CARGO_MANIFEST_DIR => {
-                        if matches!(self.config.vendor, VendorConfig::Source(_))
-                            || matches!(self.package.source, Source::Local)
-                        {
-                            StringOrPath::Path(BuckPath(relative_path(
-                                &self.third_party_dir,
-                                self.manifest_dir,
-                            )))
-                        } else if let VendorConfig::LocalRegistry = self.config.vendor {
-                            StringOrPath::String(format!(
-                                "{}-{}.crate",
-                                self.package.name, self.package.version,
-                            ))
-                        } else if let Source::Git { repo, .. } = &self.package.source {
-                            let short_name = short_name_for_git_repo(repo)?;
-                            StringOrPath::String(short_name.to_owned())
-                        } else {
-                            StringOrPath::String(format!(
-                                "{}-{}.crate",
-                                self.package.name, self.package.version,
-                            ))
-                        }
-                    }
-                    CargoEnv::CARGO_PKG_AUTHORS => {
-                        StringOrPath::String(self.package.authors.join(":"))
-                    }
-                    CargoEnv::CARGO_PKG_DESCRIPTION => {
-                        StringOrPath::String(self.package.description.clone().unwrap_or_default())
-                    }
-                    CargoEnv::CARGO_PKG_REPOSITORY => {
-                        StringOrPath::String(self.package.repository.clone().unwrap_or_default())
-                    }
-                    CargoEnv::CARGO_PKG_VERSION => {
-                        StringOrPath::String(self.package.version.to_string())
-                    }
-                    CargoEnv::CARGO_PKG_VERSION_MAJOR => {
-                        StringOrPath::String(self.package.version.major.to_string())
-                    }
-                    CargoEnv::CARGO_PKG_VERSION_MINOR => {
-                        StringOrPath::String(self.package.version.minor.to_string())
-                    }
-                    CargoEnv::CARGO_PKG_VERSION_PATCH => {
-                        StringOrPath::String(self.package.version.patch.to_string())
-                    }
-                    CargoEnv::CARGO_PKG_VERSION_PRE => {
-                        StringOrPath::String(self.package.version.pre.to_string())
-                    }
-                    CargoEnv::CARGO_PKG_NAME => StringOrPath::String(self.package.name.clone()),
-                };
-                map.insert(cargo_env.to_string(), v);
+                let value = self.cargo_env_value(cargo_env)?;
+                map.insert(cargo_env.to_string(), value);
             }
 
             if !map.is_empty() {
@@ -948,6 +928,57 @@ impl<'meta> Fixups<'meta> {
         }
 
         Ok(ret)
+    }
+
+    fn cargo_env_value(&self, cargo_env: CargoEnv) -> anyhow::Result<StringOrPath> {
+        let value = match cargo_env {
+            CargoEnv::CARGO_CRATE_NAME => StringOrPath::String(self.target.name.replace('-', "_")),
+            CargoEnv::CARGO_MANIFEST_DIR => {
+                if matches!(self.config.vendor, VendorConfig::Source(_))
+                    || matches!(self.package.source, Source::Local)
+                {
+                    StringOrPath::Path(BuckPath(relative_path(
+                        &self.third_party_dir,
+                        self.manifest_dir,
+                    )))
+                } else if let VendorConfig::LocalRegistry = self.config.vendor {
+                    StringOrPath::String(format!(
+                        "{}-{}.crate",
+                        self.package.name, self.package.version,
+                    ))
+                } else if let Source::Git { repo, .. } = &self.package.source {
+                    let short_name = short_name_for_git_repo(repo)?;
+                    StringOrPath::String(short_name.to_owned())
+                } else {
+                    StringOrPath::String(format!(
+                        "{}-{}.crate",
+                        self.package.name, self.package.version,
+                    ))
+                }
+            }
+            CargoEnv::CARGO_PKG_AUTHORS => StringOrPath::String(self.package.authors.join(":")),
+            CargoEnv::CARGO_PKG_DESCRIPTION => {
+                StringOrPath::String(self.package.description.clone().unwrap_or_default())
+            }
+            CargoEnv::CARGO_PKG_REPOSITORY => {
+                StringOrPath::String(self.package.repository.clone().unwrap_or_default())
+            }
+            CargoEnv::CARGO_PKG_VERSION => StringOrPath::String(self.package.version.to_string()),
+            CargoEnv::CARGO_PKG_VERSION_MAJOR => {
+                StringOrPath::String(self.package.version.major.to_string())
+            }
+            CargoEnv::CARGO_PKG_VERSION_MINOR => {
+                StringOrPath::String(self.package.version.minor.to_string())
+            }
+            CargoEnv::CARGO_PKG_VERSION_PATCH => {
+                StringOrPath::String(self.package.version.patch.to_string())
+            }
+            CargoEnv::CARGO_PKG_VERSION_PRE => {
+                StringOrPath::String(self.package.version.pre.to_string())
+            }
+            CargoEnv::CARGO_PKG_NAME => StringOrPath::String(self.package.name.clone()),
+        };
+        Ok(value)
     }
 
     /// Given a glob for the srcs, walk the filesystem to get the full set.
