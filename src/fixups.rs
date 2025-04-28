@@ -64,6 +64,7 @@ use buildscript::GenSrcs;
 use buildscript::PrebuiltCxxLibraryFixup;
 use buildscript::RustcFlags;
 use config::CargoEnv;
+use config::CargoEnvs;
 pub use config::ExportSources;
 use config::FixupConfigFile;
 
@@ -586,7 +587,8 @@ impl<'meta> Fixups<'meta> {
                         CargoEnv::CARGO_MANIFEST_DIR => continue,
                         // Set by prelude//rust/cargo_buildscript.bzl
                         CargoEnv::CARGO_PKG_NAME | CargoEnv::CARGO_PKG_VERSION => continue,
-                        CargoEnv::CARGO_PKG_AUTHORS
+                        CargoEnv::CARGO_MANIFEST_LINKS
+                        | CargoEnv::CARGO_PKG_AUTHORS
                         | CargoEnv::CARGO_PKG_DESCRIPTION
                         | CargoEnv::CARGO_PKG_REPOSITORY
                         | CargoEnv::CARGO_PKG_VERSION_MAJOR
@@ -597,8 +599,10 @@ impl<'meta> Fixups<'meta> {
                     if let btree_map::Entry::Vacant(entry) =
                         buildscript_run.env.entry(cargo_env.to_string())
                     {
-                        let value = self.cargo_env_value(cargo_env)?;
-                        entry.insert(value);
+                        let required = !matches!(fixup.cargo_env, CargoEnvs::All);
+                        if let Some(value) = self.cargo_env_value(cargo_env, required)? {
+                            entry.insert(value);
+                        }
                     }
                 }
             }
@@ -918,8 +922,25 @@ impl<'meta> Fixups<'meta> {
                 .collect();
 
             for cargo_env in config.cargo_env.iter() {
-                let value = self.cargo_env_value(cargo_env)?;
-                map.insert(cargo_env.to_string(), value);
+                match cargo_env {
+                    // Not set for builds, only build script execution
+                    CargoEnv::CARGO_MANIFEST_LINKS => continue,
+                    CargoEnv::CARGO_CRATE_NAME
+                    | CargoEnv::CARGO_MANIFEST_DIR
+                    | CargoEnv::CARGO_PKG_AUTHORS
+                    | CargoEnv::CARGO_PKG_DESCRIPTION
+                    | CargoEnv::CARGO_PKG_NAME
+                    | CargoEnv::CARGO_PKG_REPOSITORY
+                    | CargoEnv::CARGO_PKG_VERSION
+                    | CargoEnv::CARGO_PKG_VERSION_MAJOR
+                    | CargoEnv::CARGO_PKG_VERSION_MINOR
+                    | CargoEnv::CARGO_PKG_VERSION_PATCH
+                    | CargoEnv::CARGO_PKG_VERSION_PRE => {}
+                }
+                let required = !matches!(config.cargo_env, CargoEnvs::All);
+                if let Some(value) = self.cargo_env_value(cargo_env, required)? {
+                    map.insert(cargo_env.to_string(), value);
+                }
             }
 
             if !map.is_empty() {
@@ -930,7 +951,11 @@ impl<'meta> Fixups<'meta> {
         Ok(ret)
     }
 
-    fn cargo_env_value(&self, cargo_env: CargoEnv) -> anyhow::Result<StringOrPath> {
+    fn cargo_env_value(
+        &self,
+        cargo_env: CargoEnv,
+        required: bool,
+    ) -> anyhow::Result<Option<StringOrPath>> {
         let value = match cargo_env {
             CargoEnv::CARGO_CRATE_NAME => StringOrPath::String(self.target.name.replace('-', "_")),
             CargoEnv::CARGO_MANIFEST_DIR => {
@@ -956,11 +981,26 @@ impl<'meta> Fixups<'meta> {
                     ))
                 }
             }
+            CargoEnv::CARGO_MANIFEST_LINKS => {
+                if let Some(links) = &self.package.links {
+                    StringOrPath::String(links.clone())
+                } else if required {
+                    bail!(
+                        "cannot use CARGO_MANIFEST_LINKS in `cargo_env` if there is no `links` in the crate's manifest",
+                    );
+                } else {
+                    // When using `cargo_env = true`, we just omit CARGO_MANIFEST_LINKS
+                    // on a crate that has no `links`.
+                    return Ok(None);
+                }
+            }
             CargoEnv::CARGO_PKG_AUTHORS => StringOrPath::String(self.package.authors.join(":")),
             CargoEnv::CARGO_PKG_DESCRIPTION => {
+                // Cargo provides "" if there is no `description` in Cargo.toml
                 StringOrPath::String(self.package.description.clone().unwrap_or_default())
             }
             CargoEnv::CARGO_PKG_REPOSITORY => {
+                // Cargo provides "" if there is no `repository` in Cargo.toml
                 StringOrPath::String(self.package.repository.clone().unwrap_or_default())
             }
             CargoEnv::CARGO_PKG_VERSION => StringOrPath::String(self.package.version.to_string()),
@@ -978,7 +1018,7 @@ impl<'meta> Fixups<'meta> {
             }
             CargoEnv::CARGO_PKG_NAME => StringOrPath::String(self.package.name.clone()),
         };
-        Ok(value)
+        Ok(Some(value))
     }
 
     /// Given a glob for the srcs, walk the filesystem to get the full set.

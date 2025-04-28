@@ -268,6 +268,7 @@ impl Default for CargoEnvs {
 pub enum CargoEnv {
     CARGO_CRATE_NAME,
     CARGO_MANIFEST_DIR,
+    CARGO_MANIFEST_LINKS,
     CARGO_PKG_AUTHORS,
     CARGO_PKG_DESCRIPTION,
     CARGO_PKG_NAME,
