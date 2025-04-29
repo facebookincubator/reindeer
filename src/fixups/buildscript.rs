@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Deserializer;
+use serde::de::DeserializeSeed;
 use serde::de::Error as DeError;
 use serde::de::Expected;
 use serde::de::MapAccess;
@@ -195,6 +196,39 @@ impl<'de> Deserialize<'de> for LegacyBuildscriptRunOrLib {
     }
 }
 
+struct BuildscriptRunVisitor;
+
+impl<'de> Visitor<'de> for BuildscriptRunVisitor {
+    type Value = Option<BuildscriptRun>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("[buildscript.run] or `buildscript.run = true`")
+    }
+
+    fn visit_bool<E>(self, boolean: bool) -> Result<Self::Value, E> {
+        Ok(boolean.then(BuildscriptRun::default))
+    }
+
+    fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let de = serde::de::value::MapAccessDeserializer::new(map);
+        BuildscriptRun::deserialize(de).map(Some)
+    }
+}
+
+impl<'de> DeserializeSeed<'de> for BuildscriptRunVisitor {
+    type Value = Option<BuildscriptRun>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+}
+
 struct BuildscriptLibVisitor;
 
 impl<'de> Visitor<'de> for BuildscriptLibVisitor {
@@ -311,7 +345,7 @@ impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
                     if run.is_some() {
                         return Err(M::Error::duplicate_field("run"));
                     }
-                    run = Some(map.next_value()?);
+                    run = map.next_value_seed(BuildscriptRunVisitor)?;
                 }
                 "cxx_library" => {
                     let entries: Vec<CxxLibraryFixup> = map.next_value()?;
