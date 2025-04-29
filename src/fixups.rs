@@ -166,12 +166,13 @@ impl<'meta> Fixups<'meta> {
             let manifest_dir = relative_path(&self.third_party_dir, self.manifest_dir);
             let path = manifest_dir.join(relative_to_manifest_dir);
             Ok(SubtargetOrPath::Path(BuckPath(path)))
-        } else if let Source::Git { .. } = &self.package.source {
-            // This is unsupported because git_fetch doesn't support subtargets.
-            Err(anyhow!(
-                "git dependencies in non-vendor mode cannot have subtargets"
-            ))
-            .with_context(|| format!("package {} is a git depedency", self.package))
+        } else if let Source::Git { repo, .. } = &self.package.source {
+            // Subtarget inside a git_fetch: ":serde-643d78919f35d883.git[src/lib.rs]"
+            let short_name = short_name_for_git_repo(repo)?;
+            Ok(SubtargetOrPath::Subtarget(Subtarget {
+                target: Name(format!("{short_name}.git")),
+                relative: BuckPath(relative_to_manifest_dir.to_owned()),
+            }))
         } else {
             // Subtarget inside an http_archive: ":foo-1.0.0.crate[src/lib.rs]"
             Ok(SubtargetOrPath::Subtarget(Subtarget {
@@ -329,29 +330,6 @@ impl<'meta> Fixups<'meta> {
         };
 
         for fix in fixes {
-            if !matches!(self.config.vendor, VendorConfig::Source(_)) {
-                if let Source::Git { repo, .. } = &self.package.source {
-                    // Cxx_library fixups only work if the sources are vendored
-                    // or from an http_archive. They do not work with sources
-                    // from git_fetch, because we do not currently have a way to
-                    // generate subtargets referring to the git repo contents:
-                    // e.g. "briansmith/ring[crypto/crypto.c]"
-                    if let Some(unsupported_fixup_kind) = match fix {
-                        BuildscriptFixup::CxxLibrary(_) => Some("buildscript.cxx_library"),
-                        BuildscriptFixup::PrebuiltCxxLibrary(_) => {
-                            Some("buildscript.prebuilt_cxx_library")
-                        }
-                        _ => None,
-                    } {
-                        bail!(
-                            "{} fixup is not supported in vendor=false mode for crates that come from a git repo: {}",
-                            unsupported_fixup_kind,
-                            repo,
-                        );
-                    }
-                }
-            }
-
             match fix {
                 // Build and run it, and filter the output for --cfg options
                 // for the main target's rustc command line
