@@ -260,7 +260,7 @@ impl<'meta> Fixups<'meta> {
 
         let mut features = BTreeSet::new();
         for (plat, fixup) in self.fixup_config.configs(&self.package.version) {
-            if fixup.buildscript.defaulted_to_empty {
+            if plat.is_none() && fixup.buildscript.defaulted_to_empty {
                 let unresolved_package_msg = format!(
                     "{} v{} has a build script, but {} does not say what to do with it.",
                     self.package.name,
