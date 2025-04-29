@@ -21,8 +21,6 @@ use strum::IntoEnumIterator as _;
 use walkdir::WalkDir;
 
 use crate::buckify::relative_path;
-use crate::cargo::ManifestTarget;
-use crate::fixups::buildscript::BuildscriptFixup;
 use crate::fixups::buildscript::BuildscriptFixups;
 use crate::glob::SerializableGlobSet as GlobSet;
 use crate::platform::PlatformExpr;
@@ -68,27 +66,6 @@ pub struct FixupConfigFile {
 }
 
 impl FixupConfigFile {
-    /// Generate a template for a fixup.toml as a starting point.
-    pub fn template(third_party_path: &Path, target: &ManifestTarget) -> Self {
-        if !target.kind_custom_build() {
-            return Default::default();
-        }
-
-        let relpath = relative_path(third_party_path, &target.src_path);
-        let buildscript = vec![BuildscriptFixup::Unresolved(format!(
-            "Unresolved build script at {}.",
-            relpath.display()
-        ))];
-
-        FixupConfigFile {
-            base: FixupConfig {
-                buildscript: BuildscriptFixups(buildscript),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    }
-
     pub fn base(&self, version: &semver::Version) -> Option<&FixupConfig> {
         if self.base.version_applies(version) {
             Some(&self.base)

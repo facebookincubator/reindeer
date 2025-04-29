@@ -110,7 +110,7 @@ impl<'meta> Fixups<'meta> {
             toml::from_str(&file).context(format!("Failed to parse {}", fixup_path.display()))?
         } else {
             log::debug!("no fixups at {}", fixup_path.display());
-            FixupConfigFile::template(&paths.third_party_dir, target)
+            FixupConfigFile::default()
         };
 
         if fixup_config.custom_visibility.is_some() && !index.is_public_package_name(&package.name)
@@ -262,11 +262,29 @@ impl<'meta> Fixups<'meta> {
             Some(name) => name,
         };
 
-        // Generate features extracting them from the buildscript RustBinary. The assumption
-        // that fixups are already per-platform if necessary so there's no need for platform-specific
-        // rule attributes.
         let mut features = BTreeSet::new();
-        for (plat, _fixup) in self.fixup_config.configs(&self.package.version) {
+        for (plat, fixup) in self.fixup_config.configs(&self.package.version) {
+            if fixup.buildscript.defaulted_to_empty {
+                let unresolved_package_msg = format!(
+                    "{} v{} has a build script, but {} does not say what to do with it.",
+                    self.package.name,
+                    self.package.version,
+                    Path::new("fixups")
+                        .join(&self.package.name)
+                        .join("fixups.toml")
+                        .display(),
+                );
+                if config.unresolved_fixup_error {
+                    log::error!("{}", unresolved_package_msg);
+                    bail!("Unresolved fixup errors, fix them and rerun buckify.");
+                } else {
+                    log::warn!("{}", unresolved_package_msg);
+                }
+            }
+
+            // Generate features extracting them from the buildscript RustBinary.
+            // The assumption that fixups are already per-platform if necessary
+            // so there's no need for platform-specific rule attributes.
             match plat {
                 None => features.extend(
                     buildscript
@@ -537,22 +555,6 @@ impl<'meta> Fixups<'meta> {
                     }
                     if self.config.strict_globs {
                         static_lib_globs.check_all_globs_used()?;
-                    }
-                }
-
-                // Complain and omit
-                BuildscriptFixup::Unresolved(msg) => {
-                    let unresolved_package_msg = format!(
-                        "{} has a build script, but I don't know what to do with it: {}",
-                        self.package, msg
-                    );
-                    if config.unresolved_fixup_error {
-                        log::error!("{}", unresolved_package_msg);
-                        return Err(anyhow!(
-                            "Unresolved fix up errors, fix them and rerun buckify."
-                        ));
-                    } else {
-                        log::warn!("{}", unresolved_package_msg);
                     }
                 }
             }

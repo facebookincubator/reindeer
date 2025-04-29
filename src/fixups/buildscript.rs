@@ -21,21 +21,32 @@ use crate::cargo::TargetKind;
 use crate::collection::SetOrMap;
 
 #[derive(Deserialize, Debug)]
-pub struct BuildscriptFixups(pub Vec<BuildscriptFixup>);
+#[serde(transparent)]
+pub struct BuildscriptFixups {
+    fixups: Vec<BuildscriptFixup>,
+    // True whenever this BuildscriptFixups has been deserialized from a
+    // `[buildscript...]` section or `buildscript = []` key in a fixups.toml
+    // file. False whenever this BuildscriptFixups was initialized by omission
+    // of buildscript key in a fixups.toml, or there was not even a fixups.toml.
+    #[serde(skip_deserializing)]
+    pub defaulted_to_empty: bool,
+}
 
 impl<'a> IntoIterator for &'a BuildscriptFixups {
     type Item = &'a BuildscriptFixup;
     type IntoIter = std::slice::Iter<'a, BuildscriptFixup>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
+        self.fixups.iter()
     }
 }
 
 impl Default for BuildscriptFixups {
     fn default() -> Self {
-        let unresolved = BuildscriptFixup::Unresolved("No build script fixups defined".to_string());
-        BuildscriptFixups(vec![unresolved])
+        BuildscriptFixups {
+            fixups: Vec::new(),
+            defaulted_to_empty: true,
+        }
     }
 }
 
@@ -43,14 +54,12 @@ impl Deref for BuildscriptFixups {
     type Target = [BuildscriptFixup];
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.fixups
     }
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum BuildscriptFixup {
-    /// Unresolved build script (string with helpful message)
-    Unresolved(String),
     /// Run the buildscript and extract command line args. Linker -l/-L args ignored so in
     /// practice this is just --cfg options.
     RustcFlags(RustcFlags),
@@ -69,9 +78,7 @@ impl BuildscriptFixup {
             BuildscriptFixup::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup { targets, .. }) => {
                 targets
             }
-            BuildscriptFixup::RustcFlags(_)
-            | BuildscriptFixup::GenSrcs(_)
-            | BuildscriptFixup::Unresolved(_) => return None,
+            BuildscriptFixup::RustcFlags(_) | BuildscriptFixup::GenSrcs(_) => return None,
         };
 
         Some(&targets[..])
@@ -173,7 +180,6 @@ impl<'de> Visitor<'de> for BuildscriptFixupVisitor<'de> {
     {
         let res = if let Some(key) = access.next_key::<String>()? {
             let res = match key.as_str() {
-                "unresolved" => BuildscriptFixup::Unresolved(access.next_value()?),
                 "rustc_flags" => BuildscriptFixup::RustcFlags(access.next_value()?),
                 "gen_srcs" => BuildscriptFixup::GenSrcs(access.next_value()?),
                 "cxx_library" => BuildscriptFixup::CxxLibrary(access.next_value()?),
