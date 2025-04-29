@@ -12,10 +12,6 @@
 # This also sets the default input (manifest_path) to third-party/Cargo.toml
 third_party_dir = "third-party"
 
-# If a fixups.toml file is needed (eg, the package has a build.rs), then
-# generate a template fixups.toml to be edited.
-fixup_templates = true
-
 # Configuration for generated BUCK file
 [buck]
 # Name of the generated file

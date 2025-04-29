@@ -35,10 +35,9 @@ This example has a few dependencies to illustrate the fixups system.
 This one is easy. The `libc` crate has a build script, aka `build.rs`, which is
 used to enable `--cfg` flags on certain targets.
 
-If you delete the `third-party/fixups/libc` directory, and then
-`reindeer buckify` again, you'll see a template `fixups.toml` generated,
-suggesting that you add some directives to handle the build script. You can then
-replace the whole TOML file with:
+The `fixups/libc/fixups.toml` file instructs Reindeer to arrange for libc's
+build script to be compiled and run, and for its stdout to be transformed into
+rustc flags passed to the compilation of the libc library.
 
 ```toml
 [[buildscript]]
@@ -51,8 +50,8 @@ This is an indirect dependency of `crossbeam-queue`. It has a build script,
 which you can see
 [here](https://github.com/crossbeam-rs/crossbeam/blob/17fb8417a83a2694b6f8a37198cd20b34b621baf/crossbeam-utils/build.rs).
 
-So we can add a directive to run that build script and have Buck add the flags
-it emits to rustc when we compile the crate:
+So just like libc, we can add a directive to run that build script and have Buck
+add the flags it emits to rustc when we compile the crate:
 
 ```toml
 [[buildscript]]

@@ -8,7 +8,6 @@
 # it will recursively buckify their dependencies to third-party/BUCK.
 manifest_path = "Cargo.toml"
 third_party_dir = "third-party"
-fixup_templates = true
 
 # Configuration for generated BUCK file
 # See other examples

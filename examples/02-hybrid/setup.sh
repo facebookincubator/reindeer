@@ -14,9 +14,5 @@ set -e
 #
 # This will resolve all the dependencies, and create or update
 # third-party/Cargo.lock as required.
-#
-# It will create a template fixup.toml which you can edit as needed. You would
-# typically commit these fixups and the generated third-party/BUCK in the same
-# commit as above.
 
 ../../target/debug/reindeer buckify

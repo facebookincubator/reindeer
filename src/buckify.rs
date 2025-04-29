@@ -438,7 +438,7 @@ fn generate_target_rules<'scope>(
 
     log::debug!("Generating rules for package {} target {}", pkg, tgt.name);
 
-    let fixups = Fixups::new(config, paths, index, pkg, tgt, will_use_rules)?;
+    let fixups = Fixups::new(config, paths, index, pkg, tgt)?;
 
     if fixups.omit_target() {
         return Ok((vec![], vec![]));

@@ -101,7 +101,6 @@ impl<'meta> Fixups<'meta> {
         index: &'meta Index,
         package: &'meta Manifest,
         target: &'meta ManifestTarget,
-        will_use_rules: bool,
     ) -> anyhow::Result<Self> {
         let fixup_dir = paths.third_party_dir.join("fixups").join(&package.name);
         let fixup_path = fixup_dir.join("fixups.toml");
@@ -111,25 +110,7 @@ impl<'meta> Fixups<'meta> {
             toml::from_str(&file).context(format!("Failed to parse {}", fixup_path.display()))?
         } else {
             log::debug!("no fixups at {}", fixup_path.display());
-            let fixup = FixupConfigFile::template(&paths.third_party_dir, target);
-            // will_use_rules: avoid writing for e.g. `include_workspace_members = false`
-            if config.fixup_templates && target.kind_custom_build() && will_use_rules {
-                log::debug!(
-                    "Writing template for {} to {}",
-                    package,
-                    relative_path(&paths.third_party_dir, &fixup_path).display()
-                );
-                log::debug!(
-                    "fixup template: {:#?}, path {}",
-                    fixup,
-                    fixup_path.display()
-                );
-
-                let file = toml::to_string_pretty(&fixup)?;
-                fs::create_dir_all(fixup_path.parent().unwrap())?;
-                fs::write(&fixup_path, file)?;
-            }
-            fixup
+            FixupConfigFile::template(&paths.third_party_dir, target)
         };
 
         if fixup_config.custom_visibility.is_some() && !index.is_public_package_name(&package.name)

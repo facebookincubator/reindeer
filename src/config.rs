@@ -61,10 +61,6 @@ pub struct Config {
     #[serde(default)]
     pub license_patterns: BTreeSet<String>,
 
-    /// Generate fixup file templates when missing
-    #[serde(default)]
-    pub fixup_templates: bool,
-
     /// Fail buckify if there are unresolved fixups
     #[serde(default)]
     pub unresolved_fixup_error: bool,
