@@ -41,7 +41,6 @@ use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
 use crate::cargo::NodeDepKind;
 use crate::cargo::Source;
-use crate::cargo::TargetKind;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
@@ -58,7 +57,7 @@ use crate::subtarget::Subtarget;
 mod buildscript;
 mod config;
 
-use buildscript::BuildscriptFixup;
+use buildscript::BuildscriptLib;
 use buildscript::BuildscriptRun;
 use buildscript::CxxLibraryFixup;
 use buildscript::PrebuiltCxxLibraryFixup;
@@ -136,11 +135,8 @@ impl<'meta> Fixups<'meta> {
     // There's a few cases:
     // - if the script doesn't specify a target, then it applies to the main "lib" target of the package
     // - otherwise it applies to the matching kind and (optionally) name (all names if not specified)
-    fn target_match(&self, script: &BuildscriptFixup) -> bool {
-        let Some(applies_to_targets) = script.targets() else {
-            // Applies to all targets except the build script
-            return !self.target.kind.contains(&TargetKind::CustomBuild);
-        };
+    fn target_match(&self, script: &BuildscriptLib) -> bool {
+        let applies_to_targets = script.targets();
 
         if applies_to_targets.is_empty() {
             // Applies to default target (the main "lib" target)
@@ -306,12 +302,6 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        // Flat list of buildscript fixups.
-        let fixes = self
-            .fixup_config
-            .configs(&self.package.version)
-            .flat_map(|(_platform, fixup)| fixup.buildscript.iter());
-
         let mut buildscript_run = None;
         let (local_manifest_dir, manifest_dir) = match manifest_dir {
             None => (None, None),
@@ -329,27 +319,26 @@ impl<'meta> Fixups<'meta> {
             manifest_dir: manifest_dir.clone(),
         };
 
-        for fix in fixes {
-            match fix {
-                // Build and run it, and filter the output for --cfg options
-                // for the main target's rustc command line
-                BuildscriptFixup::RustcFlags(BuildscriptRun { env }) |
-                // Generated source files - given a list, set up rules to extract
-                // them from the buildscript.
-                BuildscriptFixup::GenSrcs(BuildscriptRun { env }) => {
-                    // Emit the build script itself
-                    res.push(Rule::BuildscriptBinary(buildscript.clone()));
+        let mut libs = Vec::new();
+        for (_platform, fixup) in self.fixup_config.configs(&self.package.version) {
+            if let Some(BuildscriptRun { env }) = &fixup.buildscript.run {
+                // Emit the build script itself
+                res.push(Rule::BuildscriptBinary(buildscript.clone()));
 
-                    // Emit rule to get its stdout and filter it into args
-                    let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
-                    buildscript_run.env.extend(
-                        env.iter()
-                            .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
-                    );
-                }
+                // Emit rule to get its stdout and filter it into args
+                let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
+                buildscript_run.env.extend(
+                    env.iter()
+                        .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
+                );
+            }
+            libs.extend(&fixup.buildscript.libs);
+        }
 
+        for lib in libs {
+            match lib {
                 // Emit a C++ library build rule (elsewhere - add a dependency to it)
-                BuildscriptFixup::CxxLibrary(CxxLibraryFixup {
+                BuildscriptLib::CxxLibrary(CxxLibraryFixup {
                     name,
                     srcs,
                     headers,
@@ -473,7 +462,7 @@ impl<'meta> Fixups<'meta> {
                 }
 
                 // Emit a prebuilt C++ library rule for each static library (elsewhere - add dependencies to them)
-                BuildscriptFixup::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup {
+                BuildscriptLib::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup {
                     name,
                     static_libs,
                     public,
@@ -638,17 +627,11 @@ impl<'meta> Fixups<'meta> {
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
             let mut flags = vec![];
 
-            for buildscript in &config.buildscript {
-                if !self.target_match(buildscript) {
-                    continue;
-                }
-                if let BuildscriptFixup::RustcFlags(_) | BuildscriptFixup::GenSrcs(_) = buildscript
-                {
-                    flags.push(format!(
-                        "@$(location :{}[rustc_flags])",
-                        self.buildscript_genrule_name()
-                    ))
-                }
+            if !self.target.kind_custom_build() && config.buildscript.run.is_some() {
+                flags.push(format!(
+                    "@$(location :{}[rustc_flags])",
+                    self.buildscript_genrule_name()
+                ));
             }
 
             if !flags.is_empty() {
@@ -806,11 +789,11 @@ impl<'meta> Fixups<'meta> {
                     &NodeDepKind::ORDINARY,
                 )
             }));
-            for buildscript in &config.buildscript {
+            for buildscript in &config.buildscript.libs {
                 if !self.target_match(buildscript) {
                     continue;
                 }
-                if let BuildscriptFixup::CxxLibrary(CxxLibraryFixup {
+                if let BuildscriptLib::CxxLibrary(CxxLibraryFixup {
                     add_dep: true,
                     name,
                     ..
@@ -828,7 +811,7 @@ impl<'meta> Fixups<'meta> {
                         &NodeDepKind::ORDINARY,
                     ));
                 }
-                if let BuildscriptFixup::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup {
+                if let BuildscriptLib::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup {
                     add_dep: true,
                     name,
                     static_libs,
@@ -1209,13 +1192,7 @@ impl<'meta> Fixups<'meta> {
         }
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if config.buildscript.iter().any(|fix| {
-                self.target_match(fix)
-                    && matches!(
-                        fix,
-                        BuildscriptFixup::RustcFlags(_) | BuildscriptFixup::GenSrcs(_)
-                    )
-            }) {
+            if !self.target.kind_custom_build() && config.buildscript.run.is_some() {
                 ret.push((platform.cloned(), ()));
             }
         }

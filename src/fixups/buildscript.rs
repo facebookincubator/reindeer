@@ -7,90 +7,75 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::marker::PhantomData;
-use std::ops::Deref;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::de::Error as DeError;
+use serde::de::Expected;
 use serde::de::MapAccess;
+use serde::de::SeqAccess;
+use serde::de::Unexpected;
 use serde::de::Visitor;
 
 use crate::cargo::TargetKind;
 use crate::collection::SetOrMap;
 
-#[derive(Deserialize, Debug)]
-#[serde(transparent)]
+#[derive(Debug)]
 pub struct BuildscriptFixups {
-    fixups: Vec<BuildscriptFixup>,
+    pub run: Option<BuildscriptRun>,
+    pub libs: Vec<BuildscriptLib>,
     // True whenever this BuildscriptFixups has been deserialized from a
     // `[buildscript...]` section or `buildscript = []` key in a fixups.toml
     // file. False whenever this BuildscriptFixups was initialized by omission
     // of buildscript key in a fixups.toml, or there was not even a fixups.toml.
-    #[serde(skip_deserializing)]
     pub defaulted_to_empty: bool,
-}
-
-impl<'a> IntoIterator for &'a BuildscriptFixups {
-    type Item = &'a BuildscriptFixup;
-    type IntoIter = std::slice::Iter<'a, BuildscriptFixup>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.fixups.iter()
-    }
 }
 
 impl Default for BuildscriptFixups {
     fn default() -> Self {
         BuildscriptFixups {
-            fixups: Vec::new(),
+            run: None,
+            libs: Vec::new(),
             defaulted_to_empty: true,
         }
     }
 }
 
-impl Deref for BuildscriptFixups {
-    type Target = [BuildscriptFixup];
-
-    fn deref(&self) -> &Self::Target {
-        &self.fixups
-    }
-}
-
 #[derive(Debug, Eq, PartialEq)]
-pub enum BuildscriptFixup {
-    /// Run the buildscript and extract command line args. Linker -l/-L args ignored so in
-    /// practice this is just --cfg options.
-    RustcFlags(BuildscriptRun),
-    /// Generated sources - give list of generated paths which are mapped into target sources
-    GenSrcs(BuildscriptRun),
+pub enum BuildscriptLib {
     /// Generate a C++ library rule
     CxxLibrary(CxxLibraryFixup),
     /// Generate a prebuilt C++ library rule
     PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup),
 }
 
-impl BuildscriptFixup {
-    pub fn targets(&self) -> Option<&[(TargetKind, Option<String>)]> {
-        let targets = match self {
-            BuildscriptFixup::CxxLibrary(CxxLibraryFixup { targets, .. }) => targets,
-            BuildscriptFixup::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup { targets, .. }) => {
-                targets
-            }
-            BuildscriptFixup::RustcFlags(_) | BuildscriptFixup::GenSrcs(_) => return None,
-        };
-
-        Some(&targets[..])
+impl BuildscriptLib {
+    pub fn targets(&self) -> &[(TargetKind, Option<String>)] {
+        match self {
+            BuildscriptLib::CxxLibrary(CxxLibraryFixup { targets, .. }) => targets,
+            BuildscriptLib::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup { targets, .. }) => targets,
+        }
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
+/// Run the buildscript and extract rustc command line flags + generated sources.
+///
+/// Linker `-l`/`-L` flags are ignored so in practice the flags are just for `--cfg`.
+#[derive(Default, Debug, Clone, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct BuildscriptRun {
-    // Runtime environment for the gensrc program
+    // Runtime environment for the build script. Not provided to build script
+    // compilation.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+}
+
+impl BuildscriptRun {
+    fn merge(&mut self, second: Self) {
+        let Self { env } = second;
+        self.env.extend(env);
+    }
 }
 
 fn set_true() -> bool {
@@ -154,57 +139,100 @@ pub struct PrebuiltCxxLibraryFixup {
     pub compatible_with: Vec<String>,
 }
 
-#[derive(Deserialize)]
-struct Empty {}
+enum BuildscriptRunOrLib {
+    Run(BuildscriptRun),
+    Lib(BuildscriptLib),
+}
 
-struct BuildscriptFixupVisitor<'de>(PhantomData<&'de ()>);
+struct BuildscriptRunOrLibVisitor;
 
-impl<'de> Visitor<'de> for BuildscriptFixupVisitor<'de> {
-    type Value = BuildscriptFixup;
+impl<'de> Visitor<'de> for BuildscriptRunOrLibVisitor {
+    type Value = BuildscriptRunOrLib;
 
-    fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "BuildscriptFixup enum")
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("[buildscript.gen_srcs] or [buildscript.rustc_flags] or [buildscript.cxx_library] or [buildscript.prebuilt_cxx_library]")
     }
 
-    fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
     where
         M: MapAccess<'de>,
     {
-        let res = if let Some(key) = access.next_key::<String>()? {
-            let res = match key.as_str() {
-                "rustc_flags" => BuildscriptFixup::RustcFlags(access.next_value()?),
-                "gen_srcs" => BuildscriptFixup::GenSrcs(access.next_value()?),
-                "cxx_library" => BuildscriptFixup::CxxLibrary(access.next_value()?),
-                "prebuilt_cxx_library" => {
-                    BuildscriptFixup::PrebuiltCxxLibrary(access.next_value()?)
-                }
-                other => {
-                    // other keys are unit, which map to an empty map
-                    let _ = access.next_value::<Empty>()?;
-                    self.visit_str(other)?
-                }
-            };
-            Ok(res)
-        } else {
-            return Err(M::Error::custom("Empty BuildscriptFixup map"));
+        let Some(key) = map.next_key::<String>()? else {
+            return Err(M::Error::custom(format!(
+                "unexpected empty table, expected {}",
+                &self as &dyn Expected,
+            )));
         };
 
-        if let Some(key) = access.next_key::<String>()? {
-            Err(M::Error::custom(format!(
-                "Extra BuildscriptFixup map entry: {}",
-                key
-            )))
-        } else {
-            res
+        let run_or_lib = match key.as_str() {
+            "gen_srcs" | "rustc_flags" => BuildscriptRunOrLib::Run(map.next_value()?),
+            "cxx_library" => {
+                BuildscriptRunOrLib::Lib(BuildscriptLib::CxxLibrary(map.next_value()?))
+            }
+            "prebuilt_cxx_library" => {
+                BuildscriptRunOrLib::Lib(BuildscriptLib::PrebuiltCxxLibrary(map.next_value()?))
+            }
+            _ => return Err(M::Error::invalid_value(Unexpected::Str(&key), &self)),
+        };
+
+        if let Some(key) = map.next_key::<String>()? {
+            return Err(M::Error::custom(format!(
+                "unexpected second value {key:?} in the same buildscript table, expected {}",
+                &self as &dyn Expected,
+            )));
         }
+
+        Ok(run_or_lib)
     }
 }
 
-impl<'de> Deserialize<'de> for BuildscriptFixup {
+impl<'de> Deserialize<'de> for BuildscriptRunOrLib {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_map(BuildscriptFixupVisitor(PhantomData))
+        deserializer.deserialize_map(BuildscriptRunOrLibVisitor)
+    }
+}
+
+struct BuildscriptFixupsVisitor;
+
+impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
+    type Value = BuildscriptFixups;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a TOML array: [[buildscript]], or a TOML table: [buildscript.run] or [[buildscript.cxx_library]]")
+    }
+
+    fn visit_seq<S>(self, mut seq: S) -> Result<Self::Value, S::Error>
+    where
+        S: SeqAccess<'de>,
+    {
+        let mut run = None;
+        let mut libs = Vec::new();
+
+        while let Some(fixup) = seq.next_element()? {
+            match fixup {
+                BuildscriptRunOrLib::Run(fixup) => {
+                    run.get_or_insert_with(BuildscriptRun::default).merge(fixup);
+                }
+                BuildscriptRunOrLib::Lib(lib) => libs.push(lib),
+            }
+        }
+
+        Ok(BuildscriptFixups {
+            run,
+            libs,
+            defaulted_to_empty: false,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for BuildscriptFixups {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(BuildscriptFixupsVisitor)
     }
 }
