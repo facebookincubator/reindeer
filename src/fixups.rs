@@ -59,10 +59,9 @@ mod buildscript;
 mod config;
 
 use buildscript::BuildscriptFixup;
+use buildscript::BuildscriptRun;
 use buildscript::CxxLibraryFixup;
-use buildscript::GenSrcs;
 use buildscript::PrebuiltCxxLibraryFixup;
-use buildscript::RustcFlags;
 use config::CargoEnv;
 use config::CargoEnvs;
 pub use config::ExportSources;
@@ -356,25 +355,14 @@ impl<'meta> Fixups<'meta> {
             match fix {
                 // Build and run it, and filter the output for --cfg options
                 // for the main target's rustc command line
-                BuildscriptFixup::RustcFlags(RustcFlags { env, .. }) => {
+                BuildscriptFixup::RustcFlags(BuildscriptRun { env }) |
+                // Generated source files - given a list, set up rules to extract
+                // them from the buildscript.
+                BuildscriptFixup::GenSrcs(BuildscriptRun { env }) => {
                     // Emit the build script itself
                     res.push(Rule::BuildscriptBinary(buildscript.clone()));
 
                     // Emit rule to get its stdout and filter it into args
-                    let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
-                    buildscript_run.env.extend(
-                        env.iter()
-                            .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
-                    );
-                }
-
-                // Generated source files - given a list, set up rules to extract them from
-                // the buildscript.
-                BuildscriptFixup::GenSrcs(GenSrcs { env, .. }) => {
-                    // Emit the build script itself
-                    res.push(Rule::BuildscriptBinary(buildscript.clone()));
-
-                    // Emit rules to extract generated sources
                     let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
                     buildscript_run.env.extend(
                         env.iter()

@@ -62,9 +62,9 @@ impl Deref for BuildscriptFixups {
 pub enum BuildscriptFixup {
     /// Run the buildscript and extract command line args. Linker -l/-L args ignored so in
     /// practice this is just --cfg options.
-    RustcFlags(RustcFlags),
+    RustcFlags(BuildscriptRun),
     /// Generated sources - give list of generated paths which are mapped into target sources
-    GenSrcs(GenSrcs),
+    GenSrcs(BuildscriptRun),
     /// Generate a C++ library rule
     CxxLibrary(CxxLibraryFixup),
     /// Generate a prebuilt C++ library rule
@@ -87,15 +87,7 @@ impl BuildscriptFixup {
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct RustcFlags {
-    // Runtime environment for the gensrc program
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct GenSrcs {
+pub struct BuildscriptRun {
     // Runtime environment for the gensrc program
     #[serde(default)]
     pub env: BTreeMap<String, String>,
