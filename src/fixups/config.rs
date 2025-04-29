@@ -14,8 +14,6 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Deserializer;
-use serde::Serialize;
-use serde::Serializer;
 use serde::de::SeqAccess;
 use serde::de::Visitor;
 use serde::de::value::SeqAccessDeserializer;
@@ -30,7 +28,7 @@ use crate::glob::SerializableGlobSet as GlobSet;
 use crate::platform::PlatformExpr;
 
 /// Top-level fixup config file (correspondins to a fixups.toml)
-#[derive(Debug, Deserialize, Default, Serialize)]
+#[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct FixupConfigFile {
     /// Limit an exposed crate's `alias`'s `visibility` to this.
@@ -122,7 +120,7 @@ impl FixupConfigFile {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportSources {
     /// Suffix for the rule name
@@ -136,7 +134,7 @@ pub struct ExportSources {
     pub visibility: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Default, Serialize)]
+#[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct FixupConfig {
     /// Versions this fixup applies to,
@@ -260,7 +258,6 @@ impl Default for CargoEnvs {
     PartialEq,
     Eq,
     Deserialize,
-    Serialize,
     strum::Display,
     strum::EnumIter
 )]
@@ -332,20 +329,5 @@ impl<'de> Deserialize<'de> for CargoEnvs {
         D: Deserializer<'de>,
     {
         deserializer.deserialize_any(CargoEnvsVisitor)
-    }
-}
-
-impl Serialize for CargoEnvs {
-    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        match self {
-            CargoEnvs::All => true.serialize(ser),
-            CargoEnvs::Some(envs) => {
-                if envs.is_empty() {
-                    false.serialize(ser)
-                } else {
-                    envs.serialize(ser)
-                }
-            }
-        }
     }
 }

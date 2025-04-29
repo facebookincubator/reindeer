@@ -13,17 +13,14 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Deserializer;
-use serde::Serialize;
-use serde::Serializer;
 use serde::de::Error as DeError;
 use serde::de::MapAccess;
 use serde::de::Visitor;
-use serde::ser::SerializeMap;
 
 use crate::cargo::TargetKind;
 use crate::collection::SetOrMap;
 
-#[derive(Deserialize, Debug, Serialize)]
+#[derive(Deserialize, Debug)]
 pub struct BuildscriptFixups(pub Vec<BuildscriptFixup>);
 
 impl<'a> IntoIterator for &'a BuildscriptFixups {
@@ -81,7 +78,7 @@ impl BuildscriptFixup {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RustcFlags {
     // Runtime environment for the gensrc program
@@ -89,7 +86,7 @@ pub struct RustcFlags {
     pub env: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GenSrcs {
     // Runtime environment for the gensrc program
@@ -101,7 +98,7 @@ fn set_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CxxLibraryFixup {
     pub name: String,      // rule basename
@@ -141,7 +138,7 @@ pub struct CxxLibraryFixup {
     pub undefined_symbols: bool,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrebuiltCxxLibraryFixup {
     pub name: String,             // rule basename
@@ -160,28 +157,6 @@ pub struct PrebuiltCxxLibraryFixup {
 
 #[derive(Deserialize)]
 struct Empty {}
-
-impl Serialize for BuildscriptFixup {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let len = 1;
-        let mut map = serializer.serialize_map(Some(len))?;
-        match self {
-            BuildscriptFixup::Unresolved(msg) => map.serialize_entry("unresolved", msg)?,
-            BuildscriptFixup::RustcFlags(rustc_flags) => {
-                map.serialize_entry("rustc_flags", rustc_flags)?
-            }
-            BuildscriptFixup::GenSrcs(gen_srcs) => map.serialize_entry("gen_srcs", gen_srcs)?,
-            BuildscriptFixup::CxxLibrary(cxxlib) => map.serialize_entry("cxx_library", cxxlib)?,
-            BuildscriptFixup::PrebuiltCxxLibrary(prebuilt_lib) => {
-                map.serialize_entry("prebuilt_prebcxx_library", prebuilt_lib)?
-            }
-        }
-        map.end()
-    }
-}
 
 struct BuildscriptFixupVisitor<'de>(PhantomData<&'de ()>);
 
