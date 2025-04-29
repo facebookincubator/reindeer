@@ -664,7 +664,8 @@ impl<'meta> Fixups<'meta> {
                 if !self.target_match(buildscript) {
                     continue;
                 }
-                if let BuildscriptFixup::RustcFlags(_) = buildscript {
+                if let BuildscriptFixup::RustcFlags(_) | BuildscriptFixup::GenSrcs(_) = buildscript
+                {
                     flags.push(format!(
                         "@$(location :{}[rustc_flags])",
                         self.buildscript_genrule_name()
@@ -1230,11 +1231,13 @@ impl<'meta> Fixups<'meta> {
         }
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if config
-                .buildscript
-                .iter()
-                .any(|fix| self.target_match(fix) && matches!(fix, BuildscriptFixup::GenSrcs(_)))
-            {
+            if config.buildscript.iter().any(|fix| {
+                self.target_match(fix)
+                    && matches!(
+                        fix,
+                        BuildscriptFixup::RustcFlags(_) | BuildscriptFixup::GenSrcs(_)
+                    )
+            }) {
                 ret.push((platform.cloned(), ()));
             }
         }
