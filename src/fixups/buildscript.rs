@@ -72,7 +72,7 @@ pub struct BuildscriptRun {
 }
 
 impl BuildscriptRun {
-    fn merge(&mut self, second: Self) {
+    fn legacy_merge(&mut self, second: Self) {
         let Self { env } = second;
         self.env.extend(env);
     }
@@ -139,15 +139,15 @@ pub struct PrebuiltCxxLibraryFixup {
     pub compatible_with: Vec<String>,
 }
 
-enum BuildscriptRunOrLib {
+enum LegacyBuildscriptRunOrLib {
     Run(BuildscriptRun),
     Lib(BuildscriptLib),
 }
 
-struct BuildscriptRunOrLibVisitor;
+struct LegacyBuildscriptRunOrLibVisitor;
 
-impl<'de> Visitor<'de> for BuildscriptRunOrLibVisitor {
-    type Value = BuildscriptRunOrLib;
+impl<'de> Visitor<'de> for LegacyBuildscriptRunOrLibVisitor {
+    type Value = LegacyBuildscriptRunOrLib;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("[buildscript.gen_srcs] or [buildscript.rustc_flags] or [buildscript.cxx_library] or [buildscript.prebuilt_cxx_library]")
@@ -165,13 +165,13 @@ impl<'de> Visitor<'de> for BuildscriptRunOrLibVisitor {
         };
 
         let run_or_lib = match key.as_str() {
-            "gen_srcs" | "rustc_flags" => BuildscriptRunOrLib::Run(map.next_value()?),
+            "gen_srcs" | "rustc_flags" => LegacyBuildscriptRunOrLib::Run(map.next_value()?),
             "cxx_library" => {
-                BuildscriptRunOrLib::Lib(BuildscriptLib::CxxLibrary(map.next_value()?))
+                LegacyBuildscriptRunOrLib::Lib(BuildscriptLib::CxxLibrary(map.next_value()?))
             }
-            "prebuilt_cxx_library" => {
-                BuildscriptRunOrLib::Lib(BuildscriptLib::PrebuiltCxxLibrary(map.next_value()?))
-            }
+            "prebuilt_cxx_library" => LegacyBuildscriptRunOrLib::Lib(
+                BuildscriptLib::PrebuiltCxxLibrary(map.next_value()?),
+            ),
             _ => return Err(M::Error::invalid_value(Unexpected::Str(&key), &self)),
         };
 
@@ -186,12 +186,58 @@ impl<'de> Visitor<'de> for BuildscriptRunOrLibVisitor {
     }
 }
 
-impl<'de> Deserialize<'de> for BuildscriptRunOrLib {
+impl<'de> Deserialize<'de> for LegacyBuildscriptRunOrLib {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_map(BuildscriptRunOrLibVisitor)
+        deserializer.deserialize_map(LegacyBuildscriptRunOrLibVisitor)
+    }
+}
+
+struct BuildscriptLibVisitor;
+
+impl<'de> Visitor<'de> for BuildscriptLibVisitor {
+    type Value = BuildscriptLib;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("[[buildscript.cxx_library]] or [[buildscript.prebuilt_cxx_library]]")
+    }
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let Some(key) = map.next_key::<String>()? else {
+            return Err(M::Error::custom(format!(
+                "unexpected empty table, expected {}",
+                &self as &dyn Expected,
+            )));
+        };
+
+        let run_or_lib = match key.as_str() {
+            "cxx_library" => BuildscriptLib::CxxLibrary(map.next_value()?),
+            "prebuilt_cxx_library" => BuildscriptLib::PrebuiltCxxLibrary(map.next_value()?),
+            _ => return Err(M::Error::invalid_value(Unexpected::Str(&key), &self)),
+        };
+
+        if let Some(key) = map.next_key::<String>()? {
+            return Err(M::Error::custom(format!(
+                "unexpected second value {key:?} in the same buildscript table, expected {}",
+                &self as &dyn Expected,
+            )));
+        }
+
+        Ok(run_or_lib)
+    }
+}
+
+impl<'de> Deserialize<'de> for BuildscriptLib {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(BuildscriptLibVisitor)
     }
 }
 
@@ -204,6 +250,22 @@ impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
         formatter.write_str("a TOML array: [[buildscript]], or a TOML table: [buildscript.run] or [[buildscript.cxx_library]]")
     }
 
+    // Legacy representation. To be deleted.
+    //
+    //     buildscript = []
+    //
+    //     [[buildscript]]
+    //     [buildscript.rustc_flags]
+    //
+    //     [[buildscript]]
+    //     [buildscript.gen_srcs]
+    //
+    //     [[buildscript]]
+    //     [buildscript.cxx_library]
+    //
+    //     [[buildscript]]
+    //     [buildscript.prebuilt_cxx_library]
+    //
     fn visit_seq<S>(self, mut seq: S) -> Result<Self::Value, S::Error>
     where
         S: SeqAccess<'de>,
@@ -213,10 +275,53 @@ impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
 
         while let Some(fixup) = seq.next_element()? {
             match fixup {
-                BuildscriptRunOrLib::Run(fixup) => {
-                    run.get_or_insert_with(BuildscriptRun::default).merge(fixup);
+                LegacyBuildscriptRunOrLib::Run(legacy_run) => {
+                    run.get_or_insert_with(BuildscriptRun::default)
+                        .legacy_merge(legacy_run);
                 }
-                BuildscriptRunOrLib::Lib(lib) => libs.push(lib),
+                LegacyBuildscriptRunOrLib::Lib(lib) => libs.push(lib),
+            }
+        }
+
+        Ok(BuildscriptFixups {
+            run,
+            libs,
+            defaulted_to_empty: false,
+        })
+    }
+
+    // Preferred representation.
+    //
+    //     [buildscript.run]
+    //
+    //     [[buildscript.cxx_library]]
+    //
+    //     [[buildscript.prebuilt_cxx_library]]
+    //
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let mut run = None;
+        let mut libs = Vec::new();
+
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "run" => {
+                    if run.is_some() {
+                        return Err(M::Error::duplicate_field("run"));
+                    }
+                    run = Some(map.next_value()?);
+                }
+                "cxx_library" => {
+                    let entries: Vec<CxxLibraryFixup> = map.next_value()?;
+                    libs.extend(entries.into_iter().map(BuildscriptLib::CxxLibrary));
+                }
+                "prebuilt_cxx_library" => {
+                    let entries: Vec<PrebuiltCxxLibraryFixup> = map.next_value()?;
+                    libs.extend(entries.into_iter().map(BuildscriptLib::PrebuiltCxxLibrary));
+                }
+                _ => return Err(M::Error::invalid_value(Unexpected::Str(&key), &self)),
             }
         }
 
@@ -233,6 +338,6 @@ impl<'de> Deserialize<'de> for BuildscriptFixups {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_seq(BuildscriptFixupsVisitor)
+        deserializer.deserialize_any(BuildscriptFixupsVisitor)
     }
 }
