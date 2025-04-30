@@ -40,8 +40,7 @@ build script to be compiled and run, and for its stdout to be transformed into
 rustc flags passed to the compilation of the libc library.
 
 ```toml
-[[buildscript]]
-[buildscript.rustc_flags]
+buildscript.run = true
 ```
 
 ### `crossbeam-utils` [toml](third-party/fixups/crossbeam-utils/)
@@ -54,8 +53,7 @@ So just like libc, we can add a directive to run that build script and have Buck
 add the flags it emits to rustc when we compile the crate:
 
 ```toml
-[[buildscript]]
-[buildscript.rustc_flags]
+buildscript.run = true
 ```
 
 However, that build script has the following line:
@@ -69,19 +67,17 @@ environment variables by default. You can tell reindeer to add them:
 
 ```toml
 cargo_env = true
-
-[[buildscript]]
-[buildscript.rustc_flags]
+buildscript.run = true
 ```
 
 ### `blake3` [toml](third-party/fixups/blake3/)
 
 This one is huge, basically replacing a long `build.rs` using the `cc` crate to
 invoke a C compiler. The `cc` invocations are manually translated to
-`[buildscript.cxx_library]` fixups, which reindeer turns into `cxx_library`
-targets for Buck to build. It's more complex still, because the blake3 crate
-works on many platforms, so there are many variations of the cxx_library to
-generate with different source files and C flags.
+`[[cxx_library]]` fixups, which reindeer turns into `cxx_library` targets for
+Buck to build. It's more complex still, because the blake3 crate works on many
+platforms, so there are many variations of the `cxx_library` to generate with
+different source files and C flags.
 
 If you come across a crate like this, for example `zstd` or `winapi`, you should
 check whether someone has already added fixups for it in the
