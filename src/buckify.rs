@@ -657,6 +657,23 @@ fn generate_target_rules<'scope>(
     )
     .context("env")?;
 
+    unzip_platform(
+        config,
+        &mut base,
+        &mut perplat,
+        |rule, flags| {
+            log::debug!(
+                "pkg {} target {}: adding env_flags: {:?}",
+                pkg,
+                tgt.name,
+                flags,
+            );
+            rule.env_flags.extend(flags);
+        },
+        fixups.buildscript_env_flags(),
+    )
+    .context("env_flags")?;
+
     // Compute set of dependencies any rule we generate here will need. They will only
     // be emitted if we actually emit some rules below.
     let mut dep_pkgs = Vec::new();

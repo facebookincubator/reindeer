@@ -557,6 +557,7 @@ pub struct PlatformRustCommon {
     pub deps: Selectable<UniverseName, BTreeSet<RuleRef>>,
     pub named_deps: Selectable<UniverseName, BTreeMap<String, RuleRef>>,
     pub env: Selectable<UniverseName, BTreeMap<String, StringOrPath>>,
+    pub env_flags: BTreeSet<String>,
 
     // This isn't really "common" (Binaries only), but does need to be platform
     pub link_style: Option<String>,
@@ -575,6 +576,7 @@ impl Serialize for PlatformRustCommon {
             deps,
             named_deps,
             env,
+            env_flags,
             link_style,
             linker_flags,
             preferred_linkage,
@@ -585,6 +587,9 @@ impl Serialize for PlatformRustCommon {
         }
         if !env.is_empty() {
             map.serialize_entry("env", env)?;
+        }
+        if !env_flags.is_empty() {
+            map.serialize_entry("env_flags", env_flags)?;
         }
         if !features.is_empty() {
             map.serialize_entry("features", features)?;
@@ -711,6 +716,7 @@ impl Serialize for RustLibrary {
                             deps,
                             named_deps,
                             env,
+                            env_flags,
                             link_style,
                             linker_flags,
                             preferred_linkage,
@@ -738,6 +744,9 @@ impl Serialize for RustLibrary {
         map.serialize_entry("edition", edition)?;
         if !env.is_empty() {
             map.serialize_entry("env", env)?;
+        }
+        if !env_flags.is_empty() {
+            map.serialize_entry("env_flags", env_flags)?;
         }
         if !features.is_empty() {
             map.serialize_entry("features", features)?;
@@ -812,6 +821,7 @@ impl Serialize for RustBinary {
                             deps,
                             named_deps,
                             env,
+                            env_flags,
                             link_style,
                             linker_flags,
                             preferred_linkage,
@@ -832,6 +842,9 @@ impl Serialize for RustBinary {
         map.serialize_entry("edition", edition)?;
         if !env.is_empty() {
             map.serialize_entry("env", env)?;
+        }
+        if !env_flags.is_empty() {
+            map.serialize_entry("env_flags", env_flags)?;
         }
         if !features.is_empty() {
             map.serialize_entry("features", features)?;
