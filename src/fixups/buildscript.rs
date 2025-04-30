@@ -25,7 +25,9 @@ use crate::collection::SetOrMap;
 #[derive(Debug)]
 pub struct BuildscriptFixups {
     pub run: Option<BuildscriptRun>,
+    // TODO: remove. Superseded by FixupConfig.cxx_library
     pub cxx_library: Vec<CxxLibraryFixup>,
+    // TODO: remove. Superseded by FixupConfig.prebuilt_cxx_library
     pub prebuilt_cxx_library: Vec<PrebuiltCxxLibraryFixup>,
     // True whenever this BuildscriptFixups has been deserialized from a
     // `[buildscript...]` section or `buildscript = []` key in a fixups.toml

@@ -331,7 +331,9 @@ impl<'meta> Fixups<'meta> {
                         .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
                 );
             }
+            cxx_library.extend(&fixup.cxx_library);
             cxx_library.extend(&fixup.buildscript.cxx_library);
+            prebuilt_cxx_library.extend(&fixup.prebuilt_cxx_library);
             prebuilt_cxx_library.extend(&fixup.buildscript.prebuilt_cxx_library);
         }
 
@@ -788,7 +790,10 @@ impl<'meta> Fixups<'meta> {
                 targets,
                 add_dep,
                 ..
-            } in &config.buildscript.cxx_library
+            } in config
+                .cxx_library
+                .iter()
+                .chain(&config.buildscript.cxx_library)
             {
                 if !add_dep || !self.target_match(targets) {
                     continue;
@@ -812,7 +817,10 @@ impl<'meta> Fixups<'meta> {
                 add_dep,
                 static_libs,
                 ..
-            } in &config.buildscript.prebuilt_cxx_library
+            } in config
+                .prebuilt_cxx_library
+                .iter()
+                .chain(&config.buildscript.prebuilt_cxx_library)
             {
                 if !add_dep || !self.target_match(targets) {
                     continue;

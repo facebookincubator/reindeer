@@ -22,6 +22,8 @@ use walkdir::WalkDir;
 
 use crate::buckify::relative_path;
 use crate::fixups::buildscript::BuildscriptFixups;
+use crate::fixups::buildscript::CxxLibraryFixup;
+use crate::fixups::buildscript::PrebuiltCxxLibraryFixup;
 use crate::glob::SerializableGlobSet as GlobSet;
 use crate::platform::PlatformExpr;
 
@@ -170,6 +172,12 @@ pub struct FixupConfig {
     /// How to handle a build-script, if present
     #[serde(default)]
     pub buildscript: BuildscriptFixups,
+    // Compile and link some C++ source code
+    #[serde(default)]
+    pub cxx_library: Vec<CxxLibraryFixup>,
+    // Link .o or .obj or .lib file
+    #[serde(default)]
+    pub prebuilt_cxx_library: Vec<PrebuiltCxxLibraryFixup>,
     /// Extra mapped srcs
     #[serde(default)]
     pub extra_mapped_srcs: BTreeMap<String, PathBuf>,
