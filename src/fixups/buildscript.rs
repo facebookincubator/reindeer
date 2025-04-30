@@ -25,7 +25,8 @@ use crate::collection::SetOrMap;
 #[derive(Debug)]
 pub struct BuildscriptFixups {
     pub run: Option<BuildscriptRun>,
-    pub libs: Vec<BuildscriptLib>,
+    pub cxx_library: Vec<CxxLibraryFixup>,
+    pub prebuilt_cxx_library: Vec<PrebuiltCxxLibraryFixup>,
     // True whenever this BuildscriptFixups has been deserialized from a
     // `[buildscript...]` section or `buildscript = []` key in a fixups.toml
     // file. False whenever this BuildscriptFixups was initialized by omission
@@ -37,25 +38,9 @@ impl Default for BuildscriptFixups {
     fn default() -> Self {
         BuildscriptFixups {
             run: None,
-            libs: Vec::new(),
+            cxx_library: Vec::new(),
+            prebuilt_cxx_library: Vec::new(),
             defaulted_to_empty: true,
-        }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum BuildscriptLib {
-    /// Generate a C++ library rule
-    CxxLibrary(CxxLibraryFixup),
-    /// Generate a prebuilt C++ library rule
-    PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup),
-}
-
-impl BuildscriptLib {
-    pub fn targets(&self) -> &[(TargetKind, Option<String>)] {
-        match self {
-            BuildscriptLib::CxxLibrary(CxxLibraryFixup { targets, .. }) => targets,
-            BuildscriptLib::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup { targets, .. }) => targets,
         }
     }
 }
@@ -142,7 +127,8 @@ pub struct PrebuiltCxxLibraryFixup {
 
 enum LegacyBuildscriptRunOrLib {
     Run(BuildscriptRun),
-    Lib(BuildscriptLib),
+    CxxLibrary(CxxLibraryFixup),
+    PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup),
 }
 
 struct LegacyBuildscriptRunOrLibVisitor;
@@ -167,12 +153,10 @@ impl<'de> Visitor<'de> for LegacyBuildscriptRunOrLibVisitor {
 
         let run_or_lib = match key.as_str() {
             "gen_srcs" | "rustc_flags" => LegacyBuildscriptRunOrLib::Run(map.next_value()?),
-            "cxx_library" => {
-                LegacyBuildscriptRunOrLib::Lib(BuildscriptLib::CxxLibrary(map.next_value()?))
+            "cxx_library" => LegacyBuildscriptRunOrLib::CxxLibrary(map.next_value()?),
+            "prebuilt_cxx_library" => {
+                LegacyBuildscriptRunOrLib::PrebuiltCxxLibrary(map.next_value()?)
             }
-            "prebuilt_cxx_library" => LegacyBuildscriptRunOrLib::Lib(
-                BuildscriptLib::PrebuiltCxxLibrary(map.next_value()?),
-            ),
             _ => return Err(M::Error::invalid_value(Unexpected::Str(&key), &self)),
         };
 
@@ -229,52 +213,6 @@ impl<'de> DeserializeSeed<'de> for BuildscriptRunVisitor {
     }
 }
 
-struct BuildscriptLibVisitor;
-
-impl<'de> Visitor<'de> for BuildscriptLibVisitor {
-    type Value = BuildscriptLib;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("[[buildscript.cxx_library]] or [[buildscript.prebuilt_cxx_library]]")
-    }
-
-    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
-    where
-        M: MapAccess<'de>,
-    {
-        let Some(key) = map.next_key::<String>()? else {
-            return Err(M::Error::custom(format!(
-                "unexpected empty table, expected {}",
-                &self as &dyn Expected,
-            )));
-        };
-
-        let run_or_lib = match key.as_str() {
-            "cxx_library" => BuildscriptLib::CxxLibrary(map.next_value()?),
-            "prebuilt_cxx_library" => BuildscriptLib::PrebuiltCxxLibrary(map.next_value()?),
-            _ => return Err(M::Error::invalid_value(Unexpected::Str(&key), &self)),
-        };
-
-        if let Some(key) = map.next_key::<String>()? {
-            return Err(M::Error::custom(format!(
-                "unexpected second value {key:?} in the same buildscript table, expected {}",
-                &self as &dyn Expected,
-            )));
-        }
-
-        Ok(run_or_lib)
-    }
-}
-
-impl<'de> Deserialize<'de> for BuildscriptLib {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_map(BuildscriptLibVisitor)
-    }
-}
-
 struct BuildscriptFixupsVisitor;
 
 impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
@@ -305,7 +243,8 @@ impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
         S: SeqAccess<'de>,
     {
         let mut run = None;
-        let mut libs = Vec::new();
+        let mut cxx_library = Vec::new();
+        let mut prebuilt_cxx_library = Vec::new();
 
         while let Some(fixup) = seq.next_element()? {
             match fixup {
@@ -313,13 +252,19 @@ impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
                     run.get_or_insert_with(BuildscriptRun::default)
                         .legacy_merge(legacy_run);
                 }
-                LegacyBuildscriptRunOrLib::Lib(lib) => libs.push(lib),
+                LegacyBuildscriptRunOrLib::CxxLibrary(lib) => {
+                    cxx_library.push(lib);
+                }
+                LegacyBuildscriptRunOrLib::PrebuiltCxxLibrary(lib) => {
+                    prebuilt_cxx_library.push(lib);
+                }
             }
         }
 
         Ok(BuildscriptFixups {
             run,
-            libs,
+            cxx_library,
+            prebuilt_cxx_library,
             defaulted_to_empty: false,
         })
     }
@@ -337,7 +282,8 @@ impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
         M: MapAccess<'de>,
     {
         let mut run = None;
-        let mut libs = Vec::new();
+        let mut cxx_library = Vec::new();
+        let mut prebuilt_cxx_library = Vec::new();
 
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
@@ -348,12 +294,10 @@ impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
                     run = map.next_value_seed(BuildscriptRunVisitor)?;
                 }
                 "cxx_library" => {
-                    let entries: Vec<CxxLibraryFixup> = map.next_value()?;
-                    libs.extend(entries.into_iter().map(BuildscriptLib::CxxLibrary));
+                    cxx_library.extend(map.next_value::<Vec<_>>()?);
                 }
                 "prebuilt_cxx_library" => {
-                    let entries: Vec<PrebuiltCxxLibraryFixup> = map.next_value()?;
-                    libs.extend(entries.into_iter().map(BuildscriptLib::PrebuiltCxxLibrary));
+                    prebuilt_cxx_library.extend(map.next_value::<Vec<_>>()?);
                 }
                 _ => return Err(M::Error::invalid_value(Unexpected::Str(&key), &self)),
             }
@@ -361,7 +305,8 @@ impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
 
         Ok(BuildscriptFixups {
             run,
-            libs,
+            cxx_library,
+            prebuilt_cxx_library,
             defaulted_to_empty: false,
         })
     }

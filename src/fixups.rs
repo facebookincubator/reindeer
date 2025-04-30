@@ -41,6 +41,7 @@ use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
 use crate::cargo::NodeDepKind;
 use crate::cargo::Source;
+use crate::cargo::TargetKind;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
@@ -57,7 +58,6 @@ use crate::subtarget::Subtarget;
 mod buildscript;
 mod config;
 
-use buildscript::BuildscriptLib;
 use buildscript::BuildscriptRun;
 use buildscript::CxxLibraryFixup;
 use buildscript::PrebuiltCxxLibraryFixup;
@@ -135,9 +135,7 @@ impl<'meta> Fixups<'meta> {
     // There's a few cases:
     // - if the script doesn't specify a target, then it applies to the main "lib" target of the package
     // - otherwise it applies to the matching kind and (optionally) name (all names if not specified)
-    fn target_match(&self, script: &BuildscriptLib) -> bool {
-        let applies_to_targets = script.targets();
-
+    fn target_match(&self, applies_to_targets: &[(TargetKind, Option<String>)]) -> bool {
         if applies_to_targets.is_empty() {
             // Applies to default target (the main "lib" target)
             let default_target = self.package.dependency_target();
@@ -319,7 +317,8 @@ impl<'meta> Fixups<'meta> {
             manifest_dir: manifest_dir.clone(),
         };
 
-        let mut libs = Vec::new();
+        let mut cxx_library = Vec::new();
+        let mut prebuilt_cxx_library = Vec::new();
         for (_platform, fixup) in self.fixup_config.configs(&self.package.version) {
             if let Some(BuildscriptRun { env }) = &fixup.buildscript.run {
                 // Emit the build script itself
@@ -332,186 +331,180 @@ impl<'meta> Fixups<'meta> {
                         .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
                 );
             }
-            libs.extend(&fixup.buildscript.libs);
+            cxx_library.extend(&fixup.buildscript.cxx_library);
+            prebuilt_cxx_library.extend(&fixup.buildscript.prebuilt_cxx_library);
         }
 
-        for lib in libs {
-            match lib {
-                // Emit a C++ library build rule (elsewhere - add a dependency to it)
-                BuildscriptLib::CxxLibrary(CxxLibraryFixup {
-                    name,
-                    srcs,
-                    headers,
-                    exported_headers,
-                    public,
-                    include_paths,
-                    fixup_include_paths,
-                    exclude,
-                    compiler_flags,
-                    preprocessor_flags,
-                    header_namespace,
-                    deps,
-                    compatible_with,
-                    preferred_linkage,
-                    undefined_symbols,
-                    ..
-                }) => {
-                    let actual = Name(format!(
-                        "{}-{}",
-                        self.index.private_rule_name(self.package),
-                        name,
-                    ));
+        // Emit a C++ library build rule (elsewhere - add a dependency to it)
+        for CxxLibraryFixup {
+            name,
+            srcs,
+            headers,
+            exported_headers,
+            public,
+            include_paths,
+            fixup_include_paths,
+            exclude,
+            compiler_flags,
+            preprocessor_flags,
+            header_namespace,
+            deps,
+            compatible_with,
+            preferred_linkage,
+            undefined_symbols,
+            ..
+        } in cxx_library
+        {
+            let actual = Name(format!(
+                "{}-{}",
+                self.index.private_rule_name(self.package),
+                name,
+            ));
 
-                    if *public {
-                        let rule = Rule::Alias(Alias {
-                            name: Name(format!(
-                                "{}-{}",
-                                self.index.public_rule_name(self.package),
-                                name,
-                            )),
-                            actual: actual.clone(),
-                            visibility: self.public_visibility(),
-                        });
-                        res.push(rule);
+            if *public {
+                let rule = Rule::Alias(Alias {
+                    name: Name(format!(
+                        "{}-{}",
+                        self.index.public_rule_name(self.package),
+                        name,
+                    )),
+                    actual: actual.clone(),
+                    visibility: self.public_visibility(),
+                });
+                res.push(rule);
+            }
+
+            let rule = buck::CxxLibrary {
+                common: Common {
+                    name: actual,
+                    visibility: Visibility::Private,
+                    licenses: Default::default(),
+                    compatible_with: compatible_with.iter().cloned().map(RuleRef::new).collect(),
+                },
+                // Just collect the sources, excluding things in the exclude list
+                srcs: {
+                    let mut globs = Globs::new(srcs, exclude).context("C++ sources")?;
+                    let srcs = globs
+                        .walk(self.manifest_dir)
+                        .map(|path| self.subtarget_or_path(&path))
+                        .collect::<anyhow::Result<_>>()?;
+                    if self.config.strict_globs {
+                        globs.check_all_globs_used()?;
+                    }
+                    srcs
+                },
+                // Collect the nominated headers, plus everything in the fixup include
+                // path(s).
+                headers: {
+                    let mut globs = Globs::new(headers, exclude)?;
+                    let mut headers = BTreeSet::new();
+                    for path in globs.walk(self.manifest_dir) {
+                        headers.insert(self.subtarget_or_path(&path)?);
                     }
 
-                    let rule = buck::CxxLibrary {
-                        common: Common {
-                            name: actual,
-                            visibility: Visibility::Private,
-                            licenses: Default::default(),
-                            compatible_with: compatible_with
-                                .iter()
-                                .cloned()
-                                .map(RuleRef::new)
-                                .collect(),
-                        },
-                        // Just collect the sources, excluding things in the exclude list
-                        srcs: {
-                            let mut globs = Globs::new(srcs, exclude).context("C++ sources")?;
-                            let srcs = globs
-                                .walk(self.manifest_dir)
-                                .map(|path| self.subtarget_or_path(&path))
-                                .collect::<anyhow::Result<_>>()?;
-                            if self.config.strict_globs {
-                                globs.check_all_globs_used()?;
-                            }
-                            srcs
-                        },
-                        // Collect the nominated headers, plus everything in the fixup include
-                        // path(s).
-                        headers: {
-                            let mut globs = Globs::new(headers, exclude)?;
-                            let mut headers = BTreeSet::new();
-                            for path in globs.walk(self.manifest_dir) {
-                                headers.insert(self.subtarget_or_path(&path)?);
-                            }
+                    let mut globs = Globs::new(["**/*.asm", "**/*.h"], NO_EXCLUDE)?;
+                    for fixup_include_path in fixup_include_paths {
+                        for path in globs.walk(self.fixup_dir.join(fixup_include_path)) {
+                            headers.insert(SubtargetOrPath::Path(BuckPath(
+                                rel_fixup.join(fixup_include_path).join(path),
+                            )));
+                        }
+                    }
 
-                            let mut globs = Globs::new(["**/*.asm", "**/*.h"], NO_EXCLUDE)?;
-                            for fixup_include_path in fixup_include_paths {
-                                for path in globs.walk(self.fixup_dir.join(fixup_include_path)) {
-                                    headers.insert(SubtargetOrPath::Path(BuckPath(
-                                        rel_fixup.join(fixup_include_path).join(path),
-                                    )));
-                                }
-                            }
-
-                            headers
-                        },
-                        exported_headers: match exported_headers {
-                            SetOrMap::Set(exported_headers) => {
-                                let mut exported_header_globs =
-                                    Globs::new(exported_headers, exclude)
-                                        .context("C++ exported headers")?;
-                                let exported_headers = exported_header_globs
-                                    .walk(self.manifest_dir)
-                                    .map(|path| self.subtarget_or_path(&path))
-                                    .collect::<anyhow::Result<_>>()?;
-                                if self.config.strict_globs {
-                                    exported_header_globs.check_all_globs_used()?;
-                                }
-                                SetOrMap::Set(exported_headers)
-                            }
-                            SetOrMap::Map(exported_headers) => SetOrMap::Map(
-                                exported_headers
-                                    .iter()
-                                    .map(|(name, path)| {
-                                        Ok((name.clone(), self.subtarget_or_path(Path::new(path))?))
-                                    })
-                                    .collect::<anyhow::Result<_>>()?,
-                            ),
-                        },
-                        include_directories: fixup_include_paths
+                    headers
+                },
+                exported_headers: match exported_headers {
+                    SetOrMap::Set(exported_headers) => {
+                        let mut exported_header_globs = Globs::new(exported_headers, exclude)
+                            .context("C++ exported headers")?;
+                        let exported_headers = exported_header_globs
+                            .walk(self.manifest_dir)
+                            .map(|path| self.subtarget_or_path(&path))
+                            .collect::<anyhow::Result<_>>()?;
+                        if self.config.strict_globs {
+                            exported_header_globs.check_all_globs_used()?;
+                        }
+                        SetOrMap::Set(exported_headers)
+                    }
+                    SetOrMap::Map(exported_headers) => SetOrMap::Map(
+                        exported_headers
                             .iter()
-                            .map(|path| Ok(SubtargetOrPath::Path(BuckPath(rel_fixup.join(path)))))
-                            .chain(
-                                include_paths
-                                    .iter()
-                                    .map(|path| self.subtarget_or_path(path)),
-                            )
+                            .map(|(name, path)| {
+                                Ok((name.clone(), self.subtarget_or_path(Path::new(path))?))
+                            })
                             .collect::<anyhow::Result<_>>()?,
-                        compiler_flags: compiler_flags.clone(),
-                        preprocessor_flags: preprocessor_flags.clone(),
-                        header_namespace: header_namespace.clone(),
-                        deps: deps.iter().cloned().map(RuleRef::new).collect(),
-                        preferred_linkage: preferred_linkage.clone(),
-                        undefined_symbols: undefined_symbols.clone(),
-                    };
+                    ),
+                },
+                include_directories: fixup_include_paths
+                    .iter()
+                    .map(|path| Ok(SubtargetOrPath::Path(BuckPath(rel_fixup.join(path)))))
+                    .chain(
+                        include_paths
+                            .iter()
+                            .map(|path| self.subtarget_or_path(path)),
+                    )
+                    .collect::<anyhow::Result<_>>()?,
+                compiler_flags: compiler_flags.clone(),
+                preprocessor_flags: preprocessor_flags.clone(),
+                header_namespace: header_namespace.clone(),
+                deps: deps.iter().cloned().map(RuleRef::new).collect(),
+                preferred_linkage: preferred_linkage.clone(),
+                undefined_symbols: undefined_symbols.clone(),
+            };
 
-                    res.push(Rule::CxxLibrary(rule));
-                }
+            res.push(Rule::CxxLibrary(rule));
+        }
 
-                // Emit a prebuilt C++ library rule for each static library (elsewhere - add dependencies to them)
-                BuildscriptLib::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup {
+        // Emit a prebuilt C++ library rule for each static library (elsewhere - add dependencies to them)
+        for PrebuiltCxxLibraryFixup {
+            name,
+            static_libs,
+            public,
+            compatible_with,
+            ..
+        } in prebuilt_cxx_library
+        {
+            let mut static_lib_globs =
+                Globs::new(static_libs, NO_EXCLUDE).context("Static libraries")?;
+            for static_lib in static_lib_globs.walk(self.manifest_dir) {
+                let actual = Name(format!(
+                    "{}-{}-{}",
+                    self.index.private_rule_name(self.package),
                     name,
-                    static_libs,
-                    public,
-                    compatible_with,
-                    ..
-                }) => {
-                    let mut static_lib_globs =
-                        Globs::new(static_libs, NO_EXCLUDE).context("Static libraries")?;
-                    for static_lib in static_lib_globs.walk(self.manifest_dir) {
-                        let actual = Name(format!(
+                    static_lib.file_name().unwrap().to_string_lossy(),
+                ));
+
+                if *public {
+                    let rule = Rule::Alias(Alias {
+                        name: Name(format!(
                             "{}-{}-{}",
-                            self.index.private_rule_name(self.package),
+                            self.index.public_rule_name(self.package),
                             name,
                             static_lib.file_name().unwrap().to_string_lossy(),
-                        ));
-
-                        if *public {
-                            let rule = Rule::Alias(Alias {
-                                name: Name(format!(
-                                    "{}-{}-{}",
-                                    self.index.public_rule_name(self.package),
-                                    name,
-                                    static_lib.file_name().unwrap().to_string_lossy(),
-                                )),
-                                actual: actual.clone(),
-                                visibility: self.public_visibility(),
-                            });
-                            res.push(rule);
-                        }
-
-                        let rule = buck::PrebuiltCxxLibrary {
-                            common: Common {
-                                name: actual,
-                                visibility: Visibility::Private,
-                                licenses: Default::default(),
-                                compatible_with: compatible_with
-                                    .iter()
-                                    .cloned()
-                                    .map(RuleRef::new)
-                                    .collect(),
-                            },
-                            static_lib: self.subtarget_or_path(&static_lib)?,
-                        };
-                        res.push(Rule::PrebuiltCxxLibrary(rule));
-                    }
-                    if self.config.strict_globs {
-                        static_lib_globs.check_all_globs_used()?;
-                    }
+                        )),
+                        actual: actual.clone(),
+                        visibility: self.public_visibility(),
+                    });
+                    res.push(rule);
                 }
+
+                let rule = buck::PrebuiltCxxLibrary {
+                    common: Common {
+                        name: actual,
+                        visibility: Visibility::Private,
+                        licenses: Default::default(),
+                        compatible_with: compatible_with
+                            .iter()
+                            .cloned()
+                            .map(RuleRef::new)
+                            .collect(),
+                    },
+                    static_lib: self.subtarget_or_path(&static_lib)?,
+                };
+                res.push(Rule::PrebuiltCxxLibrary(rule));
+            }
+            if self.config.strict_globs {
+                static_lib_globs.check_all_globs_used()?;
             }
         }
 
@@ -789,51 +782,56 @@ impl<'meta> Fixups<'meta> {
                     &NodeDepKind::ORDINARY,
                 )
             }));
-            for buildscript in &config.buildscript.libs {
-                if !self.target_match(buildscript) {
+
+            for CxxLibraryFixup {
+                name,
+                targets,
+                add_dep,
+                ..
+            } in &config.buildscript.cxx_library
+            {
+                if !add_dep || !self.target_match(targets) {
                     continue;
                 }
-                if let BuildscriptLib::CxxLibrary(CxxLibraryFixup {
-                    add_dep: true,
-                    name,
-                    ..
-                }) = buildscript
-                {
+                ret.push((
+                    None,
+                    RuleRef::new(format!(
+                        ":{}-{}",
+                        self.index.private_rule_name(self.package),
+                        name
+                    ))
+                    .with_platform(platform),
+                    None,
+                    &NodeDepKind::ORDINARY,
+                ));
+            }
+
+            for PrebuiltCxxLibraryFixup {
+                name,
+                targets,
+                add_dep,
+                static_libs,
+                ..
+            } in &config.buildscript.prebuilt_cxx_library
+            {
+                if !add_dep || !self.target_match(targets) {
+                    continue;
+                }
+                let mut static_lib_globs =
+                    Globs::new(static_libs, NO_EXCLUDE).context("Prebuilt C++ libraries")?;
+                for static_lib in static_lib_globs.walk(self.manifest_dir) {
                     ret.push((
                         None,
                         RuleRef::new(format!(
-                            ":{}-{}",
+                            ":{}-{}-{}",
                             self.index.private_rule_name(self.package),
-                            name
+                            name,
+                            static_lib.file_name().unwrap().to_string_lossy(),
                         ))
                         .with_platform(platform),
                         None,
                         &NodeDepKind::ORDINARY,
                     ));
-                }
-                if let BuildscriptLib::PrebuiltCxxLibrary(PrebuiltCxxLibraryFixup {
-                    add_dep: true,
-                    name,
-                    static_libs,
-                    ..
-                }) = buildscript
-                {
-                    let mut static_lib_globs =
-                        Globs::new(static_libs, NO_EXCLUDE).context("Prebuilt C++ libraries")?;
-                    for static_lib in static_lib_globs.walk(self.manifest_dir) {
-                        ret.push((
-                            None,
-                            RuleRef::new(format!(
-                                ":{}-{}-{}",
-                                self.index.private_rule_name(self.package),
-                                name,
-                                static_lib.file_name().unwrap().to_string_lossy(),
-                            ))
-                            .with_platform(platform),
-                            None,
-                            &NodeDepKind::ORDINARY,
-                        ));
-                    }
                 }
             }
         }
