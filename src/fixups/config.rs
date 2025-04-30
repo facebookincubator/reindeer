@@ -14,6 +14,8 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Deserializer;
+use serde::de::Error as _;
+use serde::de::MapAccess;
 use serde::de::SeqAccess;
 use serde::de::Visitor;
 use serde::de::value::SeqAccessDeserializer;
@@ -28,18 +30,15 @@ use crate::glob::SerializableGlobSet as GlobSet;
 use crate::platform::PlatformExpr;
 
 /// Top-level fixup config file (correspondins to a fixups.toml)
-#[derive(Debug, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Default)]
 pub struct FixupConfigFile {
     /// Limit an exposed crate's `alias`'s `visibility` to this.
     /// This only has an effect for top-level crates. Exposed crates
     /// by default get `visibility = ["PUBLIC"]`. Sometimes you want to
     /// discourage use of some crate by limiting its visibility.
-    #[serde(default, rename = "visibility")]
     pub custom_visibility: Option<Vec<String>>,
 
     /// Omit a target
-    #[serde(default)]
     pub omit_targets: BTreeSet<String>,
 
     /// Skip precise srcs detection and fallback to `**/*.rs`.
@@ -59,11 +58,9 @@ pub struct FixupConfigFile {
     pub export_sources: Option<ExportSources>,
 
     /// Common config
-    #[serde(flatten)]
     base: FixupConfig,
 
     /// Platform-specific configs
-    #[serde(default)]
     platform_fixup: BTreeMap<PlatformExpr, FixupConfig>,
 }
 
@@ -314,5 +311,94 @@ impl<'de> Deserialize<'de> for CargoEnvs {
         D: Deserializer<'de>,
     {
         deserializer.deserialize_any(CargoEnvsVisitor)
+    }
+}
+
+struct FixupConfigFileVisitor;
+
+impl<'de> Visitor<'de> for FixupConfigFileVisitor {
+    type Value = FixupConfigFile;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("struct FixupConfigFile")
+    }
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let mut custom_visibility = None;
+        let mut omit_targets = None;
+        let mut precise_srcs = None;
+        let mut python_ext = None;
+        let mut export_sources = None;
+        let mut base = serde_json::Map::new();
+        let mut platform_fixup = BTreeMap::new();
+
+        while let Some(field) = map.next_key::<String>()? {
+            match field.as_str() {
+                "visibility" => {
+                    if custom_visibility.is_some() {
+                        return Err(M::Error::duplicate_field("visibility"));
+                    }
+                    custom_visibility = Some(map.next_value()?);
+                }
+                "omit_targets" => {
+                    if omit_targets.is_some() {
+                        return Err(M::Error::duplicate_field("omit_targets"));
+                    }
+                    omit_targets = Some(map.next_value()?);
+                }
+                "precise_srcs" => {
+                    if precise_srcs.is_some() {
+                        return Err(M::Error::duplicate_field("precise_srcs"));
+                    }
+                    precise_srcs = Some(map.next_value()?);
+                }
+                "python_ext" => {
+                    if python_ext.is_some() {
+                        return Err(M::Error::duplicate_field("python_ext"));
+                    }
+                    python_ext = Some(map.next_value()?);
+                }
+                "export_sources" => {
+                    if export_sources.is_some() {
+                        return Err(M::Error::duplicate_field("export_sources"));
+                    }
+                    export_sources = Some(map.next_value()?);
+                }
+                "platform_fixup" => {
+                    platform_fixup.extend(map.next_value::<BTreeMap<_, _>>()?);
+                }
+                _ => {
+                    if field.starts_with("cfg(") {
+                        let platform_expr = PlatformExpr::from(field);
+                        let fixup_config: FixupConfig = map.next_value()?;
+                        platform_fixup.insert(platform_expr, fixup_config);
+                    } else {
+                        base.insert(field, map.next_value()?);
+                    }
+                }
+            }
+        }
+
+        Ok(FixupConfigFile {
+            custom_visibility,
+            omit_targets: omit_targets.unwrap_or_else(BTreeSet::new),
+            precise_srcs,
+            python_ext,
+            export_sources,
+            base: FixupConfig::deserialize(base).map_err(M::Error::custom)?,
+            platform_fixup,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for FixupConfigFile {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(FixupConfigFileVisitor)
     }
 }
