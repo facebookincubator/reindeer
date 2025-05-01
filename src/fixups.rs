@@ -332,9 +332,7 @@ impl<'meta> Fixups<'meta> {
                 );
             }
             cxx_library.extend(&fixup.cxx_library);
-            cxx_library.extend(&fixup.buildscript.cxx_library);
             prebuilt_cxx_library.extend(&fixup.prebuilt_cxx_library);
-            prebuilt_cxx_library.extend(&fixup.buildscript.prebuilt_cxx_library);
         }
 
         // Emit a C++ library build rule (elsewhere - add a dependency to it)
@@ -790,10 +788,7 @@ impl<'meta> Fixups<'meta> {
                 targets,
                 add_dep,
                 ..
-            } in config
-                .cxx_library
-                .iter()
-                .chain(&config.buildscript.cxx_library)
+            } in &config.cxx_library
             {
                 if !add_dep || !self.target_match(targets) {
                     continue;
@@ -817,10 +812,7 @@ impl<'meta> Fixups<'meta> {
                 add_dep,
                 static_libs,
                 ..
-            } in config
-                .prebuilt_cxx_library
-                .iter()
-                .chain(&config.buildscript.prebuilt_cxx_library)
+            } in &config.prebuilt_cxx_library
             {
                 if !add_dep || !self.target_match(targets) {
                     continue;
