@@ -58,7 +58,7 @@ pub struct FixupConfigFile {
     pub export_sources: Option<ExportSources>,
 
     /// Common config
-    base: FixupConfig,
+    pub base: FixupConfig,
 
     /// Platform-specific configs
     pub platform_fixup: BTreeMap<PlatformExpr, FixupConfig>,

@@ -245,7 +245,7 @@ impl<'meta> Fixups<'meta> {
     /// dependencies referencing them are conditional).
     pub fn emit_buildscript_rules(
         &self,
-        buildscript_build: RustBinary,
+        mut buildscript_build: RustBinary,
         config: &'meta Config,
         manifest_dir: Option<SubtargetOrPath>,
     ) -> anyhow::Result<Vec<Rule>> {
@@ -308,44 +308,28 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
+        let mut buildscript = None;
         let (local_manifest_dir, manifest_dir) = match manifest_dir {
             None => (None, None),
             Some(SubtargetOrPath::Path(path)) => (Some(path), None),
             Some(SubtargetOrPath::Subtarget(subtarget)) => (None, Some(subtarget)),
         };
-        let default_buildscript_build_and_run = || {
-            (
-                buildscript_build.clone(),
-                BuildscriptGenrule {
-                    name: self.buildscript_genrule_name(),
-                    buildscript_rule: buildscript_rule_name.clone(),
-                    package_name: self.package.name.clone(),
-                    version: self.package.version.clone(),
-                    features: buck::Selectable::Value(features.clone()),
-                    env: BTreeMap::new(),
-                    local_manifest_dir: local_manifest_dir.clone(),
-                    manifest_dir: manifest_dir.clone(),
-                },
-            )
+        let default_buildscript_run = || BuildscriptGenrule {
+            name: self.buildscript_genrule_name(),
+            buildscript_rule: buildscript_rule_name.clone(),
+            package_name: self.package.name.clone(),
+            version: self.package.version.clone(),
+            features: buck::Selectable::Value(features.clone()),
+            env: BTreeMap::new(),
+            local_manifest_dir: local_manifest_dir.clone(),
+            manifest_dir: manifest_dir.clone(),
         };
-        let mut buildscript = None;
 
         let mut cxx_library = Vec::new();
         let mut prebuilt_cxx_library = Vec::new();
         for (_platform, fixup) in self.fixup_config.configs(&self.package.version) {
             if let Some(BuildscriptRun { env }) = &fixup.buildscript.run {
-                let (buildscript_build, buildscript_run) =
-                    buildscript.get_or_insert_with(default_buildscript_build_and_run);
-
-                buildscript_build.common.base.env.unwrap_mut().extend(
-                    fixup
-                        .buildscript
-                        .build
-                        .env
-                        .iter()
-                        .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
-                );
-
+                let buildscript_run = buildscript.get_or_insert_with(default_buildscript_run);
                 buildscript_run.env.extend(
                     env.iter()
                         .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
@@ -528,7 +512,17 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        if let Some((mut buildscript_build, mut buildscript_run)) = buildscript {
+        if let Some(mut buildscript_run) = buildscript {
+            buildscript_build.common.base.env.unwrap_mut().extend(
+                self.fixup_config
+                    .base
+                    .buildscript
+                    .build
+                    .env
+                    .iter()
+                    .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
+            );
+
             for (_platform, fixup) in self.fixup_config.configs(&self.package.version) {
                 for cargo_env in fixup.cargo_env.iter() {
                     let required = !matches!(fixup.cargo_env, CargoEnvs::All);
