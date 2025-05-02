@@ -894,7 +894,7 @@ fn generate_target_rules<'scope>(
                     // don't use fixed ones because it will be a cyclic dependency
                     rustc_flags: Default::default(),
                     env: Selectable::default(),
-                    link_style: bin_base.link_style.clone(),
+                    link_style: None,
                     ..base
                 },
                 platform: bin_perplat,

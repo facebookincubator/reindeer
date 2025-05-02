@@ -522,6 +522,8 @@ impl<'meta> Fixups<'meta> {
                     .iter()
                     .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
             );
+            buildscript_build.common.base.link_style =
+                self.fixup_config.base.buildscript.build.link_style.clone();
 
             for (_platform, fixup) in self.fixup_config.configs(&self.package.version) {
                 for cargo_env in fixup.cargo_env.iter() {

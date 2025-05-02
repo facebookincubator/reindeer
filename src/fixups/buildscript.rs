@@ -46,6 +46,7 @@ impl Default for BuildscriptFixups {
 pub struct BuildscriptBuild {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    pub link_style: Option<String>,
     #[serde(skip_deserializing)]
     pub defaulted_to_empty: bool,
 }
@@ -54,6 +55,7 @@ impl Default for BuildscriptBuild {
     fn default() -> Self {
         BuildscriptBuild {
             env: BTreeMap::new(),
+            link_style: None,
             defaulted_to_empty: true,
         }
     }
