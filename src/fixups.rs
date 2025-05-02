@@ -119,6 +119,14 @@ impl<'meta> Fixups<'meta> {
             .with_context(|| format!("package {package} is private."));
         }
 
+        for (expr, platform_fixup) in &fixup_config.platform_fixup {
+            if !platform_fixup.buildscript.build.defaulted_to_empty {
+                bail!(
+                    "platform-specific buildscript build fixup is not supported: {expr}.buildscript.build"
+                );
+            }
+        }
+
         Ok(Fixups {
             third_party_dir: paths.third_party_dir.to_path_buf(),
             manifest_dir: package.manifest_dir(),

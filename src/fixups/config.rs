@@ -61,7 +61,7 @@ pub struct FixupConfigFile {
     base: FixupConfig,
 
     /// Platform-specific configs
-    platform_fixup: BTreeMap<PlatformExpr, FixupConfig>,
+    pub platform_fixup: BTreeMap<PlatformExpr, FixupConfig>,
 }
 
 impl FixupConfigFile {
