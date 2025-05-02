@@ -21,6 +21,7 @@ use crate::collection::SetOrMap;
 
 #[derive(Debug)]
 pub struct BuildscriptFixups {
+    pub build: BuildscriptBuild,
     pub run: Option<BuildscriptRun>,
     // False whenever this BuildscriptFixups has been deserialized from a
     // `[buildscript.run]` section or `buildscript.run = true` key in a
@@ -33,10 +34,18 @@ pub struct BuildscriptFixups {
 impl Default for BuildscriptFixups {
     fn default() -> Self {
         BuildscriptFixups {
+            build: BuildscriptBuild::default(),
             run: None,
             defaulted_to_empty: true,
         }
     }
+}
+
+#[derive(Default, Debug, Clone, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BuildscriptBuild {
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
 }
 
 /// Run the buildscript and extract rustc command line flags + generated sources.
@@ -158,21 +167,29 @@ impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
     where
         M: MapAccess<'de>,
     {
+        let mut build = None;
         let mut run = None;
 
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
+                "build" => {
+                    if build.is_some() {
+                        return Err(M::Error::duplicate_field("build"));
+                    }
+                    build = Some(map.next_value()?);
+                }
                 "run" => {
                     if run.is_some() {
                         return Err(M::Error::duplicate_field("run"));
                     }
                     run = map.next_value_seed(BuildscriptRunVisitor)?;
                 }
-                _ => return Err(M::Error::unknown_field(&key, &["run"])),
+                _ => return Err(M::Error::unknown_field(&key, &["build", "run"])),
             }
         }
 
         Ok(BuildscriptFixups {
+            build: build.unwrap_or_else(BuildscriptBuild::default),
             run,
             defaulted_to_empty: false,
         })

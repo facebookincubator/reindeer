@@ -237,7 +237,7 @@ impl<'meta> Fixups<'meta> {
     /// dependencies referencing them are conditional).
     pub fn emit_buildscript_rules(
         &self,
-        buildscript: RustBinary,
+        buildscript_build: RustBinary,
         config: &'meta Config,
         manifest_dir: Option<SubtargetOrPath>,
     ) -> anyhow::Result<Vec<Rule>> {
@@ -281,7 +281,7 @@ impl<'meta> Fixups<'meta> {
             // so there's no need for platform-specific rule attributes.
             match plat {
                 None => features.extend(
-                    buildscript
+                    buildscript_build
                         .common
                         .base
                         .features
@@ -292,7 +292,7 @@ impl<'meta> Fixups<'meta> {
                 Some(expr) => {
                     let platnames = platform_names_for_expr(self.config, expr)?;
                     for platname in platnames {
-                        if let Some(platattr) = buildscript.common.platform.get(platname) {
+                        if let Some(platattr) = buildscript_build.common.platform.get(platname) {
                             features.extend(platattr.features.unwrap_ref().iter().cloned())
                         }
                     }
@@ -300,32 +300,44 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        let mut buildscript_run = None;
         let (local_manifest_dir, manifest_dir) = match manifest_dir {
             None => (None, None),
             Some(SubtargetOrPath::Path(path)) => (Some(path), None),
             Some(SubtargetOrPath::Subtarget(subtarget)) => (None, Some(subtarget)),
         };
-        let default_genrule = || BuildscriptGenrule {
-            name: self.buildscript_genrule_name(),
-            buildscript_rule: buildscript_rule_name.clone(),
-            package_name: self.package.name.clone(),
-            version: self.package.version.clone(),
-            features: buck::Selectable::Value(features.clone()),
-            env: BTreeMap::new(),
-            local_manifest_dir: local_manifest_dir.clone(),
-            manifest_dir: manifest_dir.clone(),
+        let default_buildscript_build_and_run = || {
+            (
+                buildscript_build.clone(),
+                BuildscriptGenrule {
+                    name: self.buildscript_genrule_name(),
+                    buildscript_rule: buildscript_rule_name.clone(),
+                    package_name: self.package.name.clone(),
+                    version: self.package.version.clone(),
+                    features: buck::Selectable::Value(features.clone()),
+                    env: BTreeMap::new(),
+                    local_manifest_dir: local_manifest_dir.clone(),
+                    manifest_dir: manifest_dir.clone(),
+                },
+            )
         };
+        let mut buildscript = None;
 
         let mut cxx_library = Vec::new();
         let mut prebuilt_cxx_library = Vec::new();
         for (_platform, fixup) in self.fixup_config.configs(&self.package.version) {
             if let Some(BuildscriptRun { env }) = &fixup.buildscript.run {
-                // Emit the build script itself
-                res.push(Rule::BuildscriptBinary(buildscript.clone()));
+                let (buildscript_build, buildscript_run) =
+                    buildscript.get_or_insert_with(default_buildscript_build_and_run);
 
-                // Emit rule to get its stdout and filter it into args
-                let buildscript_run = buildscript_run.get_or_insert_with(default_genrule);
+                buildscript_build.common.base.env.unwrap_mut().extend(
+                    fixup
+                        .buildscript
+                        .build
+                        .env
+                        .iter()
+                        .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
+                );
+
                 buildscript_run.env.extend(
                     env.iter()
                         .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
@@ -508,35 +520,64 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        if let Some(mut buildscript_run) = buildscript_run {
+        if let Some((mut buildscript_build, mut buildscript_run)) = buildscript {
             for (_platform, fixup) in self.fixup_config.configs(&self.package.version) {
                 for cargo_env in fixup.cargo_env.iter() {
-                    match cargo_env {
-                        // Not set for build scripts.
-                        CargoEnv::CARGO_CRATE_NAME => continue,
-                        // Set by prelude//rust/tools/buildscript_run.py
-                        CargoEnv::CARGO_MANIFEST_DIR => continue,
-                        // Set by prelude//rust/cargo_buildscript.bzl
-                        CargoEnv::CARGO_PKG_NAME | CargoEnv::CARGO_PKG_VERSION => continue,
-                        CargoEnv::CARGO_MANIFEST_LINKS
-                        | CargoEnv::CARGO_PKG_AUTHORS
+                    let required = !matches!(fixup.cargo_env, CargoEnvs::All);
+                    let (add_to_build, add_to_run) = match cargo_env {
+                        // Set for compilation only, not build script execution
+                        CargoEnv::CARGO_CRATE_NAME => (true, false),
+                        // For execution, controlled by prelude//rust/tools/buildscript_run.py
+                        CargoEnv::CARGO_MANIFEST_DIR => (true, false),
+                        // Controlled by prelude//rust/cargo_buildscript.bzl
+                        CargoEnv::CARGO_PKG_NAME | CargoEnv::CARGO_PKG_VERSION => (true, false),
+                        // Set for build script execution only, not compilation
+                        CargoEnv::CARGO_MANIFEST_LINKS => (false, true),
+                        // Set for both
+                        CargoEnv::CARGO_PKG_AUTHORS
                         | CargoEnv::CARGO_PKG_DESCRIPTION
                         | CargoEnv::CARGO_PKG_REPOSITORY
                         | CargoEnv::CARGO_PKG_VERSION_MAJOR
                         | CargoEnv::CARGO_PKG_VERSION_MINOR
                         | CargoEnv::CARGO_PKG_VERSION_PATCH
-                        | CargoEnv::CARGO_PKG_VERSION_PRE => {}
+                        | CargoEnv::CARGO_PKG_VERSION_PRE => (true, true),
+                    };
+
+                    if add_to_build {
+                        if let btree_map::Entry::Vacant(entry) = buildscript_build
+                            .common
+                            .base
+                            .env
+                            .unwrap_mut()
+                            .entry(cargo_env.to_string())
+                        {
+                            let value = if cargo_env == CargoEnv::CARGO_CRATE_NAME {
+                                Some(StringOrPath::String("build_script_build".to_owned()))
+                            } else {
+                                self.cargo_env_value(cargo_env, required)?
+                            };
+                            if let Some(value) = value {
+                                entry.insert(value);
+                            }
+                        }
                     }
-                    if let btree_map::Entry::Vacant(entry) =
-                        buildscript_run.env.entry(cargo_env.to_string())
-                    {
-                        let required = !matches!(fixup.cargo_env, CargoEnvs::All);
-                        if let Some(value) = self.cargo_env_value(cargo_env, required)? {
-                            entry.insert(value);
+
+                    if add_to_run {
+                        if let btree_map::Entry::Vacant(entry) =
+                            buildscript_run.env.entry(cargo_env.to_string())
+                        {
+                            if let Some(value) = self.cargo_env_value(cargo_env, required)? {
+                                entry.insert(value);
+                            }
                         }
                     }
                 }
             }
+
+            // Emit the build script itself
+            res.push(Rule::BuildscriptBinary(buildscript_build));
+
+            // Emit rule to get its stdout and filter it into args
             res.push(Rule::BuildscriptGenrule(buildscript_run));
         }
 

@@ -45,6 +45,7 @@ use crate::buck::RuleRef;
 use crate::buck::RustBinary;
 use crate::buck::RustCommon;
 use crate::buck::RustLibrary;
+use crate::buck::Selectable;
 use crate::buck::StringOrPath;
 use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
@@ -892,6 +893,7 @@ fn generate_target_rules<'scope>(
                 base: PlatformRustCommon {
                     // don't use fixed ones because it will be a cyclic dependency
                     rustc_flags: Default::default(),
+                    env: Selectable::default(),
                     link_style: bin_base.link_style.clone(),
                     ..base
                 },
