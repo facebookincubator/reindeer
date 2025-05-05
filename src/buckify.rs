@@ -45,7 +45,6 @@ use crate::buck::RuleRef;
 use crate::buck::RustBinary;
 use crate::buck::RustCommon;
 use crate::buck::RustLibrary;
-use crate::buck::Selectable;
 use crate::buck::StringOrPath;
 use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
@@ -539,31 +538,6 @@ fn generate_target_rules<'scope>(
     // Per platform rule bits
     let mut perplat: BTreeMap<PlatformName, PlatformRustCommon> = BTreeMap::new();
 
-    unzip_platform(
-        config,
-        &mut base,
-        &mut perplat,
-        |rule, (flags, flags_select)| {
-            log::debug!(
-                "pkg {} target {}: adding flags {:?} and select {:?}",
-                pkg,
-                tgt.name,
-                flags,
-                flags_select
-            );
-            rule.rustc_flags.common.extend(flags);
-            flags_select.into_iter().for_each(|(k, v)| {
-                rule.rustc_flags
-                    .selects
-                    .entry(k)
-                    .or_insert(BTreeSet::new())
-                    .extend(v);
-            });
-        },
-        fixups.compute_cmdline(),
-    )
-    .context("rustc_flags")?;
-
     if matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local) {
         unzip_platform(
             config,
@@ -589,28 +563,6 @@ fn generate_target_rules<'scope>(
         base.srcs
             .insert(BuckPath(PathBuf::from(http_archive_target)));
     }
-
-    unzip_platform(
-        config,
-        &mut base,
-        &mut perplat,
-        |rule, ()| {
-            log::debug!(
-                "pkg {} target {}: adding OUT_DIR for gen_srcs",
-                pkg,
-                tgt.name,
-            );
-            rule.env.unwrap_mut().insert(
-                "OUT_DIR".to_owned(),
-                StringOrPath::String(format!(
-                    "$(location :{}[out_dir])",
-                    fixups.buildscript_genrule_name(),
-                )),
-            );
-        },
-        fixups.compute_gen_srcs(),
-    )
-    .context("OUT_DIR for gen_srcs")?;
 
     unzip_platform(
         config,
@@ -645,18 +597,6 @@ fn generate_target_rules<'scope>(
         fixups.compute_features()?,
     )
     .context("features")?;
-
-    unzip_platform(
-        config,
-        &mut base,
-        &mut perplat,
-        |rule, env| {
-            log::debug!("pkg {} target {}: adding env {:?}", pkg, tgt.name, env);
-            rule.env.unwrap_mut().extend(env);
-        },
-        fixups.compute_env()?,
-    )
-    .context("env")?;
 
     // Compute set of dependencies any rule we generate here will need. They will only
     // be emitted if we actually emit some rules below.
@@ -745,6 +685,90 @@ fn generate_target_rules<'scope>(
             }
         }
     }
+
+    // If this is a build script, we only apply fixups pertaining to srcs
+    // (extra_srcs), mapped_srcs (overlay), and features. Return early before
+    // applying any other fixups (such as rustc_flags, env, or link_style).
+    // Every other fixup handled after this point should only apply to the
+    // library or binary, not a build script.
+    if tgt.crate_bin() && tgt.kind_custom_build() {
+        let buildscript = RustBinary {
+            common: RustCommon {
+                common: Common {
+                    name: Name(format!("{}-{}", pkg, tgt.name)),
+                    visibility: Visibility::Private,
+                    licenses: Default::default(),
+                    compatible_with: vec![],
+                },
+                krate: tgt.name.replace('-', "_"),
+                crate_root: BuckPath(crate_root),
+                edition,
+                base,
+                platform: perplat,
+            },
+        };
+        let rules = fixups.emit_buildscript_rules(buildscript, config, manifest_dir_subtarget)?;
+        return Ok((rules, dep_pkgs));
+    }
+
+    unzip_platform(
+        config,
+        &mut base,
+        &mut perplat,
+        |rule, (flags, flags_select)| {
+            log::debug!(
+                "pkg {} target {}: adding flags {:?} and select {:?}",
+                pkg,
+                tgt.name,
+                flags,
+                flags_select
+            );
+            rule.rustc_flags.common.extend(flags);
+            flags_select.into_iter().for_each(|(k, v)| {
+                rule.rustc_flags
+                    .selects
+                    .entry(k)
+                    .or_insert(BTreeSet::new())
+                    .extend(v);
+            });
+        },
+        fixups.compute_cmdline(),
+    )
+    .context("rustc_flags")?;
+
+    unzip_platform(
+        config,
+        &mut base,
+        &mut perplat,
+        |rule, ()| {
+            log::debug!(
+                "pkg {} target {}: adding OUT_DIR for gen_srcs",
+                pkg,
+                tgt.name,
+            );
+            rule.env.unwrap_mut().insert(
+                "OUT_DIR".to_owned(),
+                StringOrPath::String(format!(
+                    "$(location :{}[out_dir])",
+                    fixups.buildscript_genrule_name(),
+                )),
+            );
+        },
+        fixups.compute_gen_srcs(),
+    )
+    .context("OUT_DIR for gen_srcs")?;
+
+    unzip_platform(
+        config,
+        &mut base,
+        &mut perplat,
+        |rule, env| {
+            log::debug!("pkg {} target {}: adding env {:?}", pkg, tgt.name, env);
+            rule.env.unwrap_mut().extend(env);
+        },
+        fixups.compute_env()?,
+    )
+    .context("env")?;
 
     // "link_style" only really applies to binaries, so maintain separate binary base & perplat
     let mut bin_base = base.clone();
@@ -877,30 +901,6 @@ fn generate_target_rules<'scope>(
         dep_pkgs.push((pkg, TargetReq::BuildScript));
 
         rules
-    } else if tgt.crate_bin() && tgt.kind_custom_build() {
-        // Build script
-        let buildscript = RustBinary {
-            common: RustCommon {
-                common: Common {
-                    name: Name(format!("{}-{}", pkg, tgt.name)),
-                    visibility: Visibility::Private,
-                    licenses: Default::default(),
-                    compatible_with: vec![],
-                },
-                krate: tgt.name.replace('-', "_"),
-                crate_root: BuckPath(crate_root),
-                edition,
-                base: PlatformRustCommon {
-                    // don't use fixed ones because it will be a cyclic dependency
-                    rustc_flags: Default::default(),
-                    env: Selectable::default(),
-                    link_style: None,
-                    ..base
-                },
-                platform: bin_perplat,
-            },
-        };
-        fixups.emit_buildscript_rules(buildscript, config, manifest_dir_subtarget)?
     } else if tgt.kind_bin() && tgt.crate_bin() {
         let mut rules = vec![];
         let actual = Name(format!("{}-{}", index.private_rule_name(pkg), tgt.name));
