@@ -6,6 +6,7 @@
  */
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -47,6 +48,10 @@ pub struct BuildscriptBuild {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     pub link_style: Option<String>,
+    #[serde(default)]
+    pub extra_deps: BTreeSet<String>,
+    #[serde(default)]
+    pub omit_deps: BTreeSet<String>,
     #[serde(skip_deserializing)]
     pub defaulted_to_empty: bool,
 }
@@ -56,6 +61,8 @@ impl Default for BuildscriptBuild {
         BuildscriptBuild {
             env: BTreeMap::new(),
             link_style: None,
+            extra_deps: BTreeSet::new(),
+            omit_deps: BTreeSet::new(),
             defaulted_to_empty: true,
         }
     }

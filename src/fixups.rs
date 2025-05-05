@@ -727,9 +727,14 @@ impl<'meta> Fixups<'meta> {
         // Pre-compute the list of all filtered dependencies. If a platform filters a dependency
         // added by the base, we need to filter it from the base and add it to all other platforms.
         for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
+            let fixup_omit_deps = if self.target.crate_bin() && self.target.kind_custom_build() {
+                &fixup.buildscript.build.omit_deps
+            } else {
+                &fixup.omit_deps
+            };
             let platform_omits = omits.entry(platform).or_insert_with(HashSet::new);
-            platform_omits.extend(fixup.omit_deps.iter().map(String::as_str));
-            all_omits.extend(fixup.omit_deps.iter().map(String::as_str));
+            platform_omits.extend(fixup_omit_deps.iter().map(String::as_str));
+            all_omits.extend(fixup_omit_deps.iter().map(String::as_str));
         }
 
         for ResolvedDep {
@@ -819,7 +824,12 @@ impl<'meta> Fixups<'meta> {
         }
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            ret.extend(config.extra_deps.iter().map(|dep| {
+            let fixup_extra_deps = if self.target.crate_bin() && self.target.kind_custom_build() {
+                &config.buildscript.build.extra_deps
+            } else {
+                &config.extra_deps
+            };
+            ret.extend(fixup_extra_deps.iter().map(|dep| {
                 (
                     None,
                     RuleRef::new(dep.to_string()).with_platform(platform),
