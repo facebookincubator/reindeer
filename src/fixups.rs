@@ -907,7 +907,13 @@ impl<'meta> Fixups<'meta> {
                 .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone())))
                 .collect();
 
-            for cargo_env in config.cargo_env.iter() {
+            let cargo_envs = if self.config.always_cargo_env {
+                CargoEnvs::All
+            } else {
+                config.cargo_env.clone()
+            };
+
+            for cargo_env in cargo_envs.iter() {
                 match cargo_env {
                     // Not set for builds, only build script execution
                     CargoEnv::CARGO_MANIFEST_LINKS => continue,
