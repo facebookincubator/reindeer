@@ -45,6 +45,7 @@ use crate::cargo::TargetKind;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
+use crate::fixups::config::CustomVisibility;
 use crate::glob::Globs;
 use crate::glob::NO_EXCLUDE;
 use crate::glob::SerializableGlobSet as GlobSet;
@@ -188,8 +189,16 @@ impl<'meta> Fixups<'meta> {
     }
 
     pub fn public_visibility(&self) -> Visibility {
-        match self.fixup_config.custom_visibility.as_deref() {
-            Some(visibility) => Visibility::Custom(visibility.to_vec()),
+        match self.fixup_config.custom_visibility.as_ref() {
+            Some(visibility) => match visibility {
+                CustomVisibility::NoVersion(global) => Visibility::Custom(global.to_vec()),
+                CustomVisibility::WithVersion(versioned) => versioned
+                    .iter()
+                    .filter(|(k, _)| k.matches(&self.package.version))
+                    .map(|(_, v)| Visibility::Custom(v.to_vec()))
+                    .next()
+                    .unwrap_or(Visibility::Public),
+            },
             None => Visibility::Public,
         }
     }

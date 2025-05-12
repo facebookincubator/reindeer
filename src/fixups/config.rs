@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
@@ -36,7 +37,7 @@ pub struct FixupConfigFile {
     /// This only has an effect for top-level crates. Exposed crates
     /// by default get `visibility = ["PUBLIC"]`. Sometimes you want to
     /// discourage use of some crate by limiting its visibility.
-    pub custom_visibility: Option<Vec<String>>,
+    pub custom_visibility: Option<CustomVisibility>,
 
     /// Omit a target
     pub omit_targets: BTreeSet<String>,
@@ -312,6 +313,13 @@ impl<'de> Deserialize<'de> for CargoEnvs {
     {
         deserializer.deserialize_any(CargoEnvsVisitor)
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum CustomVisibility {
+    NoVersion(Vec<String>),
+    WithVersion(HashMap<semver::VersionReq, Vec<String>>),
 }
 
 struct FixupConfigFileVisitor;
