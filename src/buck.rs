@@ -99,13 +99,17 @@ impl RuleRef {
 
     /// Return true if one of the platform_configs applies to this rule. Always returns
     /// true if this dep has no platform constraint.
-    pub fn filter(&self, platform_config: &PlatformConfig) -> Result<bool, PredicateParseError> {
+    pub fn filter(
+        &self,
+        platform_config: &PlatformConfig,
+        version: &semver::Version,
+    ) -> Result<bool, PredicateParseError> {
         let res = match &self.platform {
             None => true,
             Some(cfg) => {
                 let cfg = PlatformPredicate::parse(cfg)?;
 
-                cfg.eval(platform_config)
+                cfg.eval(platform_config, Some(version))
             }
         };
         Ok(res)
