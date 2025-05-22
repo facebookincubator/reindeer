@@ -222,6 +222,14 @@ pub fn merge_universes(
                             panic!("expected http_archive rules to be identical in every universe")
                         }
                     }
+                    Rule::GitFetch(old) => {
+                        let Rule::GitFetch(new) = rule else {
+                            panic!("expected git_fetch")
+                        };
+                        if *old != new {
+                            panic!("expected git_fetch rules to be identical in every universe")
+                        }
+                    }
                     _ => {
                         log::warn!(
                             "Skipping unhandled rule while merging universes: {:?}",
