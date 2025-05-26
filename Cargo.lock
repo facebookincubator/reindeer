@@ -2426,7 +2426,7 @@ dependencies = [
  "tempfile",
  "termcolor",
  "toml",
- "toml_edit 0.20.5",
+ "toml_edit 0.20.7",
  "unicode-ident",
  "url",
  "walkdir",
@@ -3175,9 +3175,9 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.20.5"
+version = "0.20.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "782bf6c2ddf761c1e7855405e8975472acf76f7f36d0d4328bd3b7a2fae12a85"
+checksum = "70f427fce4d84c72b5b732388bf4a9f4531b53f74e2887e3ecb2481f68f66d81"
 dependencies = [
  "indexmap",
  "serde",
