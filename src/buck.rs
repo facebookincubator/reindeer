@@ -509,7 +509,7 @@ impl Serialize for ExtractArchive {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct GitFetch {
     pub name: Name,
     pub repo: String,
