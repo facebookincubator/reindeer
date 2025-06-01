@@ -282,7 +282,7 @@ pub fn mutate_manifest(
     let original_contents = std::fs::read_to_string(path)
         .with_context(|| format!("reading manifest {}", path.display()))?;
     let mut doc = original_contents
-        .parse::<toml_edit::Document>()
+        .parse::<toml_edit::DocumentMut>()
         .context("parsing manifest")?;
 
     struct Visitor<'a>(&'a UniverseConfig);
