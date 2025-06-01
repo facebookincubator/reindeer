@@ -21,7 +21,7 @@ ignore = "0.4"
 indexmap = { version = "2.9.0", features = ["arbitrary", "rayon", "serde"] }
 itertools = "0.14.0"
 log = { version = "0.4.22", features = ["kv_unstable"] }
-measure_time = "0.8.2"
+measure_time = "0.9"
 monostate = "0.1.8"
 nom = "7.1"
 proc-macro2 = { version = "1.0.70", features = ["span-locations"] }
