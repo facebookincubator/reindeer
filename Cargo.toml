@@ -23,7 +23,8 @@ itertools = "0.14.0"
 log = { version = "0.4.22", features = ["kv_unstable"] }
 measure_time = "0.9"
 monostate = "0.1.8"
-nom = "7.1"
+nom = "8"
+nom-language = "0.1"
 proc-macro2 = { version = "1.0.70", features = ["span-locations"] }
 rayon = "1.9.0"
 rustsec = "0.30"

@@ -6,6 +6,7 @@
  */
 
 use nom::IResult;
+use nom::Parser;
 use nom::branch::alt;
 use nom::bytes::complete::escaped;
 use nom::bytes::complete::tag;
@@ -35,21 +36,31 @@ use unicode_ident::is_xid_start;
 
 use crate::platform::PlatformPredicate;
 
-fn sp<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
+fn sp<'a, E>(i: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     multispace0(i)
 }
 
-fn graphic<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
-    take_while1(|c: char| c.is_ascii_graphic() && !(c == '\\' || c == '"'))(i)
+fn graphic<'a, E>(i: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
+    take_while1(|c: char| c.is_ascii_graphic() && !(c == '\\' || c == '"')).parse(i)
 }
 
-fn parse_str<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
-    escaped(graphic, '\\', one_of(r#"n"\"#))(i)
+fn parse_str<'a, E>(i: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
+    escaped(graphic, '\\', one_of(r#"n"\"#)).parse(i)
 }
 
-fn string<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
-    i: &'a str,
-) -> IResult<&'a str, &'a str, E> {
+fn string<'a, E>(i: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str> + ContextError<&'a str>,
+{
     context(
         "string",
         preceded(
@@ -59,17 +70,22 @@ fn string<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
                 char('\"'),
             )),
         ),
-    )(i)
+    )
+    .parse(i)
 }
 
-fn sep<'a, E: ParseError<&'a str>>(sep: char) -> impl FnMut(&'a str) -> IResult<&'a str, (), E> {
-    map(preceded(sp, char(sep)), |_| ())
+fn sep<'a, E>(sep: char) -> impl Parser<&'a str, Output = (), Error = E>
+where
+    E: ParseError<&'a str>,
+{
+    map(preceded(sp, char(sep)), drop)
 }
 
-fn keyword<'a, E: ParseError<&'a str>>(
-    kw: &'static str,
-) -> impl FnMut(&'a str) -> IResult<&'a str, (), E> {
-    map(verify(atom, move |s: &str| s == kw), |_| ())
+fn keyword<'a, E>(kw: &'static str) -> impl Parser<&'a str, Output = (), Error = E>
+where
+    E: ParseError<&'a str>,
+{
+    map(verify(atom, move |s: &str| s == kw), drop)
 }
 
 // Parse an atom comprising one or more hyphen-separated words. Each word
@@ -77,7 +93,10 @@ fn keyword<'a, E: ParseError<&'a str>>(
 // is_xid_continue.
 //
 // For example `target_os` or `x86_64-unknown-linux-gnu`
-fn atom<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
+fn atom<'a, E>(i: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     preceded(
         sp,
         recognize(separated_list1(
@@ -87,23 +106,28 @@ fn atom<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> 
                 many0_count(satisfy(is_xid_continue)),
             ),
         )),
-    )(i)
+    )
+    .parse(i)
 }
 
 // Parses: `keyword` '(' inner ')'
-fn operator<'a, T, E: ParseError<&'a str> + ContextError<&'a str>>(
+fn operator<'a, F>(
     kw: &'static str,
-    inner: impl FnMut(&'a str) -> IResult<&'a str, T, E>,
-) -> impl FnMut(&'a str) -> IResult<&'a str, T, E> {
+    inner: F,
+) -> impl Parser<&'a str, Output = F::Output, Error = F::Error>
+where
+    F: Parser<&'a str, Error: ContextError<&'a str>>,
+{
     context(
         kw,
         preceded(keyword(kw), cut(delimited(sep('('), inner, sep(')')))),
     )
 }
 
-fn parse_predicate<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
-    i: &'a str,
-) -> IResult<&'a str, PlatformPredicate<'a>, E> {
+fn parse_predicate<'a, E>(i: &'a str) -> IResult<&'a str, PlatformPredicate<'a>, E>
+where
+    E: ParseError<&'a str> + ContextError<&'a str>,
+{
     use PlatformPredicate::*;
 
     context(
@@ -126,12 +150,14 @@ fn parse_predicate<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
             ),
             map(atom, |key| Bool { key }),
         )),
-    )(i)
+    )
+    .parse(i)
 }
 
-pub(crate) fn parse<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
-    i: &'a str,
-) -> IResult<&'a str, PlatformPredicate<'a>, E> {
+pub(crate) fn parse<'a, E>(i: &'a str) -> IResult<&'a str, PlatformPredicate<'a>, E>
+where
+    E: ParseError<&'a str> + ContextError<&'a str>,
+{
     context(
         "cfg",
         alt((
@@ -141,7 +167,8 @@ pub(crate) fn parse<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
             ),
             map(atom, |triple| PlatformPredicate::Bool { key: triple }),
         )),
-    )(i)
+    )
+    .parse(i)
 }
 
 #[cfg(test)]

@@ -12,8 +12,8 @@ use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
 
-use nom::error::VerboseError;
-use nom::error::convert_error;
+use nom_language::error::VerboseError;
+use nom_language::error::convert_error;
 use serde::Deserialize;
 use serde::Serialize;
 
