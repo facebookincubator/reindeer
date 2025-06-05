@@ -113,10 +113,15 @@ pub fn merge_universes(
         old.env.merge(new.env);
     }
     fn merge_library(old: &mut RustLibrary, new: RustLibrary) {
-        // TODO: merge platform maps instead of unwrapping (I think platform
-        // keys can differ? They certainly will if we add per-universe fixups)
-        for (platform, select) in new.common.platform {
-            merge_selects(old.common.platform.get_mut(&platform).unwrap(), select);
+        for (platform, new_select) in new.common.platform {
+            match old.common.platform.get_mut(&platform) {
+                Some(old_select) => {
+                    merge_selects(old_select, new_select);
+                }
+                None => {
+                    old.common.platform.insert(platform, new_select);
+                }
+            }
         }
         merge_selects(&mut old.common.base, new.common.base);
     }
