@@ -269,9 +269,9 @@ checksum = "c77df041dc383319cc661b428b6961a005db4d6808d5e12536931b1ca9556055"
 
 [[package]]
 name = "cargo-lock"
-version = "10.0.1"
+version = "10.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6469776d007022d505bbcc2be726f5f096174ae76d710ebc609eb3029a45b551"
+checksum = "c06acb4f71407ba205a07cb453211e0e6a67b21904e47f6ba1f9589e38f2e454"
 dependencies = [
  "semver",
  "serde",
@@ -2580,9 +2580,9 @@ dependencies = [
 
 [[package]]
 name = "rustsec"
-version = "0.30.0"
+version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e732c03323b9964936512ce0928259492e669b31f622bfa97e1fc71521c4464"
+checksum = "8f08b4e72b19c69a91bd8eb9fc2d4c9091a80df3092ddb69f8cb9994f915b7b7"
 dependencies = [
  "cargo-lock",
  "cvss",
