@@ -37,8 +37,8 @@ struct CargoChecksums {
 pub(crate) fn cargo_vendor(
     config: &Config,
     no_delete: bool,
-    audit_sec: bool,
-    no_fetch: bool,
+    #[cfg(fbcode_build)] audit_sec: bool,
+    #[cfg(fbcode_build)] no_fetch: bool,
     args: &Args,
     paths: &Paths,
 ) -> anyhow::Result<()> {
@@ -116,8 +116,11 @@ pub(crate) fn cargo_vendor(
         }
     }
 
-    if audit_sec {
-        crate::audit_sec::audit_sec(paths, no_fetch).context("doing audit_sec")?;
+    #[cfg(fbcode_build)]
+    {
+        if audit_sec {
+            crate::audit_sec::audit_sec(paths, no_fetch).context("doing audit_sec")?;
+        }
     }
 
     Ok(())

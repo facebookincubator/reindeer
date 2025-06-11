@@ -29,6 +29,7 @@ use clap::Subcommand;
 
 use crate::config::VendorConfig;
 
+#[cfg(fbcode_build)]
 mod audit_sec;
 mod buck;
 mod buckify;
@@ -88,9 +89,11 @@ enum SubCommand {
         #[arg(long)]
         no_delete: bool,
         /// Show reported security problems for crates as they're being vendored
+        #[cfg(fbcode_build)]
         #[arg(long)]
         audit_sec: bool,
         /// Use cached version of the advisory repo
+        #[cfg(fbcode_build)]
         #[arg(long)]
         no_fetch: bool,
     },
@@ -103,6 +106,7 @@ enum SubCommand {
         stdout: bool,
     },
     /// Show security report for vendored crates
+    #[cfg(fbcode_build)]
     Auditsec {
         /// Use cached version of the advisory repo
         #[arg(long, short = 'n')]
@@ -196,12 +200,24 @@ fn try_main() -> anyhow::Result<()> {
     match &args.subcommand {
         SubCommand::Vendor {
             no_delete,
+            #[cfg(fbcode_build)]
             audit_sec,
+            #[cfg(fbcode_build)]
             no_fetch,
         } => {
-            vendor::cargo_vendor(&config, *no_delete, *audit_sec, *no_fetch, &args, &paths)?;
+            vendor::cargo_vendor(
+                &config,
+                *no_delete,
+                #[cfg(fbcode_build)]
+                *audit_sec,
+                #[cfg(fbcode_build)]
+                *no_fetch,
+                &args,
+                &paths,
+            )?;
         }
 
+        #[cfg(fbcode_build)]
         SubCommand::Auditsec { no_fetch } => {
             audit_sec::audit_sec(&paths, *no_fetch)?;
         }
