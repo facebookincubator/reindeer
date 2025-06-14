@@ -50,5 +50,9 @@ displaydoc = { git = "https://github.com/yaahc/displaydoc", rev = "7dc6e324b1788
 [workspace]
 members = ["."]
 
+[workspace.package]
+license = "MIT"
+repository = "https://github.com/facebookincubator/reindeer"
+
 [lints]
 rust = { unexpected_cfgs = { check-cfg = ["cfg(fbcode_build)"], level = "warn" } }
