@@ -72,6 +72,10 @@ pub struct Config {
     /// Include root package as top-level public target in Buck file
     #[serde(default)]
     pub include_top_level: bool,
+    
+    /// Always turn on cargo_env = true for all crates.
+    #[serde(default)]
+    pub always_cargo_env: bool,
 
     /// Include workspace members in the generated BUCK file.
     ///
