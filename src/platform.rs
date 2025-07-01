@@ -61,6 +61,7 @@ const DEFAULT_PLATFORM: &str = "DEFAULT";
 pub struct PlatformName(String);
 
 impl PlatformName {
+    #[expect(dead_code)]
     pub fn is_default(&self) -> bool {
         self.0 == DEFAULT_PLATFORM
     }

@@ -9,7 +9,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::btree_map;
 use std::fmt;
@@ -689,38 +688,117 @@ impl<'meta> Fixups<'meta> {
     /// to only targets which were actually used).
     pub fn compute_deps(
         &self,
+        platform_name: &PlatformName,
     ) -> anyhow::Result<
-        Vec<(
-            Option<&'meta Manifest>,
-            RuleRef,
-            Option<&'meta str>,
-            &'meta NodeDepKind,
-        )>,
+        Option<
+            Vec<(
+                Option<&'meta Manifest>,
+                RuleRef,
+                Option<&'meta str>,
+                &'meta NodeDepKind,
+            )>,
+        >,
     > {
         let mut ret = vec![];
 
-        let mut omits = HashMap::new();
-        let mut all_omits = HashSet::new();
-        // Pre-compute the list of all filtered dependencies. If a platform filters a dependency
-        // added by the base, we need to filter it from the base and add it to all other platforms.
+        // Get dependencies according to Cargo.
+        let Some(deps) =
+            self.index
+                .resolved_deps_for_target(self.package, self.target, platform_name)
+        else {
+            return Ok(None);
+        };
+
+        // Collect fixups.
+        let mut omit_deps = HashSet::new();
         for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-            let fixup_omit_deps = if self.target.crate_bin() && self.target.kind_custom_build() {
-                &fixup.buildscript.build.omit_deps
-            } else {
-                &fixup.omit_deps
+            let fixup_applies = match platform {
+                Some(platform_expr) => PlatformPredicate::parse(platform_expr)?
+                    .eval(&self.config.platform[platform_name]),
+                None => true,
             };
-            let platform_omits = omits.entry(platform).or_insert_with(HashSet::new);
-            platform_omits.extend(fixup_omit_deps.iter().map(String::as_str));
-            all_omits.extend(fixup_omit_deps.iter().map(String::as_str));
+
+            if !fixup_applies {
+                continue;
+            }
+
+            let fixup_omit_deps;
+            let fixup_extra_deps;
+            if self.target.crate_bin() && self.target.kind_custom_build() {
+                fixup_omit_deps = &fixup.buildscript.build.omit_deps;
+                fixup_extra_deps = &fixup.buildscript.build.extra_deps;
+            } else {
+                fixup_omit_deps = &fixup.omit_deps;
+                fixup_extra_deps = &fixup.extra_deps;
+            }
+
+            omit_deps.extend(fixup_omit_deps.iter().map(String::as_str));
+
+            for dep in fixup_extra_deps {
+                ret.push((
+                    None,
+                    RuleRef::new(dep.to_string()),
+                    None,
+                    &NodeDepKind::ORDINARY,
+                ));
+            }
+
+            for CxxLibraryFixup {
+                name,
+                targets,
+                add_dep,
+                ..
+            } in &fixup.cxx_library
+            {
+                if !add_dep || !self.target_match(targets) {
+                    continue;
+                }
+                ret.push((
+                    None,
+                    RuleRef::new(format!(
+                        ":{}-{}",
+                        self.index.private_rule_name(self.package),
+                        name
+                    )),
+                    None,
+                    &NodeDepKind::ORDINARY,
+                ));
+            }
+
+            for PrebuiltCxxLibraryFixup {
+                name,
+                targets,
+                add_dep,
+                static_libs,
+                ..
+            } in &fixup.prebuilt_cxx_library
+            {
+                if !add_dep || !self.target_match(targets) {
+                    continue;
+                }
+                let mut static_lib_globs =
+                    Globs::new(static_libs, NO_EXCLUDE).context("Prebuilt C++ libraries")?;
+                for static_lib in static_lib_globs.walk(self.manifest_dir) {
+                    ret.push((
+                        None,
+                        RuleRef::new(format!(
+                            ":{}-{}-{}",
+                            self.index.private_rule_name(self.package),
+                            name,
+                            static_lib.file_name().unwrap().to_string_lossy(),
+                        )),
+                        None,
+                        &NodeDepKind::ORDINARY,
+                    ));
+                }
+            }
         }
 
         for ResolvedDep {
             package,
             rename,
             dep_kind,
-        } in self
-            .index
-            .resolved_deps_for_target(self.package, self.target)
+        } in deps
         {
             log::debug!(
                 "Resolved deps for {}/{} ({:?}) - {} as {} ({:?})",
@@ -737,137 +815,23 @@ impl<'meta> Fixups<'meta> {
                 .dependency_target()
                 .map(|tgt| tgt.name.replace('-', "_"));
 
-            let original_rename = rename;
-
-            let rename = match tgtname {
-                Some(ref tgtname) if tgtname == rename => None,
-                Some(_) | None => Some(rename),
-            };
-
-            if omits
-                .get(&None)
-                .is_some_and(|omits| omits.contains(original_rename))
-            {
-                // Dependency is unconditionally omitted on all platforms.
+            if omit_deps.contains(rename) {
+                // Dependency is omitted.
                 continue;
-            } else if all_omits.contains(original_rename) {
-                // If the dependency is for a particular platform and that has it excluded,
-                // skip it.
-                if let Some(platform_omits) = omits.get(&dep_kind.target.as_ref()) {
-                    if platform_omits.contains(original_rename) {
-                        continue;
-                    }
-                }
-
-                // If it's a default dependency, but certain specific platforms filter it,
-                // produce a new rule that excludes those platforms.
-                if dep_kind.target.is_none() {
-                    // Create a new predicate that excludes all filtered platforms.
-                    let mut excludes = vec![];
-                    for (platform_expr, platform_omits) in &omits {
-                        if let Some(platform_expr) = platform_expr {
-                            if platform_omits.contains(original_rename) {
-                                let platform_pred = PlatformPredicate::parse(platform_expr)?;
-                                excludes.push(PlatformPredicate::Not(Box::new(platform_pred)));
-                            }
-                        }
-                    }
-
-                    let platform_pred = PlatformPredicate::All(excludes);
-                    let platform_expr: PlatformExpr = format!("cfg({})", platform_pred).into();
-                    ret.push((
-                        Some(package),
-                        RuleRef::from(self.index.private_rule_name(package))
-                            .with_platform(Some(&platform_expr)),
-                        rename,
-                        dep_kind,
-                    ));
-
-                    // Since we've already added the platform-excluding rule, skip the generic rule
-                    // adding below.
-                    continue;
-                }
             }
 
-            // No filtering involved? Just insert it like normal.
             ret.push((
                 Some(package),
-                RuleRef::from(self.index.private_rule_name(package))
-                    .with_platform(dep_kind.target.as_ref()),
-                rename,
+                RuleRef::from(self.index.private_rule_name(package)),
+                match tgtname {
+                    Some(ref tgtname) if tgtname == rename => None,
+                    Some(_) | None => Some(rename),
+                },
                 dep_kind,
-            ))
+            ));
         }
 
-        for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            let fixup_extra_deps = if self.target.crate_bin() && self.target.kind_custom_build() {
-                &config.buildscript.build.extra_deps
-            } else {
-                &config.extra_deps
-            };
-            ret.extend(fixup_extra_deps.iter().map(|dep| {
-                (
-                    None,
-                    RuleRef::new(dep.to_string()).with_platform(platform),
-                    None,
-                    &NodeDepKind::ORDINARY,
-                )
-            }));
-
-            for CxxLibraryFixup {
-                name,
-                targets,
-                add_dep,
-                ..
-            } in &config.cxx_library
-            {
-                if !add_dep || !self.target_match(targets) {
-                    continue;
-                }
-                ret.push((
-                    None,
-                    RuleRef::new(format!(
-                        ":{}-{}",
-                        self.index.private_rule_name(self.package),
-                        name
-                    ))
-                    .with_platform(platform),
-                    None,
-                    &NodeDepKind::ORDINARY,
-                ));
-            }
-
-            for PrebuiltCxxLibraryFixup {
-                name,
-                targets,
-                add_dep,
-                static_libs,
-                ..
-            } in &config.prebuilt_cxx_library
-            {
-                if !add_dep || !self.target_match(targets) {
-                    continue;
-                }
-                let mut static_lib_globs =
-                    Globs::new(static_libs, NO_EXCLUDE).context("Prebuilt C++ libraries")?;
-                for static_lib in static_lib_globs.walk(self.manifest_dir) {
-                    ret.push((
-                        None,
-                        RuleRef::new(format!(
-                            ":{}-{}-{}",
-                            self.index.private_rule_name(self.package),
-                            name,
-                            static_lib.file_name().unwrap().to_string_lossy(),
-                        ))
-                        .with_platform(platform),
-                        None,
-                        &NodeDepKind::ORDINARY,
-                    ));
-                }
-            }
-        }
-
-        Ok(ret)
+        Ok(Some(ret))
     }
 
     /// Additional environment

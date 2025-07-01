@@ -53,7 +53,7 @@ impl Debug for Name {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct RuleRef {
     pub target: String,
     platform: Option<PlatformExpr>,
@@ -85,6 +85,7 @@ impl RuleRef {
         }
     }
 
+    #[expect(dead_code)]
     pub fn with_platform(self, platform: Option<&PlatformExpr>) -> Self {
         RuleRef {
             target: self.target,
@@ -92,12 +93,14 @@ impl RuleRef {
         }
     }
 
+    #[expect(dead_code)]
     pub fn has_platform(&self) -> bool {
         self.platform.is_some()
     }
 
     /// Return true if one of the platform_configs applies to this rule. Always returns
     /// true if this dep has no platform constraint.
+    #[expect(dead_code)]
     pub fn filter(&self, platform_config: &PlatformConfig) -> anyhow::Result<bool> {
         let res = match &self.platform {
             None => true,

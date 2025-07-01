@@ -20,7 +20,6 @@ use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
 use crate::cargo::Metadata;
 use crate::cargo::Node;
-use crate::cargo::NodeDep;
 use crate::cargo::NodeDepKind;
 use crate::cargo::PkgId;
 use crate::cargo::TargetReq;
@@ -72,6 +71,9 @@ pub struct ResolvedFeatures<'meta> {
     /// If the crate is present or will become present, which of its features
     /// are to be enabled.
     pub features: BTreeSet<&'meta str>,
+    /// If the crate is present or will become present, what dependencies it
+    /// would have.
+    pub deps: HashSet<(&'meta str, &'meta NodeDepKind, &'meta PkgId)>,
 }
 
 impl<'meta> Index<'meta> {
@@ -132,7 +134,20 @@ impl<'meta> Index<'meta> {
         index.public_targets = index
             .workspace_members
             .iter()
-            .flat_map(|member| index.resolved_deps(member))
+            .flat_map(|member| &index.pkgid_to_node[&member.id].deps)
+            .flat_map(|node_dep| {
+                node_dep.dep_kinds.iter().map(|dep_kind| {
+                    (
+                        node_dep
+                            .name
+                            .as_deref()
+                            .or(dep_kind.extern_name.as_deref())
+                            .unwrap(),
+                        dep_kind,
+                        index.pkgid_to_pkg[&node_dep.pkg],
+                    )
+                })
+            })
             .flat_map(|(rename, dep_kind, pkg)| {
                 let target_req = dep_kind.target_req();
                 let opt_rename = dep_renamed.get(rename).cloned();
@@ -249,47 +264,23 @@ impl<'meta> Index<'meta> {
         Some(features)
     }
 
-    /// Return the resolved dependencies for a package
-    /// This should generally be filtered by a target, but for the top-level we don't really care
-    fn resolved_deps(
-        &self,
-        pkg: &Manifest,
-    ) -> impl Iterator<Item = (&'meta str, &'meta NodeDepKind, &'meta Manifest)> + '_ + use<'meta, '_>
-    {
-        self.pkgid_to_node
-            .get(&pkg.id)
-            .unwrap()
-            .deps
-            .iter()
-            .flat_map(
-                |NodeDep {
-                     pkg,
-                     name,
-                     dep_kinds,
-                 }| {
-                    dep_kinds.iter().map(|dep_kind| {
-                        (
-                            name.as_deref().or(dep_kind.extern_name.as_deref()).unwrap(),
-                            dep_kind,
-                            self.pkgid_to_pkg.get(pkg).copied().unwrap(),
-                        )
-                    })
-                },
-            )
-    }
-
     /// Return resolved dependencies for a target.
     pub fn resolved_deps_for_target(
         &self,
         pkg: &'meta Manifest,
         tgt: &'meta ManifestTarget,
-    ) -> impl Iterator<Item = ResolvedDep<'meta>> + '_ {
+        platform_name: &PlatformName,
+    ) -> Option<impl Iterator<Item = ResolvedDep<'meta>> + '_> {
         // Target must be the target for the given package.
         assert!(pkg.targets.contains(tgt));
 
         let mut resolved_deps = HashMap::new();
 
-        for (rename, dep_kind, dep) in self.resolved_deps(pkg) {
+        for &(rename, dep_kind, dep_id) in &self
+            .pkgid_platform_features
+            .get(&(&pkg.id, platform_name))?
+            .deps
+        {
             if match dep_kind.kind {
                 DepKind::Normal => {
                     tgt.kind_lib()
@@ -301,6 +292,7 @@ impl<'meta> Index<'meta> {
                 DepKind::Dev => tgt.kind_bench() || tgt.kind_test() || tgt.kind_example(),
                 DepKind::Build => tgt.kind_custom_build(),
             } {
+                let dep = &self.pkgid_to_pkg[dep_id];
                 // Key by everything except `target`.
                 let NodeDepKind {
                     kind,
@@ -329,28 +321,30 @@ impl<'meta> Index<'meta> {
             }
         }
 
-        resolved_deps
-            .into_iter()
-            .flat_map(|((pkgid, ..), (unconditional_deps, conditional_deps))| {
-                // When there are "unconditional" deps (i.e. `target` is None),
-                // all "conditional" deps are ignored. AFAIK, it's not possible
-                // to have more than one "unconditional" dep. Make sure that
-                // assumption holds up because otherwise it means somewhere
-                // in `resolved_deps` we did something wrong.
-                match unconditional_deps.len() {
-                    0 => conditional_deps,
-                    1 => unconditional_deps,
-                    _ => panic!(
-                        "`{}` had more than one unconditional dep for `{}` {:?}",
-                        pkg.name, pkgid, unconditional_deps,
-                    ),
-                }
-            })
-            .map(|(rename, dep_kind, dep)| ResolvedDep {
-                package: dep,
-                rename,
-                dep_kind,
-            })
+        Some(
+            resolved_deps
+                .into_iter()
+                .flat_map(|((pkgid, ..), (unconditional_deps, conditional_deps))| {
+                    // When there are "unconditional" deps (i.e. `target` is None),
+                    // all "conditional" deps are ignored. AFAIK, it's not possible
+                    // to have more than one "unconditional" dep. Make sure that
+                    // assumption holds up because otherwise it means somewhere
+                    // in `resolved_deps` we did something wrong.
+                    match unconditional_deps.len() {
+                        0 => conditional_deps,
+                        1 => unconditional_deps,
+                        _ => panic!(
+                            "`{}` had more than one unconditional dep for `{}` {:?}",
+                            pkg.name, pkgid, unconditional_deps,
+                        ),
+                    }
+                })
+                .map(|(rename, dep_kind, dep)| ResolvedDep {
+                    package: dep,
+                    rename,
+                    dep_kind,
+                }),
+        )
     }
 }
 
@@ -393,6 +387,21 @@ fn enable_crate_for_platform<'meta>(
             }
         {
             let node_dep = dep_index.resolve(manifest_dep)?;
+            for dep_kind in &node_dep.dep_kinds {
+                pkgid_platform_features
+                    .entry((pkgid, platform_name))
+                    .or_insert_with(ResolvedFeatures::default)
+                    .deps
+                    .insert((
+                        node_dep
+                            .name
+                            .as_deref()
+                            .or(dep_kind.extern_name.as_deref())
+                            .unwrap(),
+                        dep_kind,
+                        &node_dep.pkg,
+                    ));
+            }
             enable_crate_for_platform(
                 pkgid_platform_features,
                 pkgid_to_pkg,
@@ -584,6 +593,21 @@ fn enable_dependency_for_platform<'meta>(
             }
         {
             let node_dep = dep_index.resolve(manifest_dep)?;
+            for dep_kind in &node_dep.dep_kinds {
+                pkgid_platform_features
+                    .entry((pkgid, platform_name))
+                    .or_insert_with(ResolvedFeatures::default)
+                    .deps
+                    .insert((
+                        node_dep
+                            .name
+                            .as_deref()
+                            .or(dep_kind.extern_name.as_deref())
+                            .unwrap(),
+                        dep_kind,
+                        &node_dep.pkg,
+                    ));
+            }
             enable_crate_for_platform(
                 pkgid_platform_features,
                 pkgid_to_pkg,

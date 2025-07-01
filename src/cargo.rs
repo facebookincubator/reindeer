@@ -542,7 +542,7 @@ where
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Eq, PartialEq, Hash)]
 pub struct NodeDepKind {
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub kind: DepKind,

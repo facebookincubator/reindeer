@@ -609,88 +609,62 @@ fn generate_target_rules<'scope>(
 
     // Compute set of dependencies any rule we generate here will need. They will only
     // be emitted if we actually emit some rules below.
-    let mut dep_pkgs = Vec::new();
-    for (deppkg, dep, rename, dep_kind) in fixups.compute_deps()? {
-        let target_req = dep_kind.target_req();
-        if let TargetReq::Cdylib = target_req {
-            let artifact = &dep_kind.artifact;
-            bail!("unsupported artifact kind {artifact:?} for dependency {dep:?}");
-        }
-        if let Some(compile_target) = &dep_kind.compile_target {
-            // Compile_target is not implemented yet.
-            //
-            // For example artifact dependencies allow a crate to depend on a
-            // binary built for a different architecture.
-            bail!("unsupported compile_target {compile_target:?} for dependency {dep:?}");
-        }
-        if dep.has_platform() {
-            // If this is a platform-specific dependency, find the
-            // matching supported platform(s) and insert it into the appropriate
-            // dependency.
-            // If the name is DEFAULT_PLATFORM then just put it in the normal generic deps
-            for (name, platform) in &config.platform {
-                let is_default = name.is_default();
-
-                log::debug!(
-                    "pkg {} target {} dep {:?} platform ({}, {:?}) filter {:?}",
-                    pkg,
-                    tgt.name,
-                    dep,
-                    name,
-                    platform,
-                    dep.filter(platform)
-                );
-
-                if dep.filter(platform)? {
-                    let dep = dep.clone();
-
-                    let recipient = if is_default {
-                        // Just use normal deps
-                        &mut base
-                    } else {
-                        perplat.entry(name.clone()).or_default()
-                    };
-
-                    if dep_kind.artifact == Some(ArtifactKind::Bin) {
-                        let target_name = dep.target.strip_prefix(':').unwrap();
-                        let bin_name = dep_kind.bin_name.as_ref().unwrap();
-                        let env = format!("{}-{}", target_name, bin_name);
-                        let location = format!("$(location {}-{}[check])", dep.target, bin_name);
-                        recipient
-                            .env
-                            .unwrap_mut()
-                            .insert(env, StringOrPath::String(location));
-                    } else if let Some(rename) = rename {
-                        recipient
-                            .named_deps
-                            .unwrap_mut()
-                            .insert(rename.to_owned(), dep);
-                    } else {
-                        recipient.deps.unwrap_mut().insert(dep);
-                    }
-                    if let Some(deppkg) = deppkg {
-                        dep_pkgs.push((deppkg, target_req));
-                    }
-                }
+    let mut platform_deps = Vec::new();
+    let mut dep_in_how_many_platforms = HashMap::new();
+    for platform_name in config.platform.keys() {
+        let Some(deps) = fixups.compute_deps(platform_name)? else {
+            continue;
+        };
+        for (_manifest, dep, rename, dep_kind) in &deps {
+            if let TargetReq::Cdylib = dep_kind.target_req() {
+                let artifact = &dep_kind.artifact;
+                bail!("unsupported artifact kind {artifact:?} for dependency {dep:?}");
             }
-        } else {
-            // Otherwise this is not platform-specific and can go into the
-            // generic dependencies.
+
+            if let Some(compile_target) = &dep_kind.compile_target {
+                // Compile_target is not implemented yet.
+                //
+                // For example artifact dependencies allow a crate to depend on a
+                // binary built for a different architecture.
+                bail!("unsupported compile_target {compile_target:?} for dependency {dep:?}");
+            }
+
+            let key = (dep.clone(), *rename, *dep_kind);
+            *dep_in_how_many_platforms.entry(key).or_insert(0) += 1;
+        }
+        platform_deps.push((platform_name, deps));
+    }
+
+    let mut dep_pkgs = Vec::new();
+    for &(platform_name, ref deps) in &platform_deps {
+        for &(manifest, ref dep, rename, dep_kind) in deps {
+            let key = (dep.clone(), rename, dep_kind);
+            let recipient = if dep_in_how_many_platforms[&key] == platform_deps.len() {
+                &mut base
+            } else {
+                perplat
+                    .entry(platform_name.clone())
+                    .or_insert_with(PlatformRustCommon::default)
+            };
             if dep_kind.artifact == Some(ArtifactKind::Bin) {
                 let target_name = dep.target.strip_prefix(':').unwrap();
                 let bin_name = dep_kind.bin_name.as_ref().unwrap();
                 let env = format!("{}-{}", target_name, bin_name);
                 let location = format!("$(location {}-{}[check])", dep.target, bin_name);
-                base.env
+                recipient
+                    .env
                     .unwrap_mut()
                     .insert(env, StringOrPath::String(location));
             } else if let Some(rename) = rename {
-                base.named_deps.unwrap_mut().insert(rename.to_owned(), dep);
+                recipient
+                    .named_deps
+                    .unwrap_mut()
+                    .insert(rename.to_owned(), dep.clone());
             } else {
-                base.deps.unwrap_mut().insert(dep);
+                recipient.deps.unwrap_mut().insert(dep.clone());
             }
-            if let Some(deppkg) = deppkg {
-                dep_pkgs.push((deppkg, target_req));
+            if let Some(manifest) = manifest {
+                dep_pkgs.push((manifest, dep_kind.target_req()));
             }
         }
     }
