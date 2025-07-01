@@ -126,9 +126,15 @@ pub fn merge_universes(
         merge_selects(&mut old.common.base, new.common.base);
     }
     fn merge_binary(old: &mut RustBinary, new: RustBinary) {
-        // TODO: merge platform maps
-        for (platform, select) in new.common.platform {
-            merge_selects(old.common.platform.get_mut(&platform).unwrap(), select);
+        for (platform, new_select) in new.common.platform {
+            match old.common.platform.get_mut(&platform) {
+                Some(old_select) => {
+                    merge_selects(old_select, new_select);
+                }
+                None => {
+                    old.common.platform.insert(platform, new_select);
+                }
+            }
         }
         merge_selects(&mut old.common.base, new.common.base);
     }
