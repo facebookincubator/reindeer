@@ -24,7 +24,6 @@ use crate::cargo::NodeDep;
 use crate::cargo::NodeDepKind;
 use crate::cargo::PkgId;
 use crate::cargo::TargetReq;
-use crate::platform::PlatformExpr;
 
 /// Index for interesting things in Cargo metadata
 pub struct Index<'meta> {
@@ -52,7 +51,6 @@ pub struct Index<'meta> {
 #[derive(Debug, Clone)]
 pub struct ResolvedDep<'meta> {
     pub package: &'meta Manifest,
-    pub platform: Option<PlatformExpr>,
     pub rename: &'meta str,
     pub dep_kind: &'meta NodeDepKind,
 }
@@ -299,7 +297,6 @@ impl<'meta> Index<'meta> {
             })
             .map(|(rename, dep_kind, dep)| ResolvedDep {
                 package: dep,
-                platform: dep_kind.target.clone(),
                 rename,
                 dep_kind,
             })

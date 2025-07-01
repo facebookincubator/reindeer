@@ -718,7 +718,6 @@ impl<'meta> Fixups<'meta> {
 
         for ResolvedDep {
             package,
-            platform,
             rename,
             dep_kind,
         } in self
@@ -756,7 +755,7 @@ impl<'meta> Fixups<'meta> {
             } else if all_omits.contains(original_rename) {
                 // If the dependency is for a particular platform and that has it excluded,
                 // skip it.
-                if let Some(platform_omits) = omits.get(&platform.as_ref()) {
+                if let Some(platform_omits) = omits.get(&dep_kind.target.as_ref()) {
                     if platform_omits.contains(original_rename) {
                         continue;
                     }
@@ -764,7 +763,7 @@ impl<'meta> Fixups<'meta> {
 
                 // If it's a default dependency, but certain specific platforms filter it,
                 // produce a new rule that excludes those platforms.
-                if platform.is_none() {
+                if dep_kind.target.is_none() {
                     // Create a new predicate that excludes all filtered platforms.
                     let mut excludes = vec![];
                     for (platform_expr, platform_omits) in &omits {
@@ -796,7 +795,7 @@ impl<'meta> Fixups<'meta> {
             ret.push((
                 Some(package),
                 RuleRef::from(self.index.private_rule_name(package))
-                    .with_platform(platform.as_ref()),
+                    .with_platform(dep_kind.target.as_ref()),
                 rename,
                 dep_kind,
             ))
