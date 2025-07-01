@@ -31,7 +31,6 @@ use crate::platform::PlatformConfig;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
-use crate::platform::PredicateParseError;
 use crate::subtarget::Subtarget;
 use crate::universe::UniverseName;
 
@@ -99,7 +98,7 @@ impl RuleRef {
 
     /// Return true if one of the platform_configs applies to this rule. Always returns
     /// true if this dep has no platform constraint.
-    pub fn filter(&self, platform_config: &PlatformConfig) -> Result<bool, PredicateParseError> {
+    pub fn filter(&self, platform_config: &PlatformConfig) -> anyhow::Result<bool> {
         let res = match &self.platform {
             None => true,
             Some(cfg) => {

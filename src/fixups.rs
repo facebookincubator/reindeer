@@ -307,8 +307,7 @@ impl<'meta> Fixups<'meta> {
                         .cloned(),
                 ),
                 Some(expr) => {
-                    let platnames = platform_names_for_expr(self.config, expr)?;
-                    for platname in platnames {
+                    for platname in platform_names_for_expr(self.config, expr)? {
                         if let Some(platattr) = buildscript_build.common.platform.get(platname) {
                             features.extend(platattr.features.unwrap_ref().iter().cloned())
                         }

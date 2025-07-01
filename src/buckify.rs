@@ -138,10 +138,7 @@ fn unzip_platform<T: Clone>(
     for (platform, thing) in things.into_iter() {
         match platform {
             Some(expr) => {
-                let plats = platform_names_for_expr(config, &expr)
-                    .with_context(|| format!("Bad platform expression \"{}\"", expr))?;
-
-                for plat in plats {
+                for plat in platform_names_for_expr(config, &expr)? {
                     extend(perplat.entry(plat.clone()).or_default(), thing.clone())
                 }
             }

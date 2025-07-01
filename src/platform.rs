@@ -39,7 +39,7 @@ impl Debug for PlatformConfig {
 pub fn platform_names_for_expr<'config>(
     config: &'config Config,
     expr: &PlatformExpr,
-) -> Result<Vec<&'config PlatformName>, PredicateParseError> {
+) -> anyhow::Result<Vec<&'config PlatformName>> {
     let pred = PlatformPredicate::parse(expr)?;
 
     let res = config
@@ -136,15 +136,16 @@ impl Display for PredicateParseError {
 impl error::Error for PredicateParseError {}
 
 impl<'a> PlatformPredicate<'a> {
-    pub fn parse(input: &'a PlatformExpr) -> Result<PlatformPredicate<'a>, PredicateParseError> {
-        match cfg::parse::<VerboseError<&str>>(&input.0) {
-            Ok(("", pred)) => Ok(pred),
-            Ok((rest, _)) => Err(PredicateParseError::TrailingJunk(rest.to_string())),
-            Err(nom::Err::Incomplete(_)) => Err(PredicateParseError::Incomplete),
-            Err(nom::Err::Error(err)) | Err(nom::Err::Failure(err)) => Err(
-                PredicateParseError::ParseError(convert_error(input.0.as_str(), err)),
-            ),
-        }
+    pub fn parse(input: &'a PlatformExpr) -> anyhow::Result<PlatformPredicate<'a>> {
+        let err = match cfg::parse::<VerboseError<&str>>(&input.0) {
+            Ok(("", pred)) => return Ok(pred),
+            Ok((rest, _)) => PredicateParseError::TrailingJunk(rest.to_string()),
+            Err(nom::Err::Incomplete(_)) => PredicateParseError::Incomplete,
+            Err(nom::Err::Error(err)) | Err(nom::Err::Failure(err)) => {
+                PredicateParseError::ParseError(convert_error(input.0.as_str(), err))
+            }
+        };
+        Err(anyhow::Error::new(err).context(format!("Bad platform expression `{input}`")))
     }
 
     pub fn eval(&self, config: &PlatformConfig) -> bool {
