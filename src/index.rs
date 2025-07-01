@@ -86,7 +86,7 @@ impl<'meta> Index<'meta> {
             .filter_map(|pkgid| pkgid_to_pkg.get(pkgid).copied())
             .collect();
 
-        let mut tmp = Index {
+        let mut index = Index {
             pkgid_to_pkg,
             pkgid_to_node: metadata.resolve.nodes.iter().map(|n| (&n.id, n)).collect(),
             root_pkg,
@@ -111,10 +111,10 @@ impl<'meta> Index<'meta> {
 
         // Compute public set, with pkgid mapped to rename if it has one. Public set is
         // anything in top_levels, or first-order dependencies of any workspace member.
-        let public_targets = tmp
+        index.public_targets = index
             .workspace_members
             .iter()
-            .flat_map(|member| tmp.resolved_deps(member))
+            .flat_map(|member| index.resolved_deps(member))
             .flat_map(|(rename, dep_kind, pkg)| {
                 let target_req = dep_kind.target_req();
                 let opt_rename = dep_renamed.get(rename).cloned();
@@ -128,20 +128,18 @@ impl<'meta> Index<'meta> {
             }))
             .collect::<BTreeMap<_, _>>();
 
-        for ((id, _), rename) in public_targets.iter() {
-            tmp.public_packages.insert(id, rename.clone());
-            tmp.public_package_names
+        for ((id, _), rename) in &index.public_targets {
+            index.public_packages.insert(id, rename.clone());
+            index
+                .public_package_names
                 .insert(if let &Some(rename) = rename {
                     rename
                 } else {
-                    &tmp.pkgid_to_pkg[id].name
+                    &index.pkgid_to_pkg[id].name
                 });
         }
 
-        Ok(Index {
-            public_targets,
-            ..tmp
-        })
+        Ok(index)
     }
 
     /// Test if a package is the root package
