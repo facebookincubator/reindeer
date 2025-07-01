@@ -246,7 +246,7 @@ impl Debug for PkgId {
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct Metadata {
     #[serde(deserialize_with = "deserialize_default_from_null")]
-    pub packages: BTreeSet<Manifest>,
+    pub packages: Vec<Manifest>,
     pub version: u32,
     pub workspace_members: Vec<PkgId>,
     /// Resolved dependency graph
@@ -274,7 +274,7 @@ pub struct Manifest {
     pub dependencies: Vec<ManifestDep>,
     /// Targets in package
     #[serde(deserialize_with = "deserialize_default_from_null")]
-    pub targets: BTreeSet<ManifestTarget>,
+    pub targets: Vec<ManifestTarget>,
     /// Path to Cargo.toml
     pub manifest_path: PathBuf,
     /// List of authors
@@ -502,7 +502,7 @@ pub struct Node {
     /// Package
     pub id: PkgId,
     /// Dependencies with rename information
-    pub deps: BTreeSet<NodeDep>,
+    pub deps: Vec<NodeDep>,
     /// Features selected for package
     pub features: BTreeSet<String>,
 }
