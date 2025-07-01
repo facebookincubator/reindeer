@@ -43,6 +43,7 @@ mod index;
 mod lockfile;
 mod platform;
 mod remap;
+mod resolve;
 mod srcfiles;
 mod subtarget;
 mod universe;

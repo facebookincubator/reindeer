@@ -25,6 +25,7 @@ use std::process::Stdio;
 use std::thread;
 
 use anyhow::Context;
+use semver::VersionReq;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -332,19 +333,16 @@ impl Display for Manifest {
 #[derive(Debug, Deserialize)]
 pub struct ManifestDep {
     /// Dependency name
-    #[expect(dead_code)]
     pub name: String,
     /// The source ID of the dependency. May be null, see description for the package source
     #[expect(dead_code)]
     pub source: Option<String>,
     /// Dependency version requirement
-    #[expect(dead_code)]
-    pub req: String,
+    pub req: VersionReq,
     /// If renamed, local name for dependency
     pub rename: Option<String>,
     /// Dependency kind ("dev", "build" or "normal")
     #[serde(deserialize_with = "deserialize_default_from_null")]
-    #[expect(dead_code)]
     pub kind: DepKind,
     /// Whether dependency is optional or not
     #[expect(dead_code)]
@@ -358,10 +356,8 @@ pub struct ManifestDep {
     pub features: BTreeSet<String>,
     /// An "artifact dependency" for depending on a binary instead of (or in
     /// addition to) a package's library crate
-    #[expect(dead_code)]
     pub artifact: Option<ArtifactDep>,
     /// Target platform for target-specific dependencies
-    #[expect(dead_code)]
     pub target: Option<PlatformExpr>,
     /// Registry this dependency is from
     #[expect(dead_code)]
@@ -383,12 +379,10 @@ pub enum DepKind {
 
 #[derive(Debug, Deserialize)]
 pub struct ArtifactDep {
+    pub kinds: Vec<ArtifactKind>,
+    pub lib: bool,
     #[expect(dead_code)]
-    kinds: Vec<ArtifactKind>,
-    #[expect(dead_code)]
-    lib: bool,
-    #[expect(dead_code)]
-    target: Option<String>,
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
