@@ -8,6 +8,7 @@
 //! Definitions of Buck-related types
 //!
 //! Model Buck rules in a rough way. Can definitely be improved.
+
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -27,10 +28,7 @@ use serde_starlark::FunctionCall;
 use crate::collection::SelectSet;
 use crate::collection::SetOrMap;
 use crate::config::BuckConfig;
-use crate::platform::PlatformConfig;
-use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
-use crate::platform::PlatformPredicate;
 use crate::subtarget::Subtarget;
 use crate::universe::UniverseName;
 
@@ -53,10 +51,10 @@ impl Debug for Name {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize)]
+#[serde(transparent)]
 pub struct RuleRef {
     pub target: String,
-    platform: Option<PlatformExpr>,
 }
 
 impl From<Name> for RuleRef {
@@ -67,7 +65,7 @@ impl From<Name> for RuleRef {
 
 impl Ord for RuleRef {
     fn cmp(&self, other: &Self) -> Ordering {
-        buildifier_cmp(&self.target, &other.target).then_with(|| self.platform.cmp(&other.platform))
+        buildifier_cmp(&self.target, &other.target)
     }
 }
 
@@ -79,44 +77,7 @@ impl PartialOrd for RuleRef {
 
 impl RuleRef {
     pub fn new(target: String) -> Self {
-        RuleRef {
-            target,
-            platform: None,
-        }
-    }
-
-    #[expect(dead_code)]
-    pub fn with_platform(self, platform: Option<&PlatformExpr>) -> Self {
-        RuleRef {
-            target: self.target,
-            platform: platform.cloned(),
-        }
-    }
-
-    #[expect(dead_code)]
-    pub fn has_platform(&self) -> bool {
-        self.platform.is_some()
-    }
-
-    /// Return true if one of the platform_configs applies to this rule. Always returns
-    /// true if this dep has no platform constraint.
-    #[expect(dead_code)]
-    pub fn filter(&self, platform_config: &PlatformConfig) -> anyhow::Result<bool> {
-        let res = match &self.platform {
-            None => true,
-            Some(cfg) => {
-                let cfg = PlatformPredicate::parse(cfg)?;
-
-                cfg.eval(platform_config)
-            }
-        };
-        Ok(res)
-    }
-}
-
-impl Serialize for RuleRef {
-    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        self.target.serialize(ser)
+        RuleRef { target }
     }
 }
 

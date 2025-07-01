@@ -51,21 +51,11 @@ pub fn platform_names_for_expr<'config>(
     Ok(res)
 }
 
-// This platform just has common `deps` deps (not `platform_deps`)
-const DEFAULT_PLATFORM: &str = "DEFAULT";
-
 /// A name of a platform, as used in Config.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[derive(Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PlatformName(String);
-
-impl PlatformName {
-    #[expect(dead_code)]
-    pub fn is_default(&self) -> bool {
-        self.0 == DEFAULT_PLATFORM
-    }
-}
 
 impl Display for PlatformName {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -172,22 +162,6 @@ impl<'a> PlatformPredicate<'a> {
                 value: "windows",
             }
             .eval(config),
-        }
-    }
-}
-
-impl<'a> Display for PlatformPredicate<'a> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        use PlatformPredicate::*;
-
-        match self {
-            Bool { key } => fmt.write_str(key),
-            Value { key, value } => write!(fmt, "{} = \"{}\"", key, value),
-            Any(preds) => write!(fmt, "any({})", itertools::join(preds.iter(), ", ")),
-            All(preds) => write!(fmt, "all({})", itertools::join(preds.iter(), ", ")),
-            Not(pred) => write!(fmt, "not({})", pred),
-            Unix => fmt.write_str("unix"),
-            Windows => fmt.write_str("windows"),
         }
     }
 }
