@@ -705,20 +705,34 @@ fn parse_source(source: &str) -> Option<Source> {
     if source == "registry+https://github.com/rust-lang/crates.io-index" {
         Some(Source::CratesIo)
     } else if let Some(rest) = source.strip_prefix("git+") {
-        // Git sources look like:
+        // Git sources take one of the following formats:
+        //
         //   git+https://github.com/owner/repo.git?branch=patchv1#9f8e7d6c5b4a3210
-        // The #commithash is always present; the ?urlparam is optional.
-        let (address, commit_hash) = rest.split_once('#')?;
-        if let Some((repo, _reference)) = address.split_once('?') {
+        //   git+https://github.com/owner/repo.git?rev=9f8e7d6c5b4a3210#9f8e7d6c5b4a3210
+        //   git+https://github.com/owner/repo.git?rev=9f8e7d6c5b4a3210
+        //   git+https://github.com/owner/repo.git#9f8e7d6c5b4a3210
+        //
+        // At least one git commit hash is always present, but it may either be
+        // in the "?rev=" or in the "#" or both.
+        if let Some((address, commit_hash)) = rest.split_once('#') {
+            if let Some((repo, _reference)) = address.split_once('?') {
+                Some(Source::Git {
+                    repo: repo.to_owned(),
+                    commit_hash: commit_hash.to_owned(),
+                })
+            } else {
+                Some(Source::Git {
+                    repo: address.to_owned(),
+                    commit_hash: commit_hash.to_owned(),
+                })
+            }
+        } else if let Some((repo, commit_hash)) = rest.split_once("?rev=") {
             Some(Source::Git {
                 repo: repo.to_owned(),
                 commit_hash: commit_hash.to_owned(),
             })
         } else {
-            Some(Source::Git {
-                repo: address.to_owned(),
-                commit_hash: commit_hash.to_owned(),
-            })
+            None
         }
     } else {
         None
@@ -732,14 +746,19 @@ mod test {
 
     #[test]
     fn test_parses_source_git() {
-        assert_eq!(
-            parse_source(
-                "git+https://github.com/facebookincubator/reindeer?rev=abcdef123#abcdef1234567890abcdef1234567890abcdef00",
-            ),
-            Some(Source::Git {
-                repo: "https://github.com/facebookincubator/reindeer".to_owned(),
-                commit_hash: "abcdef1234567890abcdef1234567890abcdef00".to_owned(),
-            }),
-        );
+        for source in [
+            "git+https://github.com/facebookincubator/reindeer?branch=patchv1#abcdef1234567890abcdef1234567890abcdef00",
+            "git+https://github.com/facebookincubator/reindeer?rev=abcdef123#abcdef1234567890abcdef1234567890abcdef00",
+            "git+https://github.com/facebookincubator/reindeer?rev=abcdef1234567890abcdef1234567890abcdef00",
+            "git+https://github.com/facebookincubator/reindeer#abcdef1234567890abcdef1234567890abcdef00",
+        ] {
+            assert_eq!(
+                parse_source(source),
+                Some(Source::Git {
+                    repo: "https://github.com/facebookincubator/reindeer".to_owned(),
+                    commit_hash: "abcdef1234567890abcdef1234567890abcdef00".to_owned(),
+                }),
+            );
+        }
     }
 }
