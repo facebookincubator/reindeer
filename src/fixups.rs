@@ -52,6 +52,7 @@ use crate::glob::SerializableGlobSet as GlobSet;
 use crate::index::Index;
 use crate::index::ResolvedDep;
 use crate::platform::PlatformExpr;
+use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
 use crate::platform::platform_names_for_expr;
 use crate::subtarget::Subtarget;
@@ -600,63 +601,33 @@ impl<'meta> Fixups<'meta> {
     /// and additional ones defined in the fixup.
     pub fn compute_features(
         &self,
-    ) -> anyhow::Result<HashMap<Option<PlatformExpr>, BTreeSet<String>>> {
-        let mut ret = HashMap::new();
+        platform_name: &PlatformName,
+    ) -> anyhow::Result<BTreeSet<String>> {
+        // Get features according to Cargo.
+        let mut features: BTreeSet<String> = self
+            .index
+            .resolved_features(self.package)
+            .map(str::to_owned)
+            .collect();
 
-        let mut platform_omits = HashMap::new();
+        // Apply fixups.
         for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-            // Group by feature which platforms omit it.
-            for feature in &fixup.omit_features {
-                platform_omits
-                    .entry(feature.as_str())
-                    .or_insert_with(HashSet::new)
-                    .insert(platform);
-            }
-
-            if !fixup.features.is_empty() {
-                ret.entry(platform.cloned())
-                    .or_insert_with(BTreeSet::new)
-                    .extend(fixup.features.clone());
-            }
-        }
-
-        for feature in self.index.resolved_features(self.package) {
-            let Some(omitted_platforms) = platform_omits.get(feature) else {
-                // Feature is unconditionally included on all platforms.
-                ret.entry(None)
-                    .or_insert_with(BTreeSet::new)
-                    .insert(feature.to_owned());
-                continue;
-            };
-
-            if omitted_platforms.contains(&None) {
-                // Feature is unconditionally omitted on all platforms.
-                continue;
-            }
-
-            let mut excludes = vec![];
-            for platform in omitted_platforms {
-                if let Some(platform_expr) = platform {
-                    // If a platform filters a feature added by the base,
-                    // we need to filter it from the base and add it to all
-                    // other platforms. Create a predicate that excludes all
-                    // filtered platforms. This will be the "all other
-                    // platforms".
-                    let platform_pred = PlatformPredicate::parse(platform_expr)?;
-                    excludes.push(PlatformPredicate::Not(Box::new(platform_pred)));
+            // Decide whether fixup applies.
+            if match platform {
+                Some(platform_expr) => PlatformPredicate::parse(platform_expr)?
+                    .eval(&self.config.platform[platform_name]),
+                None => true,
+            } {
+                for feature in &fixup.omit_features {
+                    features.remove(feature);
+                }
+                for feature in &fixup.features {
+                    features.insert(feature.clone());
                 }
             }
-
-            assert!(!excludes.is_empty());
-
-            let platform_pred = PlatformPredicate::All(excludes);
-            let platform_expr: PlatformExpr = format!("cfg({})", platform_pred).into();
-            ret.entry(Some(platform_expr))
-                .or_insert_with(BTreeSet::new)
-                .insert(feature.to_owned());
         }
 
-        Ok(ret)
+        Ok(features)
     }
 
     fn buildscript_rustc_flags(

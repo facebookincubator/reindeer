@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::hash::Hash;
@@ -578,22 +579,31 @@ fn generate_target_rules<'scope>(
     )
     .context("mapped_srcs(paths)")?;
 
-    unzip_platform(
-        config,
-        &mut base,
-        &mut perplat,
-        |rule, features| {
-            log::debug!(
-                "pkg {} target {}: adding features {:?}",
-                pkg,
-                tgt.name,
-                features
-            );
-            rule.features.unwrap_mut().extend(features);
-        },
-        fixups.compute_features()?,
-    )
-    .context("features")?;
+    let mut platform_features = Vec::new();
+    let mut feature_in_how_many_platforms = HashMap::new();
+    for platform_name in config.platform.keys() {
+        let features = fixups.compute_features(platform_name)?;
+        for feature in &features {
+            *feature_in_how_many_platforms
+                .entry(feature.clone())
+                .or_insert(0) += 1;
+        }
+        platform_features.push((platform_name, features));
+    }
+    for (platform_name, features) in platform_features {
+        for feature in features {
+            if feature_in_how_many_platforms[&feature] == config.platform.len() {
+                base.features.unwrap_mut().insert(feature);
+            } else {
+                perplat
+                    .entry(platform_name.clone())
+                    .or_insert_with(PlatformRustCommon::default)
+                    .features
+                    .unwrap_mut()
+                    .insert(feature);
+            }
+        }
+    }
 
     // Compute set of dependencies any rule we generate here will need. They will only
     // be emitted if we actually emit some rules below.
