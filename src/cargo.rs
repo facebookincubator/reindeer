@@ -243,10 +243,11 @@ impl Debug for PkgId {
 }
 
 /// Top-level structure from `cargo metadata`
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize)]
 pub struct Metadata {
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub packages: Vec<Manifest>,
+    #[expect(dead_code)]
     pub version: u32,
     pub workspace_members: Vec<PkgId>,
     /// Resolved dependency graph
@@ -328,37 +329,47 @@ impl Display for Manifest {
 }
 
 /// Package dependency (unresolved)
-#[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Deserialize)]
 pub struct ManifestDep {
     /// Dependency name
+    #[expect(dead_code)]
     pub name: String,
     /// The source ID of the dependency. May be null, see description for the package source
+    #[expect(dead_code)]
     pub source: Option<String>,
     /// Dependency version requirement
+    #[expect(dead_code)]
     pub req: String,
     /// If renamed, local name for dependency
     pub rename: Option<String>,
     /// Dependency kind ("dev", "build" or "normal")
     #[serde(deserialize_with = "deserialize_default_from_null")]
+    #[expect(dead_code)]
     pub kind: DepKind,
     /// Whether dependency is optional or not
+    #[expect(dead_code)]
     pub optional: bool,
     /// Whether or not to use default features
+    #[expect(dead_code)]
     pub uses_default_features: bool,
     /// Set of (additional) features
     #[serde(deserialize_with = "deserialize_default_from_null")]
+    #[expect(dead_code)]
     pub features: BTreeSet<String>,
     /// An "artifact dependency" for depending on a binary instead of (or in
     /// addition to) a package's library crate
+    #[expect(dead_code)]
     pub artifact: Option<ArtifactDep>,
     /// Target platform for target-specific dependencies
+    #[expect(dead_code)]
     pub target: Option<PlatformExpr>,
     /// Registry this dependency is from
+    #[expect(dead_code)]
     pub registry: Option<String>,
 }
 
 /// Kind of dependency
-#[derive(Debug, Default, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Default, Deserialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "kebab-case")]
 pub enum DepKind {
     /// Normal dependency
@@ -370,14 +381,17 @@ pub enum DepKind {
     Build,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Deserialize)]
 pub struct ArtifactDep {
+    #[expect(dead_code)]
     kinds: Vec<ArtifactKind>,
+    #[expect(dead_code)]
     lib: bool,
+    #[expect(dead_code)]
     target: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy)]
+#[derive(Debug, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
 #[serde(rename_all = "kebab-case")]
 pub enum ArtifactKind {
     Bin,
@@ -386,7 +400,7 @@ pub enum ArtifactKind {
 }
 
 /// Package build target
-#[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Deserialize, PartialEq)]
 pub struct ManifestTarget {
     /// Name of target (crate name)
     pub name: String,
@@ -489,7 +503,7 @@ impl ManifestTarget {
 }
 
 /// Resolved dependencies
-#[derive(Debug, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Deserialize)]
 pub struct Resolve {
     /// Root package of the workspace
     pub root: Option<PkgId>,
@@ -497,7 +511,7 @@ pub struct Resolve {
 }
 
 /// Resolved dependencies for a particular package
-#[derive(Debug, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Deserialize)]
 pub struct Node {
     /// Package
     pub id: PkgId,
@@ -508,7 +522,7 @@ pub struct Node {
 }
 
 /// Resolved dependencies with rename information
-#[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Deserialize)]
 pub struct NodeDep {
     /// Package id for dependency
     pub pkg: PkgId,
@@ -534,7 +548,7 @@ where
     }
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Deserialize)]
 pub struct NodeDepKind {
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub kind: DepKind,
@@ -591,7 +605,7 @@ pub enum TargetReq<'a> {
     Sources,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CompileMode {
     Build,
@@ -620,8 +634,7 @@ pub enum CrateType {
     Eq,
     PartialEq,
     Ord,
-    PartialOrd,
-    Hash
+    PartialOrd
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum TargetKind {
@@ -638,22 +651,12 @@ pub enum TargetKind {
     Cdylib,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Deserialize)]
 pub enum BuildKind {
     Host,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Deserialize,
-    Serialize,
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd
-)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, PartialOrd)]
 pub enum Edition {
     #[serde(rename = "2015")]
     Rust2015,

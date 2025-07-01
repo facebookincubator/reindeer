@@ -54,7 +54,7 @@ impl Debug for Name {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RuleRef {
     pub target: String,
     platform: Option<PlatformExpr>,
@@ -167,7 +167,7 @@ impl PartialOrd for BuckPath {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum StringOrPath {
     String(String),
@@ -191,11 +191,11 @@ impl SubtargetOrPath {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename = "select")]
 pub struct Select<K, V>(BTreeMap<K, V>);
 
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone)]
 pub enum Selectable<K, V> {
     Value(V),
     Select(Select<K, V>),
@@ -368,7 +368,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Visibility {
     Public,
     Private,
@@ -385,7 +385,7 @@ impl Serialize for Visibility {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct Alias {
     pub name: Name,
     /// Local target that the alias refers to -- always in the same package.
@@ -416,7 +416,7 @@ impl Serialize for NameAsLabel<'_> {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct Filegroup {
     pub name: Name,
     pub srcs: BTreeMap<BuckPath, SubtargetOrPath>,
@@ -539,7 +539,7 @@ impl Serialize for GitFetch {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug)]
 pub struct Common {
     pub name: Name,
     pub visibility: Visibility,
@@ -548,7 +548,7 @@ pub struct Common {
 }
 
 // Rule attributes which could be platform-specific
-#[derive(Debug, Default, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Default, Clone)]
 pub struct PlatformRustCommon {
     pub srcs: BTreeSet<BuckPath>,
     pub mapped_srcs: BTreeMap<SubtargetOrPath, BuckPath>,
@@ -614,7 +614,7 @@ impl Serialize for PlatformRustCommon {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug)]
 pub struct RustCommon {
     pub common: Common,
     pub krate: String,
@@ -678,7 +678,7 @@ where
     map.serialize_entry("platform", &Platforms(platforms))
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct RustLibrary {
     pub common: RustCommon,
     pub proc_macro: bool,
@@ -783,7 +783,7 @@ impl Serialize for RustLibrary {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct RustBinary {
     pub common: RustCommon,
 }
@@ -868,7 +868,7 @@ impl Serialize for RustBinary {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct BuildscriptGenrule {
     pub name: Name,
     pub buildscript_rule: Name,
@@ -913,7 +913,7 @@ impl Serialize for BuildscriptGenrule {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct CxxLibrary {
     pub common: Common,
     pub srcs: BTreeSet<SubtargetOrPath>,
@@ -1070,7 +1070,7 @@ impl<'a> Serialize for PreprocessorFlags<'a> {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct PrebuiltCxxLibrary {
     pub common: Common,
     pub static_lib: SubtargetOrPath,
