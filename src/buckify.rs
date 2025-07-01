@@ -582,7 +582,9 @@ fn generate_target_rules<'scope>(
     let mut platform_features = Vec::new();
     let mut feature_in_how_many_platforms = HashMap::new();
     for platform_name in config.platform.keys() {
-        let features = fixups.compute_features(platform_name)?;
+        let Some(features) = fixups.compute_features(platform_name)? else {
+            continue;
+        };
         for feature in &features {
             *feature_in_how_many_platforms
                 .entry(feature.clone())
@@ -590,17 +592,17 @@ fn generate_target_rules<'scope>(
         }
         platform_features.push((platform_name, features));
     }
-    for (platform_name, features) in platform_features {
-        for feature in features {
-            if feature_in_how_many_platforms[&feature] == config.platform.len() {
-                base.features.unwrap_mut().insert(feature);
+    for &(platform_name, ref features) in &platform_features {
+        for &feature in features {
+            if feature_in_how_many_platforms[feature] == platform_features.len() {
+                base.features.unwrap_mut().insert(feature.to_owned());
             } else {
                 perplat
                     .entry(platform_name.clone())
                     .or_insert_with(PlatformRustCommon::default)
                     .features
                     .unwrap_mut()
-                    .insert(feature);
+                    .insert(feature.to_owned());
             }
         }
     }
@@ -1037,7 +1039,7 @@ fn buckify_for_universe(
 
     log::trace!("Metadata {:#?}", metadata);
 
-    let index = index::Index::new(config.include_top_level, &metadata)?;
+    let index = index::Index::new(config, &metadata)?;
     crate::universe::validate_universe_config(universe, universe_config, &index)?;
 
     let context = &RuleContext {

@@ -11,6 +11,7 @@
 //! get metadata about a crate. It also defines all the types for deserializing from Cargo's
 //! JSON output.
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::env;
 use std::fmt;
@@ -277,6 +278,8 @@ pub struct Manifest {
     /// Targets in package
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub targets: Vec<ManifestTarget>,
+    /// The `[features]` section
+    pub features: BTreeMap<String, Vec<String>>,
     /// Path to Cargo.toml
     pub manifest_path: PathBuf,
     /// List of authors
@@ -345,14 +348,11 @@ pub struct ManifestDep {
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub kind: DepKind,
     /// Whether dependency is optional or not
-    #[expect(dead_code)]
     pub optional: bool,
     /// Whether or not to use default features
-    #[expect(dead_code)]
     pub uses_default_features: bool,
     /// Set of (additional) features
     #[serde(deserialize_with = "deserialize_default_from_null")]
-    #[expect(dead_code)]
     pub features: BTreeSet<String>,
     /// An "artifact dependency" for depending on a binary instead of (or in
     /// addition to) a package's library crate

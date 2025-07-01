@@ -602,13 +602,11 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_features(
         &self,
         platform_name: &PlatformName,
-    ) -> anyhow::Result<BTreeSet<String>> {
+    ) -> anyhow::Result<Option<BTreeSet<&str>>> {
         // Get features according to Cargo.
-        let mut features: BTreeSet<String> = self
-            .index
-            .resolved_features(self.package)
-            .map(str::to_owned)
-            .collect();
+        let Some(mut features) = self.index.resolved_features(self.package, platform_name) else {
+            return Ok(None);
+        };
 
         // Apply fixups.
         for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
@@ -619,15 +617,15 @@ impl<'meta> Fixups<'meta> {
                 None => true,
             } {
                 for feature in &fixup.omit_features {
-                    features.remove(feature);
+                    features.remove(feature.as_str());
                 }
                 for feature in &fixup.features {
-                    features.insert(feature.clone());
+                    features.insert(feature);
                 }
             }
         }
 
-        Ok(features)
+        Ok(Some(features))
     }
 
     fn buildscript_rustc_flags(

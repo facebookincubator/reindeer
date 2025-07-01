@@ -27,8 +27,6 @@
 //! and find which NodeDep provides that crate. The same NodeDep will provide
 //! all the other crates in this ManifestDep too.
 
-#![expect(dead_code)]
-
 use std::collections::HashMap;
 
 use anyhow::bail;
