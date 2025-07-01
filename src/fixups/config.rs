@@ -375,9 +375,6 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
                     }
                     export_sources = Some(map.next_value()?);
                 }
-                "platform_fixup" => {
-                    platform_fixup.extend(map.next_value::<BTreeMap<_, _>>()?);
-                }
                 _ => {
                     if field.starts_with("cfg(") {
                         let platform_expr = PlatformExpr::from(field);
