@@ -365,7 +365,7 @@ pub struct ManifestDep {
 }
 
 /// Kind of dependency
-#[derive(Debug, Default, Deserialize, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Default, Deserialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "kebab-case")]
 pub enum DepKind {
     /// Normal dependency
@@ -418,8 +418,8 @@ pub struct ManifestTarget {
 }
 
 impl ManifestTarget {
-    pub fn kind(&self) -> &TargetKind {
-        self.kind.iter().next().expect("need at least one kind")
+    pub fn kind(&self) -> TargetKind {
+        *self.kind.iter().next().expect("need at least one kind")
     }
 
     pub fn kind_bench(&self) -> bool {

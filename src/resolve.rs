@@ -46,7 +46,7 @@ use crate::platform::PlatformExpr;
 pub struct DepIndex<'meta> {
     pkgid: &'meta PkgId,
     deps: HashMap<
-        (&'meta str, &'meta DepKind, &'meta Option<PlatformExpr>),
+        (&'meta str, DepKind, &'meta Option<PlatformExpr>),
         Vec<(&'meta NodeDep, &'meta NodeDepKind, &'meta Manifest)>,
     >,
 }
@@ -61,7 +61,7 @@ impl<'meta> DepIndex<'meta> {
         for node_dep in &pkgid_to_node[pkgid].deps {
             let manifest = pkgid_to_pkg[&node_dep.pkg];
             for dep_kind in &node_dep.dep_kinds {
-                deps.entry((manifest.name.as_str(), &dep_kind.kind, &dep_kind.target))
+                deps.entry((manifest.name.as_str(), dep_kind.kind, &dep_kind.target))
                     .or_insert_with(Vec::new)
                     .push((node_dep, dep_kind, manifest));
             }
@@ -72,7 +72,7 @@ impl<'meta> DepIndex<'meta> {
     pub fn resolve(&self, manifest_dep: &'meta ManifestDep) -> anyhow::Result<&'meta NodeDep> {
         let Some(candidates) = self.deps.get(&(
             manifest_dep.name.as_str(),
-            &manifest_dep.kind,
+            manifest_dep.kind,
             &manifest_dep.target,
         )) else {
             bail!(
