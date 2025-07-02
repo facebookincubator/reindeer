@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error;
@@ -16,6 +17,9 @@ use nom_language::error::VerboseError;
 use nom_language::error::convert_error;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::de::Deserializer;
+use serde::de::MapAccess;
+use serde::de::Visitor;
 
 use crate::cfg;
 use crate::config::Config;
@@ -23,16 +27,51 @@ use crate::config::Config;
 /// A single PlatformConfig represents a single platform. Each field represents a set of
 /// platform attributes which are true for this platform. A non-present attribute means
 /// "doesn't matter" or "all possible values".
-#[derive(Clone, Default, Deserialize)]
-pub struct PlatformConfig(HashMap<String, HashSet<String>>);
+#[derive(Clone, Debug)]
+pub struct PlatformConfig {
+    pub is_execution_platform: Option<bool>,
+    pub execution_platforms: BTreeSet<PlatformName>,
+    pub cfg: HashMap<String, HashSet<String>>,
+}
 
-impl Debug for PlatformConfig {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        // More compact than a derived Debug impl
-        let PlatformConfig(map) = self;
-        fmt.write_str("PlatformConfig(")?;
-        Debug::fmt(map, fmt)?;
-        fmt.write_str(")")
+impl<'de> Deserialize<'de> for PlatformConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PlatformConfigVisitor;
+
+        impl<'de> Visitor<'de> for PlatformConfigVisitor {
+            type Value = PlatformConfig;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct PlatformConfig")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut is_execution_platform = None;
+                let mut cfg = HashMap::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    if key == "execution-platform" {
+                        is_execution_platform = map.next_value()?;
+                    } else {
+                        let values: HashSet<String> = map.next_value()?;
+                        cfg.insert(key, values);
+                    }
+                }
+                Ok(PlatformConfig {
+                    is_execution_platform,
+                    // Populated later.
+                    execution_platforms: BTreeSet::new(),
+                    cfg,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(PlatformConfigVisitor)
     }
 }
 
@@ -143,12 +182,12 @@ impl<'a> PlatformPredicate<'a> {
         use PlatformPredicate::*;
 
         match self {
-            Bool { key } => config.0.contains_key(*key),
+            Bool { key } => config.cfg.contains_key(*key),
             Value { key: "feature", .. } => {
                 // [target.'cfg(feature = "...")'.dependencies] never get applied by Cargo
                 false
             }
-            Value { key, value } => config.0.get(*key).is_some_and(|set| set.contains(*value)),
+            Value { key, value } => config.cfg.get(*key).is_some_and(|set| set.contains(*value)),
             Not(pred) => !pred.eval(config),
             Any(preds) => preds.iter().any(|pred| pred.eval(config)),
             All(preds) => preds.iter().all(|pred| pred.eval(config)),

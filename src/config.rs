@@ -23,6 +23,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
+use anyhow::bail;
 use monostate::MustBe;
 use serde::Deserialize;
 use serde::Serialize;
@@ -356,6 +357,38 @@ pub fn read_config(reindeer_toml: &Path) -> anyhow::Result<Config> {
         }
 
         config.buck.buckfile_imports = buckfile_imports.into();
+    }
+
+    // Compute execution platforms.
+    if config
+        .platform
+        .values()
+        .any(|plat| plat.is_execution_platform.is_some())
+    {
+        // Every platform marked with `execution-platform = true` is considered
+        // a possible execution platform all target platforms.
+        let mut execution_platforms = BTreeSet::new();
+        for (platform_name, platform_config) in &config.platform {
+            let Some(is_execution_platform) = platform_config.is_execution_platform else {
+                bail!(
+                    "Missing `execution-platform = true` or `execution-platform = false` for platform \"{platform_name}\"",
+                );
+            };
+            if is_execution_platform {
+                execution_platforms.insert(platform_name.clone());
+            }
+        }
+        for platform_config in config.platform.values_mut() {
+            platform_config.execution_platforms = execution_platforms.clone();
+        }
+    } else {
+        // Every platform is its own execution platform. Suitable for local
+        // execution without cross-compilation.
+        for (platform_name, platform_config) in &mut config.platform {
+            platform_config
+                .execution_platforms
+                .insert(platform_name.clone());
+        }
     }
 
     Ok(config)
