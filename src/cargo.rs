@@ -26,6 +26,7 @@ use std::process::Stdio;
 use std::thread;
 
 use anyhow::Context;
+use itertools::Itertools as _;
 use semver::VersionReq;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -43,8 +44,7 @@ pub fn cargo_get_lockfile_and_metadata(
     config: &Config,
     args: &Args,
     paths: &Paths,
-    features: String,
-    default_features: bool,
+    features: Option<&BTreeSet<String>>,
 ) -> anyhow::Result<(Lockfile, Metadata)> {
     let mut cargo_flags = vec![
         "metadata",
@@ -52,14 +52,16 @@ pub fn cargo_get_lockfile_and_metadata(
         "1",
         "--manifest-path",
         paths.manifest_path.to_str().unwrap(),
-        "--features",
-        &features,
     ];
 
-    // When requested, don't include the default features of the root crate
-    // (which make up the selected feature set of the DEFAULT universe).
-    if !default_features {
-        cargo_flags.push("--no-default-features");
+    let comma_separated_features;
+    if let Some(features) = features {
+        comma_separated_features = features.iter().join(",");
+        cargo_flags.extend([
+            "--no-default-features",
+            "--features",
+            &comma_separated_features,
+        ]);
     }
 
     let cargo_home;

@@ -23,8 +23,8 @@ use crate::config::StringWithDefault;
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UniverseConfig {
     /// A set of additional features to enable in this universe only.
-    #[serde(default)]
-    pub features: BTreeSet<String>,
+    /// If omitted, the "default" feature will be enabled if one exists.
+    pub features: Option<BTreeSet<String>>,
     /// The Buck2 `select` key to use for this universe.
     pub constraint: StringWithDefault<MustBe!("DEFAULT")>,
     /// When present, the universe will contain only crates reachable from this
@@ -360,7 +360,7 @@ pub fn validate_universe_config(
     config: &UniverseConfig,
     index: &crate::index::Index,
 ) -> anyhow::Result<()> {
-    for feature in &config.features {
+    for feature in config.features.iter().flatten() {
         if feature.contains('/') {
             anyhow::bail!(
                 "Universe {universe_name} specifies features {feature:?}. \
