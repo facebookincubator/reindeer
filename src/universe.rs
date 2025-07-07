@@ -360,6 +360,15 @@ pub fn validate_universe_config(
     config: &UniverseConfig,
     index: &crate::index::Index,
 ) -> anyhow::Result<()> {
+    for feature in &config.features {
+        if feature.contains('/') {
+            anyhow::bail!(
+                "Universe {universe_name} specifies features {feature:?}. \
+                 Features containing '/' are not supported in universe configuration. \
+                 Move this to a feature in the [features] section of Cargo.toml."
+            );
+        }
+    }
     for krate in &config.include_crates {
         if !index.is_public_package_name(krate) {
             anyhow::bail!(
