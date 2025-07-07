@@ -995,7 +995,6 @@ fn buckify_for_universe(
     universe: &UniverseName,
 ) -> anyhow::Result<BTreeSet<Rule>> {
     let universe_config = &config.universe[universe];
-    let features = universe_config.features.as_ref();
     let (lockfile, metadata) = {
         let _guard = if universe_config.include_crates.is_empty() {
             None
@@ -1007,12 +1006,12 @@ fn buckify_for_universe(
         };
         log::info!("Running `cargo metadata` for universe {universe}...");
         measure_time::info_time!("Running `cargo metadata`");
-        cargo_get_lockfile_and_metadata(config, args, paths, features)?
+        cargo_get_lockfile_and_metadata(config, args, paths)?
     };
 
     log::trace!("Metadata {:#?}", metadata);
 
-    let index = index::Index::new(config, &metadata)?;
+    let index = index::Index::new(config, &metadata, universe_config)?;
     crate::universe::validate_universe_config(universe, universe_config, &index)?;
 
     let context = &RuleContext {

@@ -26,7 +26,6 @@ use std::process::Stdio;
 use std::thread;
 
 use anyhow::Context;
-use itertools::Itertools as _;
 use semver::VersionReq;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -44,7 +43,6 @@ pub fn cargo_get_lockfile_and_metadata(
     config: &Config,
     args: &Args,
     paths: &Paths,
-    features: Option<&BTreeSet<String>>,
 ) -> anyhow::Result<(Lockfile, Metadata)> {
     let mut cargo_flags = vec![
         "metadata",
@@ -52,17 +50,8 @@ pub fn cargo_get_lockfile_and_metadata(
         "1",
         "--manifest-path",
         paths.manifest_path.to_str().unwrap(),
+        "--all-features",
     ];
-
-    let comma_separated_features;
-    if let Some(features) = features {
-        comma_separated_features = features.iter().join(",");
-        cargo_flags.extend([
-            "--no-default-features",
-            "--features",
-            &comma_separated_features,
-        ]);
-    }
 
     let cargo_home;
     let lockfile;
@@ -514,6 +503,7 @@ pub struct Node {
     /// Dependencies with rename information
     pub deps: Vec<NodeDep>,
     /// Features selected for package
+    #[expect(dead_code)]
     pub features: BTreeSet<String>,
 }
 

@@ -29,6 +29,7 @@ use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
 use crate::resolve::DepIndex;
+use crate::universe::UniverseConfig;
 
 /// Index for interesting things in Cargo metadata
 pub struct Index<'meta> {
@@ -81,7 +82,11 @@ impl<'meta> Index<'meta> {
     /// Construct an index for a set of Cargo metadata to allow convenient and efficient
     /// queries. The metadata represents a top level package and all its transitive
     /// dependencies.
-    pub fn new(config: &'meta Config, metadata: &'meta Metadata) -> anyhow::Result<Index<'meta>> {
+    pub fn new(
+        config: &'meta Config,
+        metadata: &'meta Metadata,
+        universe_config: &'meta UniverseConfig,
+    ) -> anyhow::Result<Index<'meta>> {
         let pkgid_to_pkg: HashMap<_, _> = metadata.packages.iter().map(|m| (&m.id, m)).collect();
 
         let root_pkg = metadata.resolve.root.as_ref().map(|root_pkgid| {
@@ -170,24 +175,36 @@ impl<'meta> Index<'meta> {
 
         for platform_name in config.platform.keys() {
             // Feature selection for the current workspace.
-            for pkgid in &index.workspace_packages {
+            for pkg in &index.workspace_members {
                 enable_crate_for_platform(
                     &mut index.pkgid_platform_features,
                     &index.pkgid_to_pkg,
                     &index.pkgid_to_node,
                     config,
-                    pkgid,
+                    &pkg.id,
                     platform_name,
                 )?;
-                for feature in &index.pkgid_to_node.get(pkgid).unwrap().features {
+                if let Some(features) = &universe_config.features {
+                    for feature in features {
+                        enable_feature_for_platform(
+                            &mut index.pkgid_platform_features,
+                            &index.pkgid_to_pkg,
+                            &index.pkgid_to_node,
+                            config,
+                            &pkg.id,
+                            platform_name,
+                            feature,
+                        )?;
+                    }
+                } else if pkg.features.contains_key("default") {
                     enable_feature_for_platform(
                         &mut index.pkgid_platform_features,
                         &index.pkgid_to_pkg,
                         &index.pkgid_to_node,
                         config,
-                        pkgid,
+                        &pkg.id,
                         platform_name,
-                        feature,
+                        "default",
                     )?;
                 }
             }
