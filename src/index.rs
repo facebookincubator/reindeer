@@ -137,22 +137,17 @@ impl<'meta> Index<'meta> {
             .iter()
             .flat_map(|member| &index.pkgid_to_node[&member.id].deps)
             .flat_map(|node_dep| {
+                let pkg = &index.pkgid_to_pkg[&node_dep.pkg];
                 node_dep.dep_kinds.iter().map(|dep_kind| {
-                    (
-                        node_dep
-                            .name
-                            .as_deref()
-                            .or(dep_kind.extern_name.as_deref())
-                            .unwrap(),
-                        dep_kind,
-                        index.pkgid_to_pkg[&node_dep.pkg],
-                    )
+                    let name = node_dep
+                        .name
+                        .as_deref()
+                        .or(dep_kind.extern_name.as_deref())
+                        .unwrap();
+                    let target_req = dep_kind.target_req();
+                    let opt_rename = dep_renamed.get(name).cloned();
+                    ((&pkg.id, target_req), opt_rename)
                 })
-            })
-            .flat_map(|(rename, dep_kind, pkg)| {
-                let target_req = dep_kind.target_req();
-                let opt_rename = dep_renamed.get(rename).cloned();
-                vec![((&pkg.id, target_req), opt_rename)]
             })
             .chain(top_levels.iter().flat_map(|pkgid| {
                 [
