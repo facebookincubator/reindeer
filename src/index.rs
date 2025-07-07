@@ -173,39 +173,23 @@ impl<'meta> Index<'meta> {
                 });
         }
 
+        let mut resolve = FeatureResolver {
+            pkgid_platform_features: &mut index.pkgid_platform_features,
+            pkgid_to_pkg: &index.pkgid_to_pkg,
+            pkgid_to_node: &index.pkgid_to_node,
+            config,
+        };
+
         for platform_name in config.platform.keys() {
             // Feature selection for the current workspace.
             for pkg in &index.workspace_members {
-                enable_crate_for_platform(
-                    &mut index.pkgid_platform_features,
-                    &index.pkgid_to_pkg,
-                    &index.pkgid_to_node,
-                    config,
-                    &pkg.id,
-                    platform_name,
-                )?;
+                resolve.enable_crate_for_platform(&pkg.id, platform_name)?;
                 if let Some(features) = &universe_config.features {
                     for feature in features {
-                        enable_feature_for_platform(
-                            &mut index.pkgid_platform_features,
-                            &index.pkgid_to_pkg,
-                            &index.pkgid_to_node,
-                            config,
-                            &pkg.id,
-                            platform_name,
-                            feature,
-                        )?;
+                        resolve.enable_feature_for_platform(&pkg.id, platform_name, feature)?;
                     }
                 } else if pkg.features.contains_key("default") {
-                    enable_feature_for_platform(
-                        &mut index.pkgid_platform_features,
-                        &index.pkgid_to_pkg,
-                        &index.pkgid_to_node,
-                        config,
-                        &pkg.id,
-                        platform_name,
-                        "default",
-                    )?;
+                    resolve.enable_feature_for_platform(&pkg.id, platform_name, "default")?;
                 }
             }
         }
@@ -361,325 +345,264 @@ impl<'meta> Index<'meta> {
     }
 }
 
-fn enable_crate_for_platform<'meta>(
-    pkgid_platform_features: &mut HashMap<
-        (&'meta PkgId, &'meta PlatformName),
-        ResolvedFeatures<'meta>,
-    >,
-    pkgid_to_pkg: &HashMap<&'meta PkgId, &'meta Manifest>,
-    pkgid_to_node: &HashMap<&'meta PkgId, &'meta Node>,
+/// Information referenced while computing feature resolution for an Index.
+#[derive(Debug)]
+struct FeatureResolver<'a, 'meta> {
+    pkgid_platform_features:
+        &'a mut HashMap<(&'meta PkgId, &'meta PlatformName), ResolvedFeatures<'meta>>,
+    pkgid_to_pkg: &'a HashMap<&'meta PkgId, &'meta Manifest>,
+    pkgid_to_node: &'a HashMap<&'meta PkgId, &'meta Node>,
     config: &'meta Config,
-    pkgid: &'meta PkgId,
-    platform_name: &'meta PlatformName,
-) -> anyhow::Result<()> {
-    let resolve = pkgid_platform_features
-        .entry((pkgid, platform_name))
-        .or_insert_with(ResolvedFeatures::default);
-    if resolve.enabled {
-        // Already been enabled.
-        return Ok(());
-    }
-
-    resolve.enabled = true;
-
-    // Make an index of Cargo's resolution of the dependencies.
-    let dep_index = DepIndex::new(pkgid_to_pkg, pkgid_to_node, pkgid);
-
-    // Go through the manifest dependencies and enable all that are non-optional.
-    for manifest_dep in &pkgid_to_pkg[pkgid].dependencies {
-        if !manifest_dep.optional
-            && match manifest_dep.kind {
-                DepKind::Normal | DepKind::Build => true,
-                DepKind::Dev => false,
-            }
-            && match &manifest_dep.target {
-                Some(platform_expr) => {
-                    PlatformPredicate::parse(platform_expr)?.eval(&config.platform[platform_name])
-                }
-                None => true,
-            }
-        {
-            let node_dep = dep_index.resolve(manifest_dep)?;
-            for dep_kind in &node_dep.dep_kinds {
-                pkgid_platform_features
-                    .entry((pkgid, platform_name))
-                    .or_insert_with(ResolvedFeatures::default)
-                    .deps
-                    .insert((
-                        node_dep
-                            .name
-                            .as_deref()
-                            .or(dep_kind.extern_name.as_deref())
-                            .unwrap(),
-                        dep_kind,
-                        &node_dep.pkg,
-                    ));
-            }
-            for dep_platform_name in platforms_for_dependency(
-                node_dep,
-                pkgid_to_pkg[&node_dep.pkg],
-                platform_name,
-                &config.platform[platform_name],
-            ) {
-                enable_crate_for_platform(
-                    pkgid_platform_features,
-                    pkgid_to_pkg,
-                    pkgid_to_node,
-                    config,
-                    &node_dep.pkg,
-                    dep_platform_name,
-                )?;
-                if manifest_dep.uses_default_features
-                    && pkgid_to_pkg[&node_dep.pkg].features.contains_key("default")
-                {
-                    enable_feature_for_platform(
-                        pkgid_platform_features,
-                        pkgid_to_pkg,
-                        pkgid_to_node,
-                        config,
-                        &node_dep.pkg,
-                        dep_platform_name,
-                        "default",
-                    )?;
-                }
-                for required_feature in &manifest_dep.features {
-                    enable_feature_for_platform(
-                        pkgid_platform_features,
-                        pkgid_to_pkg,
-                        pkgid_to_node,
-                        config,
-                        &node_dep.pkg,
-                        dep_platform_name,
-                        required_feature,
-                    )?;
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
-fn enable_feature_for_platform<'meta>(
-    pkgid_platform_features: &mut HashMap<
-        (&'meta PkgId, &'meta PlatformName),
-        ResolvedFeatures<'meta>,
-    >,
-    pkgid_to_pkg: &HashMap<&'meta PkgId, &'meta Manifest>,
-    pkgid_to_node: &HashMap<&'meta PkgId, &'meta Node>,
-    config: &'meta Config,
-    pkgid: &'meta PkgId,
-    platform_name: &'meta PlatformName,
-    enable_feature: &'meta str,
-) -> anyhow::Result<()> {
-    let resolve = pkgid_platform_features
-        .entry((pkgid, platform_name))
-        .or_insert_with(ResolvedFeatures::default);
-    if resolve.features.insert(enable_feature) {
-        if let Some(enable_dependency) = enable_feature.strip_prefix("dep:") {
-            enable_dependency_for_platform(
-                pkgid_platform_features,
-                pkgid_to_pkg,
-                pkgid_to_node,
-                config,
-                pkgid,
-                platform_name,
-                enable_dependency,
-            )?;
-        } else {
-            let pkg = pkgid_to_pkg[pkgid];
-            if let Some(required_features) = pkg.features.get(enable_feature) {
-                for required_feature in required_features {
-                    if let Some((dep, enable_feature)) = required_feature.split_once("/") {
-                        let enable_dep = !dep.ends_with('?');
-                        let dep = dep.strip_suffix('?').unwrap_or(dep);
-                        // Find which dependency this feature refers to.
-                        let dep_index = DepIndex::new(pkgid_to_pkg, pkgid_to_node, pkgid);
-                        for manifest_dep in &pkgid_to_pkg[pkgid].dependencies {
-                            if dep == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
-                                && match manifest_dep.kind {
-                                    DepKind::Normal | DepKind::Build => true,
-                                    DepKind::Dev => false,
-                                }
-                                && match &manifest_dep.target {
-                                    Some(platform_expr) => PlatformPredicate::parse(platform_expr)?
-                                        .eval(&config.platform[platform_name]),
-                                    None => true,
-                                }
-                            {
-                                let node_dep = dep_index.resolve(manifest_dep)?;
-                                let dep_platforms = platforms_for_dependency(
-                                    node_dep,
-                                    pkgid_to_pkg[&node_dep.pkg],
-                                    platform_name,
-                                    &config.platform[platform_name],
-                                );
-                                if manifest_dep.optional && enable_dep {
-                                    if pkg.features.contains_key(dep) {
-                                        enable_feature_for_platform(
-                                            pkgid_platform_features,
-                                            pkgid_to_pkg,
-                                            pkgid_to_node,
-                                            config,
-                                            pkgid,
-                                            platform_name,
-                                            dep,
-                                        )?;
-                                    }
-                                    enable_dependency_for_platform(
-                                        pkgid_platform_features,
-                                        pkgid_to_pkg,
-                                        pkgid_to_node,
-                                        config,
-                                        pkgid,
-                                        platform_name,
-                                        dep,
-                                    )?;
-                                    for &dep_platform_name in &dep_platforms {
-                                        if manifest_dep.uses_default_features
-                                            && pkgid_to_pkg[&node_dep.pkg]
-                                                .features
-                                                .contains_key("default")
-                                        {
-                                            enable_feature_for_platform(
-                                                pkgid_platform_features,
-                                                pkgid_to_pkg,
-                                                pkgid_to_node,
-                                                config,
-                                                &node_dep.pkg,
-                                                dep_platform_name,
-                                                "default",
-                                            )?;
-                                        }
-                                        for required_feature in &manifest_dep.features {
-                                            enable_feature_for_platform(
-                                                pkgid_platform_features,
-                                                pkgid_to_pkg,
-                                                pkgid_to_node,
-                                                config,
-                                                &node_dep.pkg,
-                                                dep_platform_name,
-                                                required_feature,
-                                            )?;
-                                        }
-                                    }
-                                }
-                                for dep_platform_name in dep_platforms {
-                                    enable_feature_for_platform(
-                                        pkgid_platform_features,
-                                        pkgid_to_pkg,
-                                        pkgid_to_node,
-                                        config,
-                                        &node_dep.pkg,
-                                        dep_platform_name,
-                                        enable_feature,
-                                    )?;
-                                }
-                            }
-                        }
-                    } else {
-                        enable_feature_for_platform(
-                            pkgid_platform_features,
-                            pkgid_to_pkg,
-                            pkgid_to_node,
-                            config,
-                            pkgid,
-                            platform_name,
+impl<'a, 'meta> FeatureResolver<'a, 'meta> {
+    fn enable_crate_for_platform(
+        &mut self,
+        pkgid: &'meta PkgId,
+        platform_name: &'meta PlatformName,
+    ) -> anyhow::Result<()> {
+        let resolve = self
+            .pkgid_platform_features
+            .entry((pkgid, platform_name))
+            .or_insert_with(ResolvedFeatures::default);
+        if resolve.enabled {
+            // Already been enabled.
+            return Ok(());
+        }
+
+        resolve.enabled = true;
+
+        // Make an index of Cargo's resolution of the dependencies.
+        let dep_index = DepIndex::new(self.pkgid_to_pkg, self.pkgid_to_node, pkgid);
+
+        // Go through the manifest dependencies and enable all that are non-optional.
+        for manifest_dep in &self.pkgid_to_pkg[pkgid].dependencies {
+            if !manifest_dep.optional
+                && match manifest_dep.kind {
+                    DepKind::Normal | DepKind::Build => true,
+                    DepKind::Dev => false,
+                }
+                && match &manifest_dep.target {
+                    Some(platform_expr) => PlatformPredicate::parse(platform_expr)?
+                        .eval(&self.config.platform[platform_name]),
+                    None => true,
+                }
+            {
+                let node_dep = dep_index.resolve(manifest_dep)?;
+                for dep_kind in &node_dep.dep_kinds {
+                    self.pkgid_platform_features
+                        .entry((pkgid, platform_name))
+                        .or_insert_with(ResolvedFeatures::default)
+                        .deps
+                        .insert((
+                            node_dep
+                                .name
+                                .as_deref()
+                                .or(dep_kind.extern_name.as_deref())
+                                .unwrap(),
+                            dep_kind,
+                            &node_dep.pkg,
+                        ));
+                }
+                for dep_platform_name in platforms_for_dependency(
+                    node_dep,
+                    self.pkgid_to_pkg[&node_dep.pkg],
+                    platform_name,
+                    &self.config.platform[platform_name],
+                ) {
+                    self.enable_crate_for_platform(&node_dep.pkg, dep_platform_name)?;
+                    if manifest_dep.uses_default_features
+                        && self.pkgid_to_pkg[&node_dep.pkg]
+                            .features
+                            .contains_key("default")
+                    {
+                        self.enable_feature_for_platform(
+                            &node_dep.pkg,
+                            dep_platform_name,
+                            "default",
+                        )?;
+                    }
+                    for required_feature in &manifest_dep.features {
+                        self.enable_feature_for_platform(
+                            &node_dep.pkg,
+                            dep_platform_name,
                             required_feature,
                         )?;
                     }
                 }
             }
         }
+        Ok(())
     }
-    Ok(())
-}
 
-fn enable_dependency_for_platform<'meta>(
-    pkgid_platform_features: &mut HashMap<
-        (&'meta PkgId, &'meta PlatformName),
-        ResolvedFeatures<'meta>,
-    >,
-    pkgid_to_pkg: &HashMap<&'meta PkgId, &'meta Manifest>,
-    pkgid_to_node: &HashMap<&'meta PkgId, &'meta Node>,
-    config: &'meta Config,
-    pkgid: &'meta PkgId,
-    platform_name: &'meta PlatformName,
-    enable_dependency: &'meta str,
-) -> anyhow::Result<()> {
-    // Find the matching crate and enable it.
-    let dep_index = DepIndex::new(pkgid_to_pkg, pkgid_to_node, pkgid);
-    for manifest_dep in &pkgid_to_pkg[pkgid].dependencies {
-        if enable_dependency == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
-            && manifest_dep.optional
-            && match manifest_dep.kind {
-                DepKind::Normal | DepKind::Build => true,
-                DepKind::Dev => false,
-            }
-            && match &manifest_dep.target {
-                Some(platform_expr) => {
-                    PlatformPredicate::parse(platform_expr)?.eval(&config.platform[platform_name])
-                }
-                None => true,
-            }
-        {
-            let node_dep = dep_index.resolve(manifest_dep)?;
-            for dep_kind in &node_dep.dep_kinds {
-                pkgid_platform_features
-                    .entry((pkgid, platform_name))
-                    .or_insert_with(ResolvedFeatures::default)
-                    .deps
-                    .insert((
-                        node_dep
-                            .name
-                            .as_deref()
-                            .or(dep_kind.extern_name.as_deref())
-                            .unwrap(),
-                        dep_kind,
-                        &node_dep.pkg,
-                    ));
-            }
-            for dep_platform_name in platforms_for_dependency(
-                node_dep,
-                pkgid_to_pkg[&node_dep.pkg],
-                platform_name,
-                &config.platform[platform_name],
-            ) {
-                enable_crate_for_platform(
-                    pkgid_platform_features,
-                    pkgid_to_pkg,
-                    pkgid_to_node,
-                    config,
-                    &node_dep.pkg,
-                    dep_platform_name,
-                )?;
-                if manifest_dep.uses_default_features
-                    && pkgid_to_pkg[&node_dep.pkg].features.contains_key("default")
-                {
-                    enable_feature_for_platform(
-                        pkgid_platform_features,
-                        pkgid_to_pkg,
-                        pkgid_to_node,
-                        config,
-                        &node_dep.pkg,
-                        dep_platform_name,
-                        "default",
-                    )?;
-                }
-                for required_feature in &manifest_dep.features {
-                    enable_feature_for_platform(
-                        pkgid_platform_features,
-                        pkgid_to_pkg,
-                        pkgid_to_node,
-                        config,
-                        &node_dep.pkg,
-                        dep_platform_name,
-                        required_feature,
-                    )?;
+    fn enable_feature_for_platform(
+        &mut self,
+        pkgid: &'meta PkgId,
+        platform_name: &'meta PlatformName,
+        enable_feature: &'meta str,
+    ) -> anyhow::Result<()> {
+        let resolve = self
+            .pkgid_platform_features
+            .entry((pkgid, platform_name))
+            .or_insert_with(ResolvedFeatures::default);
+        if resolve.features.insert(enable_feature) {
+            if let Some(enable_dependency) = enable_feature.strip_prefix("dep:") {
+                self.enable_dependency_for_platform(pkgid, platform_name, enable_dependency)?;
+            } else {
+                let pkg = self.pkgid_to_pkg[pkgid];
+                if let Some(required_features) = pkg.features.get(enable_feature) {
+                    for required_feature in required_features {
+                        if let Some((dep, enable_feature)) = required_feature.split_once("/") {
+                            let enable_dep = !dep.ends_with('?');
+                            let dep = dep.strip_suffix('?').unwrap_or(dep);
+                            // Find which dependency this feature refers to.
+                            let dep_index =
+                                DepIndex::new(self.pkgid_to_pkg, self.pkgid_to_node, pkgid);
+                            for manifest_dep in &self.pkgid_to_pkg[pkgid].dependencies {
+                                if dep == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
+                                    && match manifest_dep.kind {
+                                        DepKind::Normal | DepKind::Build => true,
+                                        DepKind::Dev => false,
+                                    }
+                                    && match &manifest_dep.target {
+                                        Some(platform_expr) => {
+                                            PlatformPredicate::parse(platform_expr)?
+                                                .eval(&self.config.platform[platform_name])
+                                        }
+                                        None => true,
+                                    }
+                                {
+                                    let node_dep = dep_index.resolve(manifest_dep)?;
+                                    let dep_platforms = platforms_for_dependency(
+                                        node_dep,
+                                        self.pkgid_to_pkg[&node_dep.pkg],
+                                        platform_name,
+                                        &self.config.platform[platform_name],
+                                    );
+                                    if manifest_dep.optional && enable_dep {
+                                        if pkg.features.contains_key(dep) {
+                                            self.enable_feature_for_platform(
+                                                pkgid,
+                                                platform_name,
+                                                dep,
+                                            )?;
+                                        }
+                                        self.enable_dependency_for_platform(
+                                            pkgid,
+                                            platform_name,
+                                            dep,
+                                        )?;
+                                        for &dep_platform_name in &dep_platforms {
+                                            if manifest_dep.uses_default_features
+                                                && self.pkgid_to_pkg[&node_dep.pkg]
+                                                    .features
+                                                    .contains_key("default")
+                                            {
+                                                self.enable_feature_for_platform(
+                                                    &node_dep.pkg,
+                                                    dep_platform_name,
+                                                    "default",
+                                                )?;
+                                            }
+                                            for required_feature in &manifest_dep.features {
+                                                self.enable_feature_for_platform(
+                                                    &node_dep.pkg,
+                                                    dep_platform_name,
+                                                    required_feature,
+                                                )?;
+                                            }
+                                        }
+                                    }
+                                    for dep_platform_name in dep_platforms {
+                                        self.enable_feature_for_platform(
+                                            &node_dep.pkg,
+                                            dep_platform_name,
+                                            enable_feature,
+                                        )?;
+                                    }
+                                }
+                            }
+                        } else {
+                            self.enable_feature_for_platform(
+                                pkgid,
+                                platform_name,
+                                required_feature,
+                            )?;
+                        }
+                    }
                 }
             }
         }
+        Ok(())
     }
-    Ok(())
+
+    fn enable_dependency_for_platform(
+        &mut self,
+        pkgid: &'meta PkgId,
+        platform_name: &'meta PlatformName,
+        enable_dependency: &'meta str,
+    ) -> anyhow::Result<()> {
+        // Find the matching crate and enable it.
+        let dep_index = DepIndex::new(self.pkgid_to_pkg, self.pkgid_to_node, pkgid);
+        for manifest_dep in &self.pkgid_to_pkg[pkgid].dependencies {
+            if enable_dependency == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
+                && manifest_dep.optional
+                && match manifest_dep.kind {
+                    DepKind::Normal | DepKind::Build => true,
+                    DepKind::Dev => false,
+                }
+                && match &manifest_dep.target {
+                    Some(platform_expr) => PlatformPredicate::parse(platform_expr)?
+                        .eval(&self.config.platform[platform_name]),
+                    None => true,
+                }
+            {
+                let node_dep = dep_index.resolve(manifest_dep)?;
+                for dep_kind in &node_dep.dep_kinds {
+                    self.pkgid_platform_features
+                        .entry((pkgid, platform_name))
+                        .or_insert_with(ResolvedFeatures::default)
+                        .deps
+                        .insert((
+                            node_dep
+                                .name
+                                .as_deref()
+                                .or(dep_kind.extern_name.as_deref())
+                                .unwrap(),
+                            dep_kind,
+                            &node_dep.pkg,
+                        ));
+                }
+                for dep_platform_name in platforms_for_dependency(
+                    node_dep,
+                    self.pkgid_to_pkg[&node_dep.pkg],
+                    platform_name,
+                    &self.config.platform[platform_name],
+                ) {
+                    self.enable_crate_for_platform(&node_dep.pkg, dep_platform_name)?;
+                    if manifest_dep.uses_default_features
+                        && self.pkgid_to_pkg[&node_dep.pkg]
+                            .features
+                            .contains_key("default")
+                    {
+                        self.enable_feature_for_platform(
+                            &node_dep.pkg,
+                            dep_platform_name,
+                            "default",
+                        )?;
+                    }
+                    for required_feature in &manifest_dep.features {
+                        self.enable_feature_for_platform(
+                            &node_dep.pkg,
+                            dep_platform_name,
+                            required_feature,
+                        )?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 fn platforms_for_dependency<'meta>(
