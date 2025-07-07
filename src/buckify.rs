@@ -53,6 +53,7 @@ use crate::cargo::ArtifactKind;
 use crate::cargo::Edition;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
+use crate::cargo::Metadata;
 use crate::cargo::PkgId;
 use crate::cargo::Source;
 use crate::cargo::TargetReq;
@@ -155,7 +156,7 @@ struct RuleContext<'meta> {
     config: &'meta Config,
     paths: &'meta Paths,
     index: index::Index<'meta>,
-    lockfile: Lockfile,
+    lockfile: &'meta Lockfile,
     done: Mutex<HashSet<(&'meta PkgId, TargetReq<'meta>)>>,
 }
 
@@ -990,20 +991,13 @@ fn generate_target_rules<'scope>(
 
 fn buckify_for_universe(
     config: &Config,
-    args: &Args,
     paths: &Paths,
     universe: &UniverseName,
+    lockfile: &Lockfile,
+    metadata: &Metadata,
 ) -> anyhow::Result<BTreeSet<Rule>> {
     let universe_config = &config.universe[universe];
-    let (lockfile, metadata) = {
-        log::info!("Running `cargo metadata` for universe {universe}...");
-        measure_time::info_time!("Running `cargo metadata`");
-        cargo_get_lockfile_and_metadata(config, args, paths)?
-    };
-
-    log::trace!("Metadata {:#?}", metadata);
-
-    let index = index::Index::new(config, &metadata, universe_config)?;
+    let index = index::Index::new(config, metadata, universe_config)?;
     crate::universe::validate_universe_config(universe, universe_config, &index)?;
 
     let context = &RuleContext {
@@ -1117,9 +1111,17 @@ pub(crate) fn buckify(
     paths: &Paths,
     stdout: bool,
 ) -> anyhow::Result<()> {
+    let (lockfile, metadata) = {
+        log::info!("Running `cargo metadata`...");
+        measure_time::info_time!("Running `cargo metadata`");
+        cargo_get_lockfile_and_metadata(config, args, paths)?
+    };
+
+    log::trace!("Metadata {:#?}", metadata);
+
     let mut rules = BTreeMap::new();
     for universe in config.universe.keys().cloned() {
-        let universe_rules = buckify_for_universe(config, args, paths, &universe)?;
+        let universe_rules = buckify_for_universe(config, paths, &universe, &lockfile, &metadata)?;
         rules.insert(universe, universe_rules);
     }
     let rules = crate::universe::merge_universes(&config.universe, rules)?;
