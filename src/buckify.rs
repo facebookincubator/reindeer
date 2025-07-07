@@ -996,14 +996,6 @@ fn buckify_for_universe(
 ) -> anyhow::Result<BTreeSet<Rule>> {
     let universe_config = &config.universe[universe];
     let (lockfile, metadata) = {
-        let _guard = if universe_config.include_crates.is_empty() {
-            None
-        } else {
-            Some(crate::universe::mutate_manifest(
-                universe_config,
-                &paths.manifest_path,
-            ))
-        };
         log::info!("Running `cargo metadata` for universe {universe}...");
         measure_time::info_time!("Running `cargo metadata`");
         cargo_get_lockfile_and_metadata(config, args, paths)?

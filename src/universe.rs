@@ -8,10 +8,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
-use std::path::Path;
-use std::path::PathBuf;
 
-use anyhow::Context;
 use monostate::MustBe;
 use serde::Deserialize;
 use serde::Serialize;
@@ -265,94 +262,6 @@ pub fn merge_universes(
     }
 
     Ok(rules.into_values().collect())
-}
-
-pub struct MutatedManifestGuard {
-    path: PathBuf,
-    original_contents: String,
-}
-
-impl Drop for MutatedManifestGuard {
-    fn drop(&mut self) {
-        std::fs::write(&self.path, &self.original_contents)
-            .expect("failed to revert Cargo manifest");
-    }
-}
-
-/// Mutate the manifest to satisfy the requirements for the given universe.
-/// Return a guard which reverts the manifest file on drop.
-pub fn mutate_manifest(
-    config: &UniverseConfig,
-    path: &Path,
-) -> anyhow::Result<MutatedManifestGuard> {
-    use toml_edit::Item;
-    use toml_edit::Value;
-    use toml_edit::visit_mut::VisitMut;
-    use toml_edit::visit_mut::visit_table_like_kv_mut;
-
-    let original_contents = std::fs::read_to_string(path)
-        .with_context(|| format!("reading manifest {}", path.display()))?;
-    let mut doc = original_contents
-        .parse::<toml_edit::DocumentMut>()
-        .context("parsing manifest")?;
-
-    struct Visitor<'a>(&'a UniverseConfig);
-    impl<'a> VisitMut for Visitor<'a> {
-        fn visit_table_like_kv_mut(&mut self, key: toml_edit::KeyMut<'_>, node: &mut Item) {
-            let is_deps = key == "dependencies";
-            visit_table_like_kv_mut(self, key, node);
-            if !is_deps {
-                return;
-            }
-            let Item::Table(deps) = node else {
-                return;
-            };
-            for (krate, item) in deps.iter_mut() {
-                let Item::Value(val) = item else {
-                    continue;
-                };
-                // Change `anyhow = "1.0"` to `anyhow = { version = "1.0" }`
-                if let Value::String(s) = val {
-                    // There may be "decor" (whitespace/comments). If it's a
-                    // line comment we need to move it outside the
-                    // InlineTable so the closing brace isn't commented out.
-                    let maybe_line_comment = s
-                        .decor()
-                        .suffix()
-                        .and_then(|s| s.as_str())
-                        .map(str::to_owned);
-                    s.decor_mut().set_suffix("");
-                    let version = std::mem::replace(val, Value::InlineTable(Default::default()));
-                    if let Some(suffix) = maybe_line_comment {
-                        val.decor_mut().set_suffix(suffix);
-                    }
-                    item["version"] = toml_edit::value(version);
-                }
-                if item.is_inline_table() {
-                    if self.0.include_crates.contains(&*krate) {
-                        // If the crate is included but marked optional, mark it
-                        // non-optional.
-                        if item.get("optional").and_then(|i| i.as_bool()) == Some(true) {
-                            item["optional"] = toml_edit::value(false);
-                        }
-                    } else {
-                        // The crate is not included, so mark it optional.
-                        item["optional"] = toml_edit::value(true);
-                    }
-                }
-            }
-        }
-    }
-
-    let mut visitor = Visitor(config);
-    visitor.visit_document_mut(&mut doc);
-    std::fs::write(path, doc.to_string())
-        .with_context(|| format!("writing temporary manifest {}", path.display()))?;
-
-    Ok(MutatedManifestGuard {
-        path: path.to_owned(),
-        original_contents,
-    })
 }
 
 pub fn validate_universe_config(
