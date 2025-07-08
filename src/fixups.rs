@@ -297,19 +297,11 @@ impl<'meta> Fixups<'meta> {
             // The assumption that fixups are already per-platform if necessary
             // so there's no need for platform-specific rule attributes.
             match plat {
-                None => features.extend(
-                    buildscript_build
-                        .common
-                        .base
-                        .features
-                        .unwrap_ref()
-                        .iter()
-                        .cloned(),
-                ),
+                None => features.extend(buildscript_build.common.base.features.iter().cloned()),
                 Some(expr) => {
                     for platname in platform_names_for_expr(self.config, expr)? {
                         if let Some(platattr) = buildscript_build.common.platform.get(platname) {
-                            features.extend(platattr.features.unwrap_ref().iter().cloned())
+                            features.extend(platattr.features.iter().cloned())
                         }
                     }
                 }
@@ -327,7 +319,7 @@ impl<'meta> Fixups<'meta> {
             buildscript_rule: buildscript_rule_name.clone(),
             package_name: self.package.name.clone(),
             version: self.package.version.clone(),
-            features: buck::Selectable::Value(features.clone()),
+            features: features.clone(),
             env: BTreeMap::new(),
             local_manifest_dir: local_manifest_dir.clone(),
             manifest_dir: manifest_dir.clone(),
@@ -521,7 +513,7 @@ impl<'meta> Fixups<'meta> {
         }
 
         if let Some(mut buildscript_run) = buildscript {
-            buildscript_build.common.base.env.unwrap_mut().extend(
+            buildscript_build.common.base.env.extend(
                 self.fixup_config
                     .base
                     .buildscript
@@ -560,7 +552,6 @@ impl<'meta> Fixups<'meta> {
                             .common
                             .base
                             .env
-                            .unwrap_mut()
                             .entry(cargo_env.to_string())
                         {
                             let value = if cargo_env == CargoEnv::CARGO_CRATE_NAME {

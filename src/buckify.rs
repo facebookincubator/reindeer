@@ -595,13 +595,12 @@ fn generate_target_rules<'scope>(
     for &(platform_name, ref features) in &platform_features {
         for &feature in features {
             if feature_in_how_many_platforms[feature] == platform_features.len() {
-                base.features.unwrap_mut().insert(feature.to_owned());
+                base.features.insert(feature.to_owned());
             } else {
                 perplat
                     .entry(platform_name.clone())
                     .or_insert_with(PlatformRustCommon::default)
                     .features
-                    .unwrap_mut()
                     .insert(feature.to_owned());
             }
         }
@@ -651,17 +650,11 @@ fn generate_target_rules<'scope>(
                 let bin_name = dep_kind.bin_name.as_ref().unwrap();
                 let env = format!("{}-{}", target_name, bin_name);
                 let location = format!("$(location {}-{}[check])", dep.target, bin_name);
-                recipient
-                    .env
-                    .unwrap_mut()
-                    .insert(env, StringOrPath::String(location));
+                recipient.env.insert(env, StringOrPath::String(location));
             } else if let Some(rename) = rename {
-                recipient
-                    .named_deps
-                    .unwrap_mut()
-                    .insert(rename.to_owned(), dep.clone());
+                recipient.named_deps.insert(rename.to_owned(), dep.clone());
             } else {
-                recipient.deps.unwrap_mut().insert(dep.clone());
+                recipient.deps.insert(dep.clone());
             }
             if let Some(manifest) = manifest {
                 dep_pkgs.push((manifest, dep_kind.target_req()));
@@ -729,7 +722,7 @@ fn generate_target_rules<'scope>(
                 pkg,
                 tgt.name,
             );
-            rule.env.unwrap_mut().insert(
+            rule.env.insert(
                 "OUT_DIR".to_owned(),
                 StringOrPath::String(format!(
                     "$(location :{}[out_dir])",
@@ -747,7 +740,7 @@ fn generate_target_rules<'scope>(
         &mut perplat,
         |rule, env| {
             log::debug!("pkg {} target {}: adding env {:?}", pkg, tgt.name, env);
-            rule.env.unwrap_mut().extend(env);
+            rule.env.extend(env);
         },
         fixups.compute_env()?,
     )
@@ -813,7 +806,6 @@ fn generate_target_rules<'scope>(
     if let Some(true) = pkg.dependency_target().map(ManifestTarget::kind_lib) {
         bin_base
             .deps
-            .unwrap_mut()
             .insert(RuleRef::from(index.private_rule_name(pkg)));
     }
 
