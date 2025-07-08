@@ -31,6 +31,7 @@ use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
 use crate::resolve::DepIndex;
 use crate::universe::UniverseConfig;
+use crate::universe::UniverseName;
 
 /// Index for interesting things in Cargo metadata
 pub struct Index<'meta> {
@@ -83,11 +84,7 @@ impl<'meta> Index<'meta> {
     /// Construct an index for a set of Cargo metadata to allow convenient and efficient
     /// queries. The metadata represents a top level package and all its transitive
     /// dependencies.
-    pub fn new(
-        config: &'meta Config,
-        metadata: &'meta Metadata,
-        universe_config: &'meta UniverseConfig,
-    ) -> anyhow::Result<Index<'meta>> {
+    pub fn new(config: &'meta Config, metadata: &'meta Metadata) -> anyhow::Result<Index<'meta>> {
         let pkgid_to_pkg: HashMap<_, _> = metadata.packages.iter().map(|m| (&m.id, m)).collect();
 
         let root_pkg = metadata.resolve.root.as_ref().map(|root_pkgid| {
@@ -177,7 +174,7 @@ impl<'meta> Index<'meta> {
         for (platform_name, platform_config) in &config.platform {
             let universe_config = match &platform_config.universe {
                 Some(platform_universe_name) => &config.universe[platform_universe_name],
-                None => universe_config,
+                None => &config.universe[&UniverseName::default()],
             };
             let mut resolve = FeatureResolver {
                 pkgid_platform_features: &mut index.pkgid_platform_features,

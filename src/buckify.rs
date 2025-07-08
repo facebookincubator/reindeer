@@ -53,7 +53,6 @@ use crate::cargo::ArtifactKind;
 use crate::cargo::Edition;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
-use crate::cargo::Metadata;
 use crate::cargo::PkgId;
 use crate::cargo::Source;
 use crate::cargo::TargetReq;
@@ -65,7 +64,7 @@ use crate::fixups::ExportSources;
 use crate::fixups::Fixups;
 use crate::glob::Globs;
 use crate::glob::NO_EXCLUDE;
-use crate::index;
+use crate::index::Index;
 use crate::lockfile::Lockfile;
 use crate::lockfile::LockfilePackage;
 use crate::platform::PlatformExpr;
@@ -74,7 +73,7 @@ use crate::platform::platform_names_for_expr;
 use crate::srcfiles::crate_srcfiles;
 use crate::subtarget::CollectSubtargets;
 use crate::subtarget::Subtarget;
-use crate::universe::UniverseName;
+use crate::universe::validate_universe_config;
 
 // normalize a/b/../c => a/c and a/./b => a/b
 pub fn normalize_path(path: &Path) -> PathBuf {
@@ -155,7 +154,7 @@ fn unzip_platform<T: Clone>(
 struct RuleContext<'meta> {
     config: &'meta Config,
     paths: &'meta Paths,
-    index: index::Index<'meta>,
+    index: Index<'meta>,
     lockfile: &'meta Lockfile,
     done: Mutex<HashSet<(&'meta PkgId, TargetReq<'meta>)>>,
 }
@@ -989,17 +988,12 @@ fn generate_target_rules<'scope>(
     Ok((rules, dep_pkgs))
 }
 
-fn buckify_for_universe(
+fn do_buckify(
     config: &Config,
     paths: &Paths,
-    universe: &UniverseName,
     lockfile: &Lockfile,
-    metadata: &Metadata,
+    index: Index,
 ) -> anyhow::Result<BTreeSet<Rule>> {
-    let universe_config = &config.universe[universe];
-    let index = index::Index::new(config, metadata, universe_config)?;
-    crate::universe::validate_universe_config(universe, universe_config, &index)?;
-
     let context = &RuleContext {
         config,
         paths,
@@ -1011,7 +1005,7 @@ fn buckify_for_universe(
     let (tx, rx) = mpsc::channel();
 
     {
-        log::info!("Generating buck rules for universe {universe}...");
+        log::info!("Generating buck rules...");
         measure_time::info_time!("Generating buck rules");
         rayon::scope(move |scope| {
             for &workspace_member in &context.index.workspace_members {
@@ -1119,12 +1113,13 @@ pub(crate) fn buckify(
 
     log::trace!("Metadata {:#?}", metadata);
 
-    let mut rules = BTreeMap::new();
-    for universe in config.universe.keys().cloned() {
-        let universe_rules = buckify_for_universe(config, paths, &universe, &lockfile, &metadata)?;
-        rules.insert(universe, universe_rules);
+    let index = Index::new(config, &metadata)?;
+
+    for (universe_name, universe_config) in &config.universe {
+        validate_universe_config(universe_name, universe_config, &index)?;
     }
-    let rules = crate::universe::merge_universes(&config.universe, rules)?;
+
+    let rules = do_buckify(config, paths, &lockfile, index)?;
 
     // Emit build rules to stdout
     if stdout {

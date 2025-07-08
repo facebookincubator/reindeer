@@ -62,6 +62,7 @@ impl From<String> for UniverseName {
     }
 }
 
+#[expect(dead_code)]
 pub fn merge_universes(
     config: &BTreeMap<UniverseName, UniverseConfig>,
     universes: BTreeMap<UniverseName, BTreeSet<Rule>>,
