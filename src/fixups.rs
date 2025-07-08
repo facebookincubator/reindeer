@@ -27,6 +27,7 @@ use crate::buck::BuckPath;
 use crate::buck::BuildscriptGenrule;
 use crate::buck::Common;
 use crate::buck::Name;
+use crate::buck::PlatformBuildscriptGenrule;
 use crate::buck::Rule;
 use crate::buck::RuleRef;
 use crate::buck::RustBinary;
@@ -273,7 +274,6 @@ impl<'meta> Fixups<'meta> {
             Some(name) => name,
         };
 
-        let mut features = BTreeSet::new();
         for (plat, fixup) in self.fixup_config.configs(&self.package.version) {
             if plat.is_none() && fixup.buildscript.defaulted_to_empty {
                 let unresolved_package_msg = format!(
@@ -292,20 +292,19 @@ impl<'meta> Fixups<'meta> {
                     log::warn!("{}", unresolved_package_msg);
                 }
             }
+        }
 
-            // Generate features extracting them from the buildscript RustBinary.
-            // The assumption that fixups are already per-platform if necessary
-            // so there's no need for platform-specific rule attributes.
-            match plat {
-                None => features.extend(buildscript_build.common.base.features.iter().cloned()),
-                Some(expr) => {
-                    for platname in platform_names_for_expr(self.config, expr)? {
-                        if let Some(platattr) = buildscript_build.common.platform.get(platname) {
-                            features.extend(platattr.features.iter().cloned())
-                        }
-                    }
-                }
-            }
+        // Generate features extracting them from the buildscript RustBinary.
+        let features = buildscript_build.common.base.features.clone();
+        let mut platform = BTreeMap::new();
+        for (platform_name, buildscript_build_common) in &buildscript_build.common.platform {
+            platform.insert(
+                platform_name.clone(),
+                PlatformBuildscriptGenrule {
+                    features: buildscript_build_common.features.clone(),
+                    env: BTreeMap::new(),
+                },
+            );
         }
 
         let mut buildscript = None;
@@ -319,21 +318,36 @@ impl<'meta> Fixups<'meta> {
             buildscript_rule: buildscript_rule_name.clone(),
             package_name: self.package.name.clone(),
             version: self.package.version.clone(),
-            features: features.clone(),
-            env: BTreeMap::new(),
             local_manifest_dir: local_manifest_dir.clone(),
             manifest_dir: manifest_dir.clone(),
+            base: PlatformBuildscriptGenrule {
+                features: features.clone(),
+                env: BTreeMap::new(),
+            },
+            platform: platform.clone(),
         };
 
         let mut cxx_library = Vec::new();
         let mut prebuilt_cxx_library = Vec::new();
-        for (_platform, fixup) in self.fixup_config.configs(&self.package.version) {
+        for (platform_expr, fixup) in self.fixup_config.configs(&self.package.version) {
             if let Some(BuildscriptRun { env }) = &fixup.buildscript.run {
+                let env_entries = env
+                    .iter()
+                    .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone())));
                 let buildscript_run = buildscript.get_or_insert_with(default_buildscript_run);
-                buildscript_run.env.extend(
-                    env.iter()
-                        .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
-                );
+                match platform_expr {
+                    None => buildscript_run.base.env.extend(env_entries),
+                    Some(expr) => {
+                        for platform_name in platform_names_for_expr(self.config, expr)? {
+                            buildscript_run
+                                .platform
+                                .entry(platform_name.clone())
+                                .or_insert_with(PlatformBuildscriptGenrule::default)
+                                .env
+                                .extend(env_entries.clone());
+                        }
+                    }
+                }
             }
             cxx_library.extend(&fixup.cxx_library);
             prebuilt_cxx_library.extend(&fixup.prebuilt_cxx_library);
@@ -567,7 +581,7 @@ impl<'meta> Fixups<'meta> {
 
                     if add_to_run {
                         if let btree_map::Entry::Vacant(entry) =
-                            buildscript_run.env.entry(cargo_env.to_string())
+                            buildscript_run.base.env.entry(cargo_env.to_string())
                         {
                             if let Some(value) = self.cargo_env_value(cargo_env, required)? {
                                 entry.insert(value);

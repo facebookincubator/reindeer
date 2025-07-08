@@ -451,16 +451,20 @@ pub struct RustCommon {
 /// (e.g. `field = value`) rather than as maps with arbitrary keys
 /// (e.g. `"key": value`).
 /// ```
-fn serialize_platforms_dict<S>(
+fn serialize_platforms_dict<S, V>(
     map: &mut S,
-    platforms: &BTreeMap<PlatformName, PlatformRustCommon>,
+    platforms: &BTreeMap<PlatformName, V>,
 ) -> Result<(), S::Error>
 where
     S: SerializeMap,
+    V: Serialize,
 {
-    struct Platforms<'a>(&'a BTreeMap<PlatformName, PlatformRustCommon>);
+    struct Platforms<'a, V>(&'a BTreeMap<PlatformName, V>);
 
-    impl Serialize for Platforms<'_> {
+    impl<V> Serialize for Platforms<'_, V>
+    where
+        V: Serialize,
+    {
         fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
             ser.collect_map(
                 self.0
@@ -669,10 +673,12 @@ pub struct BuildscriptGenrule {
     pub buildscript_rule: Name,
     pub package_name: String,
     pub version: Version,
-    pub features: BTreeSet<String>,
-    pub env: BTreeMap<String, StringOrPath>,
     pub local_manifest_dir: Option<BuckPath>,
     pub manifest_dir: Option<Subtarget>,
+    // Platform-dependent
+    pub base: PlatformBuildscriptGenrule,
+    // Platform-specific
+    pub platform: BTreeMap<PlatformName, PlatformBuildscriptGenrule>,
 }
 
 impl Serialize for BuildscriptGenrule {
@@ -682,10 +688,10 @@ impl Serialize for BuildscriptGenrule {
             buildscript_rule,
             package_name,
             version,
-            features,
-            env,
             local_manifest_dir,
             manifest_dir,
+            base: PlatformBuildscriptGenrule { features, env },
+            platform,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
@@ -703,7 +709,30 @@ impl Serialize for BuildscriptGenrule {
         if let Some(manifest_dir) = manifest_dir {
             map.serialize_entry("manifest_dir", manifest_dir)?;
         }
+        if !platform.is_empty() {
+            serialize_platforms_dict(&mut map, platform)?;
+        }
         map.serialize_entry("version", version)?;
+        map.end()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PlatformBuildscriptGenrule {
+    pub features: BTreeSet<String>,
+    pub env: BTreeMap<String, StringOrPath>,
+}
+
+impl Serialize for PlatformBuildscriptGenrule {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self { features, env } = self;
+        let mut map = ser.serialize_map(None)?;
+        if !env.is_empty() {
+            map.serialize_entry("env", env)?;
+        }
+        if !features.is_empty() {
+            map.serialize_entry("features", features)?;
+        }
         map.end()
     }
 }
