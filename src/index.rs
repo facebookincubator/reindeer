@@ -174,16 +174,19 @@ impl<'meta> Index<'meta> {
                 });
         }
 
-        let mut resolve = FeatureResolver {
-            pkgid_platform_features: &mut index.pkgid_platform_features,
-            pkgid_to_pkg: &index.pkgid_to_pkg,
-            pkgid_to_node: &index.pkgid_to_node,
-            workspace_packages: &index.workspace_packages,
-            config,
-            universe_config,
-        };
-
-        for platform_name in config.platform.keys() {
+        for (platform_name, platform_config) in &config.platform {
+            let universe_config = match &platform_config.universe {
+                Some(platform_universe_name) => &config.universe[platform_universe_name],
+                None => universe_config,
+            };
+            let mut resolve = FeatureResolver {
+                pkgid_platform_features: &mut index.pkgid_platform_features,
+                pkgid_to_pkg: &index.pkgid_to_pkg,
+                pkgid_to_node: &index.pkgid_to_node,
+                workspace_packages: &index.workspace_packages,
+                config,
+                universe_config,
+            };
             // Feature selection for the current workspace.
             for pkg in &index.workspace_members {
                 resolve.enable_crate_for_platform(&pkg.id, platform_name)?;
