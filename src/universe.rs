@@ -214,6 +214,24 @@ pub fn merge_universes(
                         };
                         merge_genrule(old, new);
                     }
+                    Rule::CxxLibrary(old) => {
+                        let Rule::CxxLibrary(new) = rule else {
+                            panic!("expected cxx_library");
+                        };
+                        if *old != new {
+                            panic!("expected cxx_library rules to be identical in every universe")
+                        }
+                    }
+                    Rule::PrebuiltCxxLibrary(old) => {
+                        let Rule::PrebuiltCxxLibrary(new) = rule else {
+                            panic!("expected prebuilt_cxx_library");
+                        };
+                        if *old != new {
+                            panic!(
+                                "expected prebuilt_cxx_library rules to be identical in every universe"
+                            )
+                        }
+                    }
                     Rule::Alias(old) => {
                         let Rule::Alias(new) = rule else {
                             panic!("expected alias")
@@ -238,11 +256,23 @@ pub fn merge_universes(
                             panic!("expected git_fetch rules to be identical in every universe")
                         }
                     }
-                    _ => {
-                        log::warn!(
-                            "Skipping unhandled rule while merging universes: {:?}",
-                            rule
-                        );
+                    Rule::Filegroup(old) => {
+                        let Rule::Filegroup(new) = rule else {
+                            panic!("expected filegroup")
+                        };
+                        if *old != new {
+                            panic!("expected filegroup rules to be identical in every universe")
+                        }
+                    }
+                    Rule::ExtractArchive(old) => {
+                        let Rule::ExtractArchive(new) = rule else {
+                            panic!("expected extract_archive")
+                        };
+                        if *old != new {
+                            panic!(
+                                "expected extract_archive rules to be identical in every universe"
+                            )
+                        }
                     }
                 }
             } else {

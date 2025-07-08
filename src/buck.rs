@@ -379,7 +379,7 @@ impl Serialize for NameAsLabel<'_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Filegroup {
     pub name: Name,
     pub srcs: BTreeMap<BuckPath, SubtargetOrPath>,
@@ -440,7 +440,7 @@ impl Serialize for HttpArchive {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ExtractArchive {
     pub name: Name,
     pub src: BuckPath,
@@ -502,7 +502,7 @@ impl Serialize for GitFetch {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Common {
     pub name: Name,
     pub visibility: Visibility,
@@ -876,7 +876,7 @@ impl Serialize for BuildscriptGenrule {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct CxxLibrary {
     pub common: Common,
     pub srcs: BTreeSet<SubtargetOrPath>,
@@ -1033,7 +1033,7 @@ impl<'a> Serialize for PreprocessorFlags<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct PrebuiltCxxLibrary {
     pub common: Common,
     pub static_lib: SubtargetOrPath,
