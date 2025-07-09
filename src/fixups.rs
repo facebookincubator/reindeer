@@ -368,6 +368,7 @@ impl<'meta> Fixups<'meta> {
             header_namespace,
             deps,
             compatible_with,
+            target_compatible_with,
             preferred_linkage,
             undefined_symbols,
             ..
@@ -399,6 +400,7 @@ impl<'meta> Fixups<'meta> {
                     visibility: Visibility::Private,
                     licenses: Default::default(),
                     compatible_with: compatible_with.clone(),
+                    target_compatible_with: target_compatible_with.clone(),
                 },
                 // Just collect the sources, excluding things in the exclude list
                 srcs: {
@@ -480,6 +482,7 @@ impl<'meta> Fixups<'meta> {
             static_libs,
             public,
             compatible_with,
+            target_compatible_with,
             ..
         } in prebuilt_cxx_library
         {
@@ -514,6 +517,7 @@ impl<'meta> Fixups<'meta> {
                         visibility: Visibility::Private,
                         licenses: Default::default(),
                         compatible_with: compatible_with.clone(),
+                        target_compatible_with: target_compatible_with.clone(),
                     },
                     static_lib: self.subtarget_or_path(&static_lib)?,
                 };

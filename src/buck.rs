@@ -346,6 +346,7 @@ pub struct Common {
     pub visibility: Visibility,
     pub licenses: BTreeSet<BuckPath>,
     pub compatible_with: Vec<RuleRef>,
+    pub target_compatible_with: Vec<RuleRef>,
 }
 
 // Rule attributes which could be platform-specific
@@ -509,6 +510,7 @@ impl Serialize for RustLibrary {
                             visibility,
                             licenses,
                             compatible_with,
+                            target_compatible_with,
                         },
                     krate,
                     crate_root,
@@ -584,6 +586,9 @@ impl Serialize for RustLibrary {
         if !rustc_flags.is_empty() {
             map.serialize_entry("rustc_flags", rustc_flags)?;
         }
+        if !target_compatible_with.is_empty() {
+            map.serialize_entry("target_compatible_with", target_compatible_with)?;
+        }
         map.serialize_entry("visibility", visibility)?;
         if !deps.is_empty() {
             map.serialize_entry("deps", deps)?;
@@ -608,6 +613,7 @@ impl Serialize for RustBinary {
                             visibility,
                             licenses,
                             compatible_with,
+                            target_compatible_with,
                         },
                     krate,
                     crate_root,
@@ -666,6 +672,9 @@ impl Serialize for RustBinary {
         }
         if !rustc_flags.is_empty() {
             map.serialize_entry("rustc_flags", rustc_flags)?;
+        }
+        if !target_compatible_with.is_empty() {
+            map.serialize_entry("target_compatible_with", target_compatible_with)?;
         }
         map.serialize_entry("visibility", visibility)?;
         if !deps.is_empty() {
@@ -767,6 +776,7 @@ impl Serialize for CxxLibrary {
                     visibility,
                     licenses,
                     compatible_with,
+                    target_compatible_with,
                 },
             srcs,
             headers,
@@ -821,6 +831,9 @@ impl Serialize for CxxLibrary {
                     preprocessor_flags,
                 },
             )?;
+        }
+        if !target_compatible_with.is_empty() {
+            map.serialize_entry("target_compatible_with", target_compatible_with)?;
         }
         if *undefined_symbols {
             map.serialize_entry("undefined_symbols", undefined_symbols)?;
@@ -915,6 +928,7 @@ impl Serialize for PrebuiltCxxLibrary {
                     visibility,
                     licenses,
                     compatible_with,
+                    target_compatible_with,
                 },
             static_lib,
         } = self;
@@ -927,6 +941,9 @@ impl Serialize for PrebuiltCxxLibrary {
             map.serialize_entry("licenses", licenses)?;
         }
         map.serialize_entry("static_lib", static_lib)?;
+        if !target_compatible_with.is_empty() {
+            map.serialize_entry("target_compatible_with", target_compatible_with)?;
+        }
         map.serialize_entry("visibility", visibility)?;
         map.end()
     }
