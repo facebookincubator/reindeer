@@ -17,8 +17,10 @@ use nom_language::error::VerboseError;
 use nom_language::error::convert_error;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::de::DeserializeSeed;
 use serde::de::Deserializer;
 use serde::de::MapAccess;
+use serde::de::SeqAccess;
 use serde::de::Visitor;
 
 use crate::cfg;
@@ -37,51 +39,156 @@ pub struct PlatformConfig {
     pub cfg: HashMap<String, HashSet<String>>,
 }
 
-impl<'de> Deserialize<'de> for PlatformConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct PlatformConfigVisitor;
+pub fn deserialize_platforms<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<PlatformName, PlatformConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct PlatformsVisitor;
 
-        impl<'de> Visitor<'de> for PlatformConfigVisitor {
-            type Value = PlatformConfig;
+    impl<'de> Visitor<'de> for PlatformsVisitor {
+        type Value = HashMap<PlatformName, PlatformConfig>;
 
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("struct PlatformConfig")
-            }
-
-            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
-            where
-                M: MapAccess<'de>,
-            {
-                let mut is_execution_platform = None;
-                let mut features = None;
-                let mut cfg = HashMap::new();
-
-                while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "execution-platform" => is_execution_platform = map.next_value()?,
-                        "features" => features = map.next_value()?,
-                        _ => {
-                            let values: HashSet<String> = map.next_value()?;
-                            cfg.insert(key, values);
-                        }
-                    }
-                }
-
-                Ok(PlatformConfig {
-                    is_execution_platform,
-                    features,
-                    // Populated later.
-                    execution_platforms: BTreeSet::new(),
-                    cfg,
-                })
-            }
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("map of platform name to PlatformConfig")
         }
 
-        deserializer.deserialize_map(PlatformConfigVisitor)
+        fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut platforms = HashMap::new();
+            while let Some(platform_name) = map.next_key()? {
+                let seed = PlatformConfigVisitor(&platform_name);
+                let platform_config = map.next_value_seed(seed)?;
+                platforms.insert(platform_name, platform_config);
+            }
+            Ok(platforms)
+        }
     }
+
+    struct PlatformConfigVisitor<'a>(&'a PlatformName);
+
+    impl<'de> DeserializeSeed<'de> for PlatformConfigVisitor<'_> {
+        type Value = PlatformConfig;
+
+        fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_map(self)
+        }
+    }
+
+    impl<'de> Visitor<'de> for PlatformConfigVisitor<'_> {
+        type Value = PlatformConfig;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("struct PlatformConfig")
+        }
+
+        fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut is_execution_platform = None;
+            let mut features = None;
+            let mut cfg = HashMap::new();
+
+            while let Some(key) = map.next_key::<String>()? {
+                match key.as_str() {
+                    "execution-platform" => is_execution_platform = map.next_value()?,
+                    "features" => {
+                        let seed = FeaturesVisitor(self.0);
+                        features = Some(map.next_value_seed(seed)?);
+                    }
+                    _ => {
+                        let values: HashSet<String> = map.next_value()?;
+                        cfg.insert(key, values);
+                    }
+                }
+            }
+
+            Ok(PlatformConfig {
+                is_execution_platform,
+                features,
+                // Populated later.
+                execution_platforms: BTreeSet::new(),
+                cfg,
+            })
+        }
+    }
+
+    struct FeaturesVisitor<'a>(&'a PlatformName);
+
+    impl<'de> DeserializeSeed<'de> for FeaturesVisitor<'_> {
+        type Value = BTreeSet<String>;
+
+        fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_seq(self)
+        }
+    }
+
+    impl<'de> Visitor<'de> for FeaturesVisitor<'_> {
+        type Value = BTreeSet<String>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("array of strings")
+        }
+
+        fn visit_seq<S>(self, mut seq: S) -> Result<Self::Value, S::Error>
+        where
+            S: SeqAccess<'de>,
+        {
+            let mut features = BTreeSet::new();
+            while let Some(feature) = seq.next_element_seed(FeatureVisitor(self.0))? {
+                features.insert(feature);
+            }
+            Ok(features)
+        }
+    }
+
+    struct FeatureVisitor<'a>(&'a PlatformName);
+
+    impl<'de> DeserializeSeed<'de> for FeatureVisitor<'_> {
+        type Value = String;
+
+        fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_str(self)
+        }
+    }
+
+    impl<'de> Visitor<'de> for FeatureVisitor<'_> {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("string")
+        }
+
+        fn visit_str<E>(self, string: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            if string.contains('/') {
+                return Err(E::custom(format!(
+                    "Platform {platform_name} specifies feature {string:?}. \
+                     Features containing '/' are not supported in platform configuration. \
+                     Move this to a feature in the [features] section of Cargo.toml.",
+                    platform_name = self.0,
+                )));
+            }
+            Ok(string.to_owned())
+        }
+    }
+
+    deserializer.deserialize_map(PlatformsVisitor)
 }
 
 pub fn platform_names_for_expr<'config>(

@@ -33,6 +33,7 @@ use serde::de::value::MapAccessDeserializer;
 
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
+use crate::platform::deserialize_platforms;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -92,7 +93,10 @@ pub struct Config {
     #[serde(default, deserialize_with = "deserialize_vendor_config")]
     pub vendor: VendorConfig,
 
-    #[serde(default = "default_platforms")]
+    #[serde(
+        default = "default_platforms",
+        deserialize_with = "deserialize_platforms"
+    )]
     pub platform: HashMap<PlatformName, PlatformConfig>,
 }
 
@@ -263,6 +267,7 @@ fn default_platforms() -> HashMap<PlatformName, PlatformConfig> {
 
     #[derive(Deserialize)]
     struct DefaultConfig {
+        #[serde(deserialize_with = "deserialize_platforms")]
         platform: HashMap<PlatformName, PlatformConfig>,
     }
 
@@ -345,18 +350,6 @@ pub fn read_config(reindeer_toml: &Path) -> anyhow::Result<Config> {
         }
 
         config.buck.buckfile_imports = buckfile_imports.into();
-    }
-
-    for (platform_name, platform_config) in &config.platform {
-        for feature in platform_config.features.iter().flatten() {
-            if feature.contains('/') {
-                anyhow::bail!(
-                    "Platform {platform_name} specifies features {feature:?}. \
-                    Features containing '/' are not supported in platform configuration. \
-                    Move this to a feature in the [features] section of Cargo.toml."
-                );
-            }
-        }
     }
 
     // Compute execution platforms.
