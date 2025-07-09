@@ -17,7 +17,6 @@ use anyhow::Context as _;
 use crate::buck::Name;
 use crate::cargo::DepKind;
 use crate::cargo::Manifest;
-use crate::cargo::ManifestDep;
 use crate::cargo::ManifestTarget;
 use crate::cargo::Metadata;
 use crate::cargo::Node;
@@ -30,8 +29,6 @@ use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
 use crate::resolve::DepIndex;
-use crate::universe::UniverseConfig;
-use crate::universe::UniverseName;
 
 /// Index for interesting things in Cargo metadata
 pub struct Index<'meta> {
@@ -172,33 +169,21 @@ impl<'meta> Index<'meta> {
         }
 
         for (platform_name, platform_config) in &config.platform {
-            let universe_config = match &platform_config.universe {
-                Some(platform_universe_name) => &config.universe[platform_universe_name],
-                None => &config.universe[&UniverseName::default()],
-            };
             let mut resolve = FeatureResolver {
                 pkgid_platform_features: &mut index.pkgid_platform_features,
                 pkgid_to_pkg: &index.pkgid_to_pkg,
                 pkgid_to_node: &index.pkgid_to_node,
-                workspace_packages: &index.workspace_packages,
                 config,
-                universe_config,
             };
             // Feature selection for the current workspace.
             for pkg in &index.workspace_members {
                 resolve.enable_crate_for_platform(&pkg.id, platform_name)?;
-                if let Some(features) = &universe_config.features {
+                if let Some(features) = &platform_config.features {
                     for feature in features {
                         resolve.enable_feature_for_platform(&pkg.id, platform_name, feature)?;
                     }
                 } else if pkg.features.contains_key("default") {
                     resolve.enable_feature_for_platform(&pkg.id, platform_name, "default")?;
-                }
-                for krate in &universe_config.include_crates {
-                    // If a crate is in include_crates and is optional, enable it.
-                    if pkg.features.contains_key(krate) {
-                        resolve.enable_feature_for_platform(&pkg.id, platform_name, krate)?;
-                    }
                 }
             }
         }
@@ -361,9 +346,7 @@ struct FeatureResolver<'a, 'meta> {
         &'a mut HashMap<(&'meta PkgId, &'meta PlatformName), ResolvedFeatures<'meta>>,
     pkgid_to_pkg: &'a HashMap<&'meta PkgId, &'meta Manifest>,
     pkgid_to_node: &'a HashMap<&'meta PkgId, &'meta Node>,
-    workspace_packages: &'a HashSet<&'meta PkgId>,
     config: &'meta Config,
-    universe_config: &'meta UniverseConfig,
 }
 
 impl<'a, 'meta> FeatureResolver<'a, 'meta> {
@@ -400,9 +383,6 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                 }
             {
                 let node_dep = dep_index.resolve(manifest_dep)?;
-                if !self.include_in_universe(pkgid, manifest_dep, node_dep) {
-                    continue;
-                }
                 for dep_kind in &node_dep.dep_kinds {
                     self.pkgid_platform_features
                         .entry((pkgid, platform_name))
@@ -487,9 +467,6 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                                     }
                                 {
                                     let node_dep = dep_index.resolve(manifest_dep)?;
-                                    if !self.include_in_universe(pkgid, manifest_dep, node_dep) {
-                                        continue;
-                                    }
                                     let dep_platforms = platforms_for_dependency(
                                         node_dep,
                                         self.pkgid_to_pkg[&node_dep.pkg],
@@ -575,9 +552,6 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                 }
             {
                 let node_dep = dep_index.resolve(manifest_dep)?;
-                if !self.include_in_universe(pkgid, manifest_dep, node_dep) {
-                    continue;
-                }
                 for dep_kind in &node_dep.dep_kinds {
                     self.pkgid_platform_features
                         .entry((pkgid, platform_name))
@@ -622,23 +596,6 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
             }
         }
         Ok(())
-    }
-
-    fn include_in_universe(
-        &self,
-        pkgid: &'meta PkgId,
-        manifest_dep: &'meta ManifestDep,
-        node_dep: &'meta NodeDep,
-    ) -> bool {
-        if !self.workspace_packages.contains(pkgid) {
-            return true;
-        }
-        if self.workspace_packages.contains(&node_dep.pkg) {
-            return true;
-        }
-        let name = manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name);
-        self.universe_config.include_crates.is_empty()
-            || self.universe_config.include_crates.contains(name)
     }
 }
 

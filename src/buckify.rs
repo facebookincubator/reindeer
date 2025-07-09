@@ -73,7 +73,6 @@ use crate::platform::platform_names_for_expr;
 use crate::srcfiles::crate_srcfiles;
 use crate::subtarget::CollectSubtargets;
 use crate::subtarget::Subtarget;
-use crate::universe::validate_universe_config;
 
 // normalize a/b/../c => a/c and a/./b => a/b
 pub fn normalize_path(path: &Path) -> PathBuf {
@@ -1106,11 +1105,6 @@ pub(crate) fn buckify(
     log::trace!("Metadata {:#?}", metadata);
 
     let index = Index::new(config, &metadata)?;
-
-    for (universe_name, universe_config) in &config.universe {
-        validate_universe_config(universe_name, universe_config, &index)?;
-    }
-
     let rules = do_buckify(config, paths, &lockfile, index)?;
 
     // Emit build rules to stdout

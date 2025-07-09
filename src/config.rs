@@ -7,7 +7,6 @@
 
 //! Global third-party config
 
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -34,8 +33,6 @@ use serde::de::value::MapAccessDeserializer;
 
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
-use crate::universe::UniverseConfig;
-use crate::universe::UniverseName;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -97,9 +94,6 @@ pub struct Config {
 
     #[serde(default = "default_platforms")]
     pub platform: HashMap<PlatformName, PlatformConfig>,
-
-    #[serde(default = "default_universes")]
-    pub universe: BTreeMap<UniverseName, UniverseConfig>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -277,12 +271,6 @@ fn default_platforms() -> HashMap<PlatformName, PlatformConfig> {
         .platform
 }
 
-fn default_universes() -> BTreeMap<UniverseName, UniverseConfig> {
-    let mut map = BTreeMap::new();
-    map.insert(Default::default(), Default::default());
-    map
-}
-
 fn deserialize_vendor_config<'de, D>(deserializer: D) -> Result<VendorConfig, D::Error>
 where
     D: Deserializer<'de>,
@@ -357,6 +345,18 @@ pub fn read_config(reindeer_toml: &Path) -> anyhow::Result<Config> {
         }
 
         config.buck.buckfile_imports = buckfile_imports.into();
+    }
+
+    for (platform_name, platform_config) in &config.platform {
+        for feature in platform_config.features.iter().flatten() {
+            if feature.contains('/') {
+                anyhow::bail!(
+                    "Platform {platform_name} specifies features {feature:?}. \
+                    Features containing '/' are not supported in platform configuration. \
+                    Move this to a feature in the [features] section of Cargo.toml."
+                );
+            }
+        }
     }
 
     // Compute execution platforms.

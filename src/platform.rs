@@ -23,7 +23,6 @@ use serde::de::Visitor;
 
 use crate::cfg;
 use crate::config::Config;
-use crate::universe::UniverseName;
 
 /// A single PlatformConfig represents a single platform. Each field represents a set of
 /// platform attributes which are true for this platform. A non-present attribute means
@@ -31,9 +30,9 @@ use crate::universe::UniverseName;
 #[derive(Clone, Debug)]
 pub struct PlatformConfig {
     pub is_execution_platform: Option<bool>,
-    /// Use `features` and `include_crates` from the given universe when
-    /// buckifying this platform.
-    pub universe: Option<UniverseName>,
+    /// Set of features enabled in this platform. If omitted, the "default"
+    /// feature will be enabled if one exists.
+    pub features: Option<BTreeSet<String>>,
     pub execution_platforms: BTreeSet<PlatformName>,
     pub cfg: HashMap<String, HashSet<String>>,
 }
@@ -57,13 +56,13 @@ impl<'de> Deserialize<'de> for PlatformConfig {
                 M: MapAccess<'de>,
             {
                 let mut is_execution_platform = None;
-                let mut universe = None;
+                let mut features = None;
                 let mut cfg = HashMap::new();
 
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "execution-platform" => is_execution_platform = map.next_value()?,
-                        "universe" => universe = map.next_value()?,
+                        "features" => features = map.next_value()?,
                         _ => {
                             let values: HashSet<String> = map.next_value()?;
                             cfg.insert(key, values);
@@ -73,7 +72,7 @@ impl<'de> Deserialize<'de> for PlatformConfig {
 
                 Ok(PlatformConfig {
                     is_execution_platform,
-                    universe,
+                    features,
                     // Populated later.
                     execution_platforms: BTreeSet::new(),
                     cfg,
