@@ -398,7 +398,7 @@ impl<'meta> Fixups<'meta> {
                     name: actual,
                     visibility: Visibility::Private,
                     licenses: Default::default(),
-                    compatible_with: compatible_with.iter().cloned().map(RuleRef::new).collect(),
+                    compatible_with: compatible_with.clone(),
                 },
                 // Just collect the sources, excluding things in the exclude list
                 srcs: {
@@ -513,11 +513,7 @@ impl<'meta> Fixups<'meta> {
                         name: actual,
                         visibility: Visibility::Private,
                         licenses: Default::default(),
-                        compatible_with: compatible_with
-                            .iter()
-                            .cloned()
-                            .map(RuleRef::new)
-                            .collect(),
+                        compatible_with: compatible_with.clone(),
                     },
                     static_lib: self.subtarget_or_path(&static_lib)?,
                 };

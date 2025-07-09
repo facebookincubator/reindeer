@@ -19,6 +19,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use semver::Version;
+use serde::Deserialize;
 use serde::Serialize;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
@@ -50,7 +51,7 @@ impl Debug for Name {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RuleRef {
     pub target: String,
