@@ -185,6 +185,7 @@ pub struct Alias {
     pub name: Name,
     /// Local target that the alias refers to -- always in the same package.
     pub actual: Name,
+    pub platforms: Option<BTreeSet<PlatformName>>,
     pub visibility: Visibility,
 }
 
@@ -193,11 +194,15 @@ impl Serialize for Alias {
         let Self {
             name,
             actual,
+            platforms,
             visibility,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
         map.serialize_entry("actual", &NameAsLabel(actual))?;
+        if let Some(platforms) = platforms {
+            map.serialize_entry("platforms", platforms)?;
+        }
         map.serialize_entry("visibility", visibility)?;
         map.end()
     }
@@ -1047,7 +1052,13 @@ impl Rule {
     pub fn render(&self, config: &BuckConfig, out: &mut impl Write) -> anyhow::Result<()> {
         use serde_starlark::Serializer;
         let serialized = match self {
-            Rule::Alias(alias) => FunctionCall::new(&config.alias, alias).serialize(Serializer),
+            Rule::Alias(alias) => {
+                let function = match alias.platforms {
+                    None => &config.alias,
+                    Some(_) => &config.alias_with_platforms,
+                };
+                FunctionCall::new(function, alias).serialize(Serializer)
+            }
             Rule::Filegroup(filegroup) => {
                 FunctionCall::new(&config.filegroup, filegroup).serialize(Serializer)
             }

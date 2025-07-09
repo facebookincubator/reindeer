@@ -578,16 +578,16 @@ fn generate_target_rules<'scope>(
     )
     .context("mapped_srcs(paths)")?;
 
+    let mut compatible_platforms = BTreeSet::new();
     let mut platform_features = Vec::new();
     let mut feature_in_how_many_platforms = HashMap::new();
     for platform_name in config.platform.keys() {
         let Some(features) = fixups.compute_features(platform_name)? else {
             continue;
         };
-        for feature in &features {
-            *feature_in_how_many_platforms
-                .entry(feature.clone())
-                .or_insert(0) += 1;
+        compatible_platforms.insert(platform_name.to_owned());
+        for &feature in &features {
+            *feature_in_how_many_platforms.entry(feature).or_insert(0) += 1;
         }
         platform_features.push((platform_name, features));
     }
@@ -827,6 +827,9 @@ fn generate_target_rules<'scope>(
             rules.push(Rule::Alias(Alias {
                 name: index.public_rule_name(pkg),
                 actual: index.private_rule_name(pkg),
+                platforms: (!config.buck.alias_with_platforms.is_default
+                    && !tgt.crate_proc_macro())
+                .then_some(compatible_platforms),
                 visibility: fixups.public_visibility(),
             }));
         }
@@ -883,6 +886,8 @@ fn generate_target_rules<'scope>(
             rules.push(Rule::Alias(Alias {
                 name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
                 actual: actual.clone(),
+                platforms: (!config.buck.alias_with_platforms.is_default)
+                    .then_some(compatible_platforms),
                 visibility: fixups.public_visibility(),
             }));
         }

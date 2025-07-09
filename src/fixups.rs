@@ -387,6 +387,7 @@ impl<'meta> Fixups<'meta> {
                         name,
                     )),
                     actual: actual.clone(),
+                    platforms: None,
                     visibility: self.public_visibility(),
                 });
                 res.push(rule);
@@ -501,6 +502,7 @@ impl<'meta> Fixups<'meta> {
                             static_lib.file_name().unwrap().to_string_lossy(),
                         )),
                         actual: actual.clone(),
+                        platforms: None,
                         visibility: self.public_visibility(),
                     });
                     res.push(rule);

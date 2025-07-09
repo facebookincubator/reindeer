@@ -132,6 +132,9 @@ pub struct BuckConfig {
     /// Rule name for alias
     #[serde(default)]
     pub alias: StringWithDefault<MustBe!("alias")>,
+    /// Alias that also takes a `platforms` argument
+    #[serde(default)]
+    pub alias_with_platforms: StringWithDefault<MustBe!("alias")>,
     /// Rule name for filegroup
     #[serde(default)]
     pub filegroup: StringWithDefault<MustBe!("filegroup")>,
