@@ -343,7 +343,7 @@ pub struct Common {
 }
 
 // Rule attributes which could be platform-specific
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct PlatformRustCommon {
     pub srcs: BTreeSet<BuckPath>,
     pub mapped_srcs: BTreeMap<SubtargetOrPath, BuckPath>,
@@ -457,24 +457,30 @@ fn serialize_platforms_dict<S, V>(
 ) -> Result<(), S::Error>
 where
     S: SerializeMap,
-    V: Serialize,
+    V: Serialize + Default + PartialEq,
 {
     struct Platforms<'a, V>(&'a BTreeMap<PlatformName, V>);
 
     impl<V> Serialize for Platforms<'_, V>
     where
-        V: Serialize,
+        V: Serialize + Default + PartialEq,
     {
         fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-            ser.collect_map(
-                self.0
-                    .iter()
-                    .map(|(name, value)| (name, FunctionCall::new("dict", value))),
-            )
+            let mut map = ser.serialize_map(None)?;
+            for (name, value) in self.0 {
+                if *value != V::default() {
+                    map.serialize_entry(name, &FunctionCall::new("dict", value))?;
+                }
+            }
+            map.end()
         }
     }
 
-    map.serialize_entry("platform", &Platforms(platforms))
+    if platforms.values().any(|value| *value != V::default()) {
+        map.serialize_entry("platform", &Platforms(platforms))?;
+    }
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -559,9 +565,7 @@ impl Serialize for RustLibrary {
         if !named_deps.is_empty() {
             map.serialize_entry("named_deps", named_deps)?;
         }
-        if !platform.is_empty() {
-            serialize_platforms_dict(&mut map, platform)?;
-        }
+        serialize_platforms_dict(&mut map, platform)?;
         if let Some(preferred_linkage) = preferred_linkage {
             map.serialize_entry("preferred_linkage", preferred_linkage)?;
         }
@@ -650,9 +654,7 @@ impl Serialize for RustBinary {
         if !named_deps.is_empty() {
             map.serialize_entry("named_deps", named_deps)?;
         }
-        if !platform.is_empty() {
-            serialize_platforms_dict(&mut map, platform)?;
-        }
+        serialize_platforms_dict(&mut map, platform)?;
         if let Some(preferred_linkage) = preferred_linkage {
             map.serialize_entry("preferred_linkage", preferred_linkage)?;
         }
@@ -709,15 +711,13 @@ impl Serialize for BuildscriptGenrule {
         if let Some(manifest_dir) = manifest_dir {
             map.serialize_entry("manifest_dir", manifest_dir)?;
         }
-        if !platform.is_empty() {
-            serialize_platforms_dict(&mut map, platform)?;
-        }
+        serialize_platforms_dict(&mut map, platform)?;
         map.serialize_entry("version", version)?;
         map.end()
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct PlatformBuildscriptGenrule {
     pub features: BTreeSet<String>,
     pub env: BTreeMap<String, StringOrPath>,
