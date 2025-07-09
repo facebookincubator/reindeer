@@ -216,6 +216,14 @@ impl<'meta> Fixups<'meta> {
         self.fixup_config.export_sources.as_ref()
     }
 
+    pub fn compatible_with(&self) -> &Vec<RuleRef> {
+        &self.fixup_config.compatible_with
+    }
+
+    pub fn target_compatible_with(&self) -> &Vec<RuleRef> {
+        &self.fixup_config.target_compatible_with
+    }
+
     pub fn precise_srcs(&self) -> bool {
         self.fixup_config
             .precise_srcs

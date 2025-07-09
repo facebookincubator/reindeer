@@ -23,6 +23,7 @@ use serde::de::value::SeqAccessDeserializer;
 use strum::IntoEnumIterator as _;
 use walkdir::WalkDir;
 
+use crate::buck::RuleRef;
 use crate::buckify::relative_path;
 use crate::fixups::buildscript::BuildscriptFixups;
 use crate::fixups::buildscript::CxxLibraryFixup;
@@ -57,6 +58,11 @@ pub struct FixupConfigFile {
     /// Make the crate sources available through a `filegroup`.
     /// This is useful for manually handling build scripts.
     pub export_sources: Option<ExportSources>,
+
+    /// Platform compatibility. The same value will apply to the library and all
+    /// binary targets contained in the same package.
+    pub compatible_with: Vec<RuleRef>,
+    pub target_compatible_with: Vec<RuleRef>,
 
     /// Common config
     pub base: FixupConfig,
@@ -340,6 +346,8 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
         let mut precise_srcs = None;
         let mut python_ext = None;
         let mut export_sources = None;
+        let mut compatible_with = None;
+        let mut target_compatible_with = None;
         let mut base = serde_json::Map::new();
         let mut platform_fixup = BTreeMap::new();
 
@@ -375,6 +383,18 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
                     }
                     export_sources = Some(map.next_value()?);
                 }
+                "compatible_with" => {
+                    if compatible_with.is_some() {
+                        return Err(M::Error::duplicate_field("compatible_with"));
+                    }
+                    compatible_with = Some(map.next_value()?);
+                }
+                "target_compatible_with" => {
+                    if target_compatible_with.is_some() {
+                        return Err(M::Error::duplicate_field("target_compatible_with"));
+                    }
+                    target_compatible_with = Some(map.next_value()?);
+                }
                 _ => {
                     if field.starts_with("cfg(") {
                         let platform_expr = PlatformExpr::from(field);
@@ -393,6 +413,8 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
             precise_srcs,
             python_ext,
             export_sources,
+            compatible_with: compatible_with.unwrap_or_else(Vec::new),
+            target_compatible_with: target_compatible_with.unwrap_or_else(Vec::new),
             base: FixupConfig::deserialize(base).map_err(M::Error::custom)?,
             platform_fixup,
         })
