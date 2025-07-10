@@ -621,12 +621,7 @@ impl<'meta> Fixups<'meta> {
 
         // Apply fixups.
         for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-            // Decide whether fixup applies.
-            if match platform {
-                Some(platform_expr) => PlatformPredicate::parse(platform_expr)?
-                    .eval(&self.config.platform[platform_name]),
-                None => true,
-            } {
+            if self.fixup_applies(platform, platform_name)? {
                 for feature in &fixup.omit_features {
                     features.remove(feature.as_str());
                 }
@@ -725,13 +720,7 @@ impl<'meta> Fixups<'meta> {
         // Collect fixups.
         let mut omit_deps = HashSet::new();
         for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-            let fixup_applies = match platform {
-                Some(platform_expr) => PlatformPredicate::parse(platform_expr)?
-                    .eval(&self.config.platform[platform_name]),
-                None => true,
-            };
-
-            if !fixup_applies {
+            if !self.fixup_applies(platform, platform_name)? {
                 continue;
             }
 
@@ -1243,5 +1232,18 @@ impl<'meta> Fixups<'meta> {
         }
 
         ret
+    }
+
+    fn fixup_applies(
+        &self,
+        platform: Option<&PlatformExpr>,
+        platform_name: &PlatformName,
+    ) -> anyhow::Result<bool> {
+        if let Some(platform_expr) = platform {
+            let predicate = PlatformPredicate::parse(platform_expr)?;
+            Ok(predicate.eval(&self.config.platform[platform_name]))
+        } else {
+            Ok(true)
+        }
     }
 }
