@@ -619,12 +619,9 @@ impl<'meta> Fixups<'meta> {
             return Ok(None);
         };
 
-        // Apply fixups.
+        // Apply extra feature fixups.
         for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
             if self.fixup_applies(platform, platform_name)? {
-                for feature in &fixup.omit_features {
-                    features.remove(feature.as_str());
-                }
                 for feature in &fixup.features {
                     features.insert(feature);
                 }
@@ -632,6 +629,21 @@ impl<'meta> Fixups<'meta> {
         }
 
         Ok(Some(features))
+    }
+
+    pub fn omit_feature(
+        &self,
+        platform_name: &PlatformName,
+        feature: &str,
+    ) -> anyhow::Result<bool> {
+        for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
+            if self.fixup_applies(platform, platform_name)? && fixup.omit_features.contains(feature)
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     fn buildscript_rustc_flags(

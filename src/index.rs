@@ -14,6 +14,7 @@ use std::collections::HashSet;
 
 use anyhow::Context as _;
 
+use crate::Paths;
 use crate::buck::Name;
 use crate::cargo::DepKind;
 use crate::cargo::Manifest;
@@ -25,6 +26,7 @@ use crate::cargo::NodeDepKind;
 use crate::cargo::PkgId;
 use crate::cargo::TargetReq;
 use crate::config::Config;
+use crate::fixups::Fixups;
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
@@ -81,7 +83,11 @@ impl<'meta> Index<'meta> {
     /// Construct an index for a set of Cargo metadata to allow convenient and efficient
     /// queries. The metadata represents a top level package and all its transitive
     /// dependencies.
-    pub fn new(config: &'meta Config, metadata: &'meta Metadata) -> anyhow::Result<Index<'meta>> {
+    pub fn new(
+        config: &'meta Config,
+        paths: &'meta Paths,
+        metadata: &'meta Metadata,
+    ) -> anyhow::Result<Index<'meta>> {
         let pkgid_to_pkg: HashMap<_, _> = metadata.packages.iter().map(|m| (&m.id, m)).collect();
 
         let root_pkg = metadata.resolve.root.as_ref().map(|root_pkgid| {
@@ -173,7 +179,9 @@ impl<'meta> Index<'meta> {
                 pkgid_platform_features: &mut index.pkgid_platform_features,
                 pkgid_to_pkg: &index.pkgid_to_pkg,
                 pkgid_to_node: &index.pkgid_to_node,
+                public_package_names: &index.public_package_names,
                 config,
+                paths,
             };
             // Feature selection for the current workspace.
             for pkg in &index.workspace_members {
@@ -346,7 +354,9 @@ struct FeatureResolver<'a, 'meta> {
         &'a mut HashMap<(&'meta PkgId, &'meta PlatformName), ResolvedFeatures<'meta>>,
     pkgid_to_pkg: &'a HashMap<&'meta PkgId, &'meta Manifest>,
     pkgid_to_node: &'a HashMap<&'meta PkgId, &'meta Node>,
+    public_package_names: &'a BTreeSet<&'meta str>,
     config: &'meta Config,
+    paths: &'meta Paths,
 }
 
 impl<'a, 'meta> FeatureResolver<'a, 'meta> {
@@ -439,11 +449,19 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
             .pkgid_platform_features
             .entry((pkgid, platform_name))
             .or_insert_with(ResolvedFeatures::default);
+
+        // Omit features according to fixups.
+        let pkg = self.pkgid_to_pkg[pkgid];
+        let public = self.public_package_names.contains(pkg.name.as_str());
+        let fixups = Fixups::new(self.config, self.paths, pkg, public)?;
+        if fixups.omit_feature(platform_name, enable_feature)? {
+            return Ok(());
+        }
+
         if resolve.features.insert(enable_feature) {
             if let Some(enable_dependency) = enable_feature.strip_prefix("dep:") {
                 self.enable_dependency_for_platform(pkgid, platform_name, enable_dependency)?;
             } else {
-                let pkg = self.pkgid_to_pkg[pkgid];
                 if let Some(required_features) = pkg.features.get(enable_feature) {
                     for required_feature in required_features {
                         if let Some((dep, enable_feature)) = required_feature.split_once("/") {

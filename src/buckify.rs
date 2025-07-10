@@ -1119,7 +1119,7 @@ pub(crate) fn buckify(
 
     log::trace!("Metadata {:#?}", metadata);
 
-    let index = Index::new(config, &metadata)?;
+    let index = Index::new(config, paths, &metadata)?;
     let rules = do_buckify(config, paths, &lockfile, index)?;
 
     // Emit build rules to stdout
