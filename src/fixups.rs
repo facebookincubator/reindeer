@@ -72,7 +72,6 @@ use config::FixupConfigFile;
 pub struct Fixups<'meta> {
     config: &'meta Config,
     third_party_dir: PathBuf,
-    index: &'meta Index<'meta>,
     package: &'meta Manifest,
     target: &'meta ManifestTarget,
     fixup_dir: PathBuf,
@@ -98,9 +97,9 @@ impl<'meta> Fixups<'meta> {
     pub fn new(
         config: &'meta Config,
         paths: &Paths,
-        index: &'meta Index,
         package: &'meta Manifest,
         target: &'meta ManifestTarget,
+        public: bool,
     ) -> anyhow::Result<Self> {
         let fixup_dir = paths.third_party_dir.join("fixups").join(&package.name);
         let fixup_path = fixup_dir.join("fixups.toml");
@@ -113,8 +112,7 @@ impl<'meta> Fixups<'meta> {
             FixupConfigFile::default()
         };
 
-        if fixup_config.custom_visibility.is_some() && !index.is_public_package_name(&package.name)
-        {
+        if fixup_config.custom_visibility.is_some() && !public {
             return Err(anyhow!(
                 "only public packages can have a fixup `visibility`."
             ))
@@ -132,7 +130,6 @@ impl<'meta> Fixups<'meta> {
         Ok(Fixups {
             third_party_dir: paths.third_party_dir.to_path_buf(),
             manifest_dir: package.manifest_dir(),
-            index,
             package,
             target,
             fixup_dir,
@@ -266,6 +263,7 @@ impl<'meta> Fixups<'meta> {
         mut buildscript_build: RustBinary,
         config: &'meta Config,
         manifest_dir: Option<SubtargetOrPath>,
+        index: &Index,
     ) -> anyhow::Result<Vec<Rule>> {
         let mut res = Vec::new();
 
@@ -384,17 +382,13 @@ impl<'meta> Fixups<'meta> {
         {
             let actual = Name(format!(
                 "{}-{}",
-                self.index.private_rule_name(self.package),
+                index.private_rule_name(self.package),
                 name,
             ));
 
             if *public {
                 let rule = Rule::Alias(Alias {
-                    name: Name(format!(
-                        "{}-{}",
-                        self.index.public_rule_name(self.package),
-                        name,
-                    )),
+                    name: Name(format!("{}-{}", index.public_rule_name(self.package), name)),
                     actual: actual.clone(),
                     platforms: None,
                     visibility: self.public_visibility(),
@@ -499,7 +493,7 @@ impl<'meta> Fixups<'meta> {
             for static_lib in static_lib_globs.walk(self.manifest_dir) {
                 let actual = Name(format!(
                     "{}-{}-{}",
-                    self.index.private_rule_name(self.package),
+                    index.private_rule_name(self.package),
                     name,
                     static_lib.file_name().unwrap().to_string_lossy(),
                 ));
@@ -508,7 +502,7 @@ impl<'meta> Fixups<'meta> {
                     let rule = Rule::Alias(Alias {
                         name: Name(format!(
                             "{}-{}-{}",
-                            self.index.public_rule_name(self.package),
+                            index.public_rule_name(self.package),
                             name,
                             static_lib.file_name().unwrap().to_string_lossy(),
                         )),
@@ -616,9 +610,10 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_features(
         &self,
         platform_name: &PlatformName,
+        index: &'meta Index<'meta>,
     ) -> anyhow::Result<Option<BTreeSet<&str>>> {
         // Get features according to Cargo.
-        let Some(mut features) = self.index.resolved_features(self.package, platform_name) else {
+        let Some(mut features) = index.resolved_features(self.package, platform_name) else {
             return Ok(None);
         };
 
@@ -704,6 +699,7 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_deps(
         &self,
         platform_name: &PlatformName,
+        index: &'meta Index<'meta>,
     ) -> anyhow::Result<
         Option<
             Vec<(
@@ -717,9 +713,7 @@ impl<'meta> Fixups<'meta> {
         let mut ret = vec![];
 
         // Get dependencies according to Cargo.
-        let Some(deps) =
-            self.index
-                .resolved_deps_for_target(self.package, self.target, platform_name)
+        let Some(deps) = index.resolved_deps_for_target(self.package, self.target, platform_name)
         else {
             return Ok(None);
         };
@@ -772,7 +766,7 @@ impl<'meta> Fixups<'meta> {
                     None,
                     RuleRef::new(format!(
                         ":{}-{}",
-                        self.index.private_rule_name(self.package),
+                        index.private_rule_name(self.package),
                         name
                     )),
                     None,
@@ -798,7 +792,7 @@ impl<'meta> Fixups<'meta> {
                         None,
                         RuleRef::new(format!(
                             ":{}-{}-{}",
-                            self.index.private_rule_name(self.package),
+                            index.private_rule_name(self.package),
                             name,
                             static_lib.file_name().unwrap().to_string_lossy(),
                         )),
@@ -837,7 +831,7 @@ impl<'meta> Fixups<'meta> {
 
             ret.push((
                 Some(package),
-                RuleRef::from(self.index.private_rule_name(package)),
+                RuleRef::from(index.private_rule_name(package)),
                 match tgtname {
                     Some(ref tgtname) if tgtname == rename => None,
                     Some(_) | None => Some(rename),

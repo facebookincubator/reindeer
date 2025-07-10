@@ -435,7 +435,8 @@ fn generate_target_rules<'scope>(
 
     log::debug!("Generating rules for package {} target {}", pkg, tgt.name);
 
-    let fixups = Fixups::new(config, paths, index, pkg, tgt)?;
+    let public = index.is_public_package_name(&pkg.name);
+    let fixups = Fixups::new(config, paths, pkg, tgt, public)?;
 
     if fixups.omit_target() {
         return Ok((vec![], vec![]));
@@ -582,7 +583,7 @@ fn generate_target_rules<'scope>(
     let mut platform_features = Vec::new();
     let mut feature_in_how_many_platforms = HashMap::new();
     for platform_name in config.platform.keys() {
-        let Some(features) = fixups.compute_features(platform_name)? else {
+        let Some(features) = fixups.compute_features(platform_name, index)? else {
             continue;
         };
         compatible_platforms.insert(platform_name.to_owned());
@@ -610,7 +611,7 @@ fn generate_target_rules<'scope>(
     let mut platform_deps = Vec::new();
     let mut dep_in_how_many_platforms = HashMap::new();
     for platform_name in config.platform.keys() {
-        let Some(deps) = fixups.compute_deps(platform_name)? else {
+        let Some(deps) = fixups.compute_deps(platform_name, index)? else {
             continue;
         };
         for (_manifest, dep, rename, dep_kind) in &deps {
@@ -683,7 +684,8 @@ fn generate_target_rules<'scope>(
                 platform: perplat,
             },
         };
-        let rules = fixups.emit_buildscript_rules(buildscript, config, manifest_dir_subtarget)?;
+        let rules =
+            fixups.emit_buildscript_rules(buildscript, config, manifest_dir_subtarget, index)?;
         return Ok((rules, dep_pkgs));
     }
 
