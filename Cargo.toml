@@ -36,7 +36,7 @@ syn = { version = "2.0.101", features = ["extra-traits", "fold", "full", "visit"
 termcolor = "1.0"
 toml = "0.8.22"
 unicode-ident = "1.0.12"
-url = "2.5.2"
+url = "2.5.4"
 walkdir = "2.3"
 
 [dev-dependencies]
