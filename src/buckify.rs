@@ -436,9 +436,9 @@ fn generate_target_rules<'scope>(
     log::debug!("Generating rules for package {} target {}", pkg, tgt.name);
 
     let public = index.is_public_package_name(&pkg.name);
-    let fixups = Fixups::new(config, paths, pkg, tgt, public)?;
+    let fixups = Fixups::new(config, paths, pkg, public)?;
 
-    if fixups.omit_target() {
+    if fixups.omit_target(tgt) {
         return Ok((vec![], vec![]));
     }
 
@@ -575,7 +575,7 @@ fn generate_target_rules<'scope>(
             );
             rule.mapped_srcs.extend(map);
         },
-        fixups.compute_mapped_srcs(&mapped_manifest_dir)?,
+        fixups.compute_mapped_srcs(&mapped_manifest_dir, tgt)?,
     )
     .context("mapped_srcs(paths)")?;
 
@@ -611,7 +611,7 @@ fn generate_target_rules<'scope>(
     let mut platform_deps = Vec::new();
     let mut dep_in_how_many_platforms = HashMap::new();
     for platform_name in config.platform.keys() {
-        let Some(deps) = fixups.compute_deps(platform_name, index)? else {
+        let Some(deps) = fixups.compute_deps(platform_name, index, tgt)? else {
             continue;
         };
         for (_manifest, dep, rename, dep_kind) in &deps {
@@ -684,8 +684,13 @@ fn generate_target_rules<'scope>(
                 platform: perplat,
             },
         };
-        let rules =
-            fixups.emit_buildscript_rules(buildscript, config, manifest_dir_subtarget, index)?;
+        let rules = fixups.emit_buildscript_rules(
+            buildscript,
+            config,
+            manifest_dir_subtarget,
+            index,
+            tgt,
+        )?;
         return Ok((rules, dep_pkgs));
     }
 
@@ -710,7 +715,7 @@ fn generate_target_rules<'scope>(
                     .extend(v);
             });
         },
-        fixups.compute_cmdline(),
+        fixups.compute_cmdline(tgt),
     )
     .context("rustc_flags")?;
 
@@ -732,7 +737,7 @@ fn generate_target_rules<'scope>(
                 )),
             );
         },
-        fixups.compute_gen_srcs(),
+        fixups.compute_gen_srcs(tgt),
     )
     .context("OUT_DIR for gen_srcs")?;
 
@@ -744,7 +749,7 @@ fn generate_target_rules<'scope>(
             log::debug!("pkg {} target {}: adding env {:?}", pkg, tgt.name, env);
             rule.env.extend(env);
         },
-        fixups.compute_env()?,
+        fixups.compute_env(tgt)?,
     )
     .context("env")?;
 

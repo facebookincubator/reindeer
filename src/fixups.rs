@@ -73,7 +73,6 @@ pub struct Fixups<'meta> {
     config: &'meta Config,
     third_party_dir: PathBuf,
     package: &'meta Manifest,
-    target: &'meta ManifestTarget,
     fixup_dir: PathBuf,
     fixup_config: FixupConfigFile,
     manifest_dir: &'meta Path,
@@ -83,7 +82,6 @@ impl<'meta> fmt::Debug for Fixups<'meta> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("Fixups")
             .field("package", &self.package.to_string())
-            .field("target", &self.target)
             .field("third_party_dir", &self.third_party_dir)
             .field("fixup_dir", &self.fixup_dir)
             .field("manifest_dir", &self.manifest_dir)
@@ -93,12 +91,11 @@ impl<'meta> fmt::Debug for Fixups<'meta> {
 }
 
 impl<'meta> Fixups<'meta> {
-    /// Get any fixups needed for a specific package target
+    /// Get any fixups needed for a specific package
     pub fn new(
         config: &'meta Config,
         paths: &Paths,
         package: &'meta Manifest,
-        target: &'meta ManifestTarget,
         public: bool,
     ) -> anyhow::Result<Self> {
         let fixup_dir = paths.third_party_dir.join("fixups").join(&package.name);
@@ -131,7 +128,6 @@ impl<'meta> Fixups<'meta> {
             third_party_dir: paths.third_party_dir.to_path_buf(),
             manifest_dir: package.manifest_dir(),
             package,
-            target,
             fixup_dir,
             fixup_config,
             config,
@@ -142,17 +138,20 @@ impl<'meta> Fixups<'meta> {
     // There's a few cases:
     // - if the script doesn't specify a target, then it applies to the main "lib" target of the package
     // - otherwise it applies to the matching kind and (optionally) name (all names if not specified)
-    fn target_match(&self, applies_to_targets: &[(TargetKind, Option<String>)]) -> bool {
+    fn target_match(
+        &self,
+        target: &ManifestTarget,
+        applies_to_targets: &[(TargetKind, Option<String>)],
+    ) -> bool {
         if applies_to_targets.is_empty() {
             // Applies to default target (the main "lib" target)
             let default_target = self.package.dependency_target();
-            return Some(self.target) == default_target;
+            return Some(target) == default_target;
         }
 
         // Applies to the targets specified by the fixup
         applies_to_targets.iter().any(|(kind, name)| {
-            self.target.kind.contains(kind)
-                && name.as_ref().is_none_or(|name| &self.target.name == name)
+            target.kind.contains(kind) && name.as_ref().is_none_or(|name| &target.name == name)
         })
     }
 
@@ -205,8 +204,8 @@ impl<'meta> Fixups<'meta> {
         self.fixup_config.python_ext.as_deref()
     }
 
-    pub fn omit_target(&self) -> bool {
-        self.fixup_config.omit_targets.contains(&self.target.name)
+    pub fn omit_target(&self, target: &ManifestTarget) -> bool {
+        self.fixup_config.omit_targets.contains(&target.name)
     }
 
     pub fn export_sources(&self) -> Option<&ExportSources> {
@@ -264,6 +263,7 @@ impl<'meta> Fixups<'meta> {
         config: &'meta Config,
         manifest_dir: Option<SubtargetOrPath>,
         index: &Index,
+        target: &ManifestTarget,
     ) -> anyhow::Result<Vec<Rule>> {
         let mut res = Vec::new();
 
@@ -575,7 +575,7 @@ impl<'meta> Fixups<'meta> {
                             let value = if cargo_env == CargoEnv::CARGO_CRATE_NAME {
                                 Some(StringOrPath::String("build_script_build".to_owned()))
                             } else {
-                                self.cargo_env_value(cargo_env, required)?
+                                self.cargo_env_value(cargo_env, required, target)?
                             };
                             if let Some(value) = value {
                                 entry.insert(value);
@@ -587,7 +587,9 @@ impl<'meta> Fixups<'meta> {
                         if let btree_map::Entry::Vacant(entry) =
                             buildscript_run.base.env.entry(cargo_env.to_string())
                         {
-                            if let Some(value) = self.cargo_env_value(cargo_env, required)? {
+                            if let Some(value) =
+                                self.cargo_env_value(cargo_env, required, target)?
+                            {
                                 entry.insert(value);
                             }
                         }
@@ -639,6 +641,7 @@ impl<'meta> Fixups<'meta> {
 
     fn buildscript_rustc_flags(
         &self,
+        target: &ManifestTarget,
     ) -> Vec<(
         Option<PlatformExpr>,
         (Vec<String>, BTreeMap<String, Vec<String>>),
@@ -651,7 +654,7 @@ impl<'meta> Fixups<'meta> {
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
             let mut flags = vec![];
 
-            if !self.target.kind_custom_build() && config.buildscript.run.is_some() {
+            if !target.kind_custom_build() && config.buildscript.run.is_some() {
                 flags.push(format!(
                     "@$(location :{}[rustc_flags])",
                     self.buildscript_genrule_name()
@@ -669,6 +672,7 @@ impl<'meta> Fixups<'meta> {
     /// Return extra command-line options, with platform annotation if needed
     pub fn compute_cmdline(
         &self,
+        target: &ManifestTarget,
     ) -> Vec<(
         Option<PlatformExpr>,
         (Vec<String>, BTreeMap<String, Vec<String>>),
@@ -687,7 +691,7 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        ret.extend(self.buildscript_rustc_flags());
+        ret.extend(self.buildscript_rustc_flags(target));
 
         ret
     }
@@ -700,6 +704,7 @@ impl<'meta> Fixups<'meta> {
         &self,
         platform_name: &PlatformName,
         index: &'meta Index<'meta>,
+        target: &'meta ManifestTarget,
     ) -> anyhow::Result<
         Option<
             Vec<(
@@ -713,8 +718,7 @@ impl<'meta> Fixups<'meta> {
         let mut ret = vec![];
 
         // Get dependencies according to Cargo.
-        let Some(deps) = index.resolved_deps_for_target(self.package, self.target, platform_name)
-        else {
+        let Some(deps) = index.resolved_deps_for_target(self.package, target, platform_name) else {
             return Ok(None);
         };
 
@@ -733,7 +737,7 @@ impl<'meta> Fixups<'meta> {
 
             let fixup_omit_deps;
             let fixup_extra_deps;
-            if self.target.crate_bin() && self.target.kind_custom_build() {
+            if target.crate_bin() && target.kind_custom_build() {
                 fixup_omit_deps = &fixup.buildscript.build.omit_deps;
                 fixup_extra_deps = &fixup.buildscript.build.extra_deps;
             } else {
@@ -759,7 +763,7 @@ impl<'meta> Fixups<'meta> {
                 ..
             } in &fixup.cxx_library
             {
-                if !add_dep || !self.target_match(targets) {
+                if !add_dep || !self.target_match(target, targets) {
                     continue;
                 }
                 ret.push((
@@ -782,7 +786,7 @@ impl<'meta> Fixups<'meta> {
                 ..
             } in &fixup.prebuilt_cxx_library
             {
-                if !add_dep || !self.target_match(targets) {
+                if !add_dep || !self.target_match(target, targets) {
                     continue;
                 }
                 let mut static_lib_globs =
@@ -812,11 +816,11 @@ impl<'meta> Fixups<'meta> {
             log::debug!(
                 "Resolved deps for {}/{} ({:?}) - {} as {} ({:?})",
                 self.package,
-                self.target.name,
-                self.target.kind(),
+                target.name,
+                target.kind(),
                 package,
                 rename,
-                self.target.kind()
+                target.kind()
             );
 
             // Only use the rename if it isn't the same as the target anyway.
@@ -846,6 +850,7 @@ impl<'meta> Fixups<'meta> {
     /// Additional environment
     pub fn compute_env(
         &self,
+        target: &ManifestTarget,
     ) -> anyhow::Result<Vec<(Option<PlatformExpr>, BTreeMap<String, StringOrPath>)>> {
         let mut ret = vec![];
 
@@ -873,7 +878,7 @@ impl<'meta> Fixups<'meta> {
                     | CargoEnv::CARGO_PKG_VERSION_PRE => {}
                 }
                 let required = !matches!(config.cargo_env, CargoEnvs::All);
-                if let Some(value) = self.cargo_env_value(cargo_env, required)? {
+                if let Some(value) = self.cargo_env_value(cargo_env, required, target)? {
                     map.insert(cargo_env.to_string(), value);
                 }
             }
@@ -890,9 +895,10 @@ impl<'meta> Fixups<'meta> {
         &self,
         cargo_env: CargoEnv,
         required: bool,
+        target: &ManifestTarget,
     ) -> anyhow::Result<Option<StringOrPath>> {
         let value = match cargo_env {
-            CargoEnv::CARGO_CRATE_NAME => StringOrPath::String(self.target.name.replace('-', "_")),
+            CargoEnv::CARGO_CRATE_NAME => StringOrPath::String(target.name.replace('-', "_")),
             CargoEnv::CARGO_MANIFEST_DIR => {
                 if matches!(self.config.vendor, VendorConfig::Source(_))
                     || matches!(self.package.source, Source::Local)
@@ -1137,6 +1143,7 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_mapped_srcs(
         &self,
         mapped_manifest_dir: &Path,
+        target: &ManifestTarget,
     ) -> anyhow::Result<Vec<(Option<PlatformExpr>, BTreeMap<SubtargetOrPath, BuckPath>)>> {
         let mut ret = vec![];
 
@@ -1164,7 +1171,7 @@ impl<'meta> Fixups<'meta> {
                 log::debug!(
                     "pkg {} target {} overlay_dir {} overlay_files {:?}",
                     self.package,
-                    self.target.name,
+                    target.name,
                     overlay_dir.display(),
                     overlay_files
                 );
@@ -1185,7 +1192,7 @@ impl<'meta> Fixups<'meta> {
     }
 
     /// Return mapping from rules of generated source to local name.
-    pub fn compute_gen_srcs(&self) -> Vec<(Option<PlatformExpr>, ())> {
+    pub fn compute_gen_srcs(&self, target: &ManifestTarget) -> Vec<(Option<PlatformExpr>, ())> {
         let mut ret = vec![];
 
         if self.buildscript_rule_name().is_none() {
@@ -1194,7 +1201,7 @@ impl<'meta> Fixups<'meta> {
         }
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if !self.target.kind_custom_build() && config.buildscript.run.is_some() {
+            if !target.kind_custom_build() && config.buildscript.run.is_some() {
                 ret.push((platform.cloned(), ()));
             }
         }
