@@ -379,8 +379,13 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         // Make an index of Cargo's resolution of the dependencies.
         let dep_index = DepIndex::new(self.pkgid_to_pkg, self.pkgid_to_node, pkgid);
 
+        // Omit dependencies according to fixups.
+        let pkg = self.pkgid_to_pkg[pkgid];
+        let public = self.public_package_names.contains(pkg.name.as_str());
+        let fixups = Fixups::new(self.config, self.paths, pkg, public)?;
+
         // Go through the manifest dependencies and enable all that are non-optional.
-        for manifest_dep in &self.pkgid_to_pkg[pkgid].dependencies {
+        for manifest_dep in &pkg.dependencies {
             if !manifest_dep.optional
                 && match manifest_dep.kind {
                     DepKind::Normal | DepKind::Build => true,
@@ -391,6 +396,10 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                         .eval(&self.config.platform[platform_name]),
                     None => true,
                 }
+                && !fixups.omit_dep(
+                    platform_name,
+                    manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name),
+                )?
             {
                 let node_dep = dep_index.resolve(manifest_dep)?;
                 for dep_kind in &node_dep.dep_kinds {
@@ -554,9 +563,17 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         platform_name: &'meta PlatformName,
         enable_dependency: &'meta str,
     ) -> anyhow::Result<()> {
+        // Omit dependencies according to fixups.
+        let pkg = self.pkgid_to_pkg[pkgid];
+        let public = self.public_package_names.contains(pkg.name.as_str());
+        let fixups = Fixups::new(self.config, self.paths, pkg, public)?;
+        if fixups.omit_dep(platform_name, enable_dependency)? {
+            return Ok(());
+        }
+
         // Find the matching crate and enable it.
         let dep_index = DepIndex::new(self.pkgid_to_pkg, self.pkgid_to_node, pkgid);
-        for manifest_dep in &self.pkgid_to_pkg[pkgid].dependencies {
+        for manifest_dep in &pkg.dependencies {
             if enable_dependency == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
                 && manifest_dep.optional
                 && match manifest_dep.kind {

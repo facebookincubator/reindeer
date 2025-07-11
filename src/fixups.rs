@@ -824,21 +824,12 @@ impl<'meta> Fixups<'meta> {
                 target.kind()
             );
 
-            // Only use the rename if it isn't the same as the target anyway.
-            let tgtname = package
-                .dependency_target()
-                .map(|tgt| tgt.name.replace('-', "_"));
-
-            if omit_deps.contains(rename) {
-                // Dependency is omitted.
-                continue;
-            }
-
             ret.push((
                 Some(package),
                 RuleRef::from(index.private_rule_name(package)),
-                match tgtname {
-                    Some(ref tgtname) if tgtname == rename => None,
+                // Only use the rename if it isn't the same as the target anyway.
+                match package.dependency_target() {
+                    Some(tgt) if tgt.name.replace('-', "_") == rename => None,
                     Some(_) | None => Some(rename),
                 },
                 dep_kind,
@@ -846,6 +837,16 @@ impl<'meta> Fixups<'meta> {
         }
 
         Ok(Some(ret))
+    }
+
+    pub fn omit_dep(&self, platform_name: &PlatformName, dep: &str) -> anyhow::Result<bool> {
+        for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
+            if self.fixup_applies(platform, platform_name)? && fixup.omit_deps.contains(dep) {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     /// Additional environment
