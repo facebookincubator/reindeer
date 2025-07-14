@@ -155,8 +155,6 @@ pub struct ExportSources {
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct FixupConfig {
-    /// Versions this fixup applies to,
-    pub version: Option<semver::VersionReq>,
     /// Extra src globs, rooted in manifest dir for package
     #[serde(default)]
     pub extra_srcs: TrackedGlobSet,
@@ -248,11 +246,6 @@ impl FixupConfig {
         let mut files = self.overlay_files(fixup_dir)?;
         files.extend(self.extra_mapped_srcs.values().map(PathBuf::clone));
         Ok(files)
-    }
-
-    /// Return true if config applies to given version
-    pub fn version_applies(&self, ver: &semver::Version) -> bool {
-        self.version.as_ref().is_none_or(|req| req.matches(ver))
     }
 }
 

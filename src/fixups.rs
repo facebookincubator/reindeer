@@ -143,23 +143,15 @@ impl<'meta> FixupsCache<'meta> {
 
 impl<'meta> Fixups<'meta> {
     fn configs(&self, platform_name: &PlatformName) -> Vec<&FixupConfig> {
-        let mut configs = Vec::new();
+        let mut configs = Vec::with_capacity(1 + self.fixup_config.platform_fixup.len());
 
-        if self
-            .fixup_config
-            .base
-            .version_applies(&self.package.version)
-        {
-            configs.push(&self.fixup_config.base);
-        }
+        configs.push(&self.fixup_config.base);
 
         for (platform_expr, fixup) in &self.fixup_config.platform_fixup {
-            if fixup.version_applies(&self.package.version)
-                && platform_expr.eval(
-                    &self.config.platform[platform_name],
-                    Some(&self.package.version),
-                )
-            {
+            if platform_expr.eval(
+                &self.config.platform[platform_name],
+                Some(&self.package.version),
+            ) {
                 configs.push(fixup);
             }
         }
