@@ -1061,47 +1061,45 @@ impl<'meta> Fixups<'meta> {
         &self,
         mapped_manifest_dir: &Path,
         target: &ManifestTarget,
-    ) -> anyhow::Result<Vec<(Option<PlatformExpr>, BTreeMap<SubtargetOrPath, BuckPath>)>> {
-        let mut ret = vec![];
+        platform_name: &PlatformName,
+    ) -> anyhow::Result<BTreeMap<SubtargetOrPath, BuckPath>> {
+        let mut ret = BTreeMap::new();
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            let mut map = BTreeMap::new();
-
-            for (k, v) in &config.extra_mapped_srcs {
-                map.insert(
-                    // If the mapped source is target-like, take it as-is since
-                    // we have nothing to resolve or find.
-                    if k.starts_with(':') || k.contains("//") {
-                        SubtargetOrPath::Path(BuckPath(PathBuf::from(k)))
-                    } else {
-                        self.subtarget_or_path(Path::new(k))?
-                    },
-                    BuckPath(mapped_manifest_dir.join(v)),
-                );
-            }
-
-            if let Some(overlay) = &config.overlay {
-                let overlay_dir = self.fixup_dir.join(overlay);
-                let relative_overlay_dir = relative_path(self.third_party_dir, &overlay_dir);
-                let overlay_files = config.overlay_files(&self.fixup_dir)?;
-
-                log::debug!(
-                    "pkg {} target {} overlay_dir {} overlay_files {:?}",
-                    self.package,
-                    target.name,
-                    overlay_dir.display(),
-                    overlay_files
-                );
-
-                for file in overlay_files {
-                    map.insert(
-                        SubtargetOrPath::Path(BuckPath(relative_overlay_dir.join(&file))),
-                        BuckPath(mapped_manifest_dir.join(&file)),
+            if self.fixup_applies(platform, platform_name)? {
+                for (k, v) in &config.extra_mapped_srcs {
+                    ret.insert(
+                        // If the mapped source is target-like, take it as-is since
+                        // we have nothing to resolve or find.
+                        if k.starts_with(':') || k.contains("//") {
+                            SubtargetOrPath::Path(BuckPath(PathBuf::from(k)))
+                        } else {
+                            self.subtarget_or_path(Path::new(k))?
+                        },
+                        BuckPath(mapped_manifest_dir.join(v)),
                     );
                 }
-            }
-            if !map.is_empty() {
-                ret.push((platform.cloned(), map));
+
+                if let Some(overlay) = &config.overlay {
+                    let overlay_dir = self.fixup_dir.join(overlay);
+                    let relative_overlay_dir = relative_path(self.third_party_dir, &overlay_dir);
+                    let overlay_files = config.overlay_files(&self.fixup_dir)?;
+
+                    log::debug!(
+                        "pkg {} target {} overlay_dir {} overlay_files {:?}",
+                        self.package,
+                        target.name,
+                        overlay_dir.display(),
+                        overlay_files
+                    );
+
+                    for file in overlay_files {
+                        ret.insert(
+                            SubtargetOrPath::Path(BuckPath(relative_overlay_dir.join(&file))),
+                            BuckPath(mapped_manifest_dir.join(&file)),
+                        );
+                    }
+                }
             }
         }
 

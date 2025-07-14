@@ -15,7 +15,7 @@ use crate::buck::BuckPath;
 use crate::buck::Name;
 use crate::buck::SubtargetOrPath;
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Subtarget {
     pub target: Name,
     // Can be empty string. TODO: consider replacing with Option<BuckPath>, or

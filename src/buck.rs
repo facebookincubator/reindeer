@@ -81,7 +81,7 @@ impl RuleRef {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct BuckPath(pub PathBuf);
 
 impl BuckPath {
@@ -137,7 +137,7 @@ pub enum StringOrPath {
     Path(BuckPath),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
 #[serde(untagged)]
 pub enum SubtargetOrPath {
     Subtarget(Subtarget),

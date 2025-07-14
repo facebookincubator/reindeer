@@ -565,23 +565,13 @@ fn generate_target_rules<'scope>(
             .insert(BuckPath(PathBuf::from(http_archive_target)));
     }
 
-    unzip_platform(
-        config,
-        &compatible_platforms,
+    evaluate_for_platforms(
         &mut base,
         &mut perplat,
-        |rule, map| {
-            log::debug!(
-                "pkg {} target {}: adding mapped_srcs(paths) {:?}",
-                pkg,
-                tgt.name,
-                map
-            );
-            rule.mapped_srcs.extend(map);
-        },
-        fixups.compute_mapped_srcs(&mapped_manifest_dir, tgt)?,
-    )
-    .context("mapped_srcs(paths)")?;
+        &compatible_platforms,
+        |platform| fixups.compute_mapped_srcs(&mapped_manifest_dir, tgt, platform),
+        |rule, (key, value)| rule.mapped_srcs.insert(key, value),
+    )?;
 
     evaluate_for_platforms(
         &mut base,
