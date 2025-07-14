@@ -61,6 +61,7 @@ use crate::glob::TrackedGlobSet;
 use crate::index::Index;
 use crate::index::ResolvedDep;
 use crate::path::normalize_path;
+use crate::path::normalized_extend_path;
 use crate::path::relative_path;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
@@ -1000,7 +1001,9 @@ impl<'meta> Fixups<'meta> {
         let mut common_files = HashSet::new();
         let srcs_globs = Globs::new(GlobSetKind::from_iter(&srcs).context("Srcs")?, NO_EXCLUDE);
         for path in srcs_globs.walk(self.manifest_dir) {
-            common_files.insert(manifest_rel.join(path));
+            let mut src = manifest_rel.clone();
+            normalized_extend_path(&mut src, path);
+            common_files.insert(src);
         }
         if let Some(base) = self.fixup_config.base(&self.package.version) {
             common_files.extend(self.compute_extra_srcs(&base.extra_srcs)?);

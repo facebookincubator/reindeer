@@ -14,27 +14,30 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     let max_len = path.as_os_str().len();
     let mut ret = PathBuf::with_capacity(max_len);
 
-    for c in path.components() {
-        match c {
-            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => ret.push(c),
-            Component::ParentDir => match ret.components().next_back() {
-                Some(Component::Normal(_)) => {
-                    ret.pop();
-                }
-                Some(Component::RootDir | Component::Prefix(_)) | None => {}
-                Some(Component::ParentDir | Component::CurDir) => {
-                    unreachable!();
-                }
-            },
-            Component::CurDir => {}
-        };
-    }
+    normalized_extend_path(&mut ret, path);
 
     if ret.as_os_str().is_empty() {
         ret.push(Component::CurDir.as_os_str());
     }
 
     ret
+}
+
+pub fn normalized_extend_path(base: &mut PathBuf, relative: impl AsRef<Path>) {
+    for c in relative.as_ref().components() {
+        match c {
+            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => base.push(c),
+            Component::ParentDir => match base.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    base.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => unimplemented!(),
+                Some(Component::CurDir) => unreachable!(),
+                Some(Component::ParentDir) | None => base.push(Component::ParentDir),
+            },
+            Component::CurDir => {}
+        };
+    }
 }
 
 // Compute a path for `to` relative to `base`.

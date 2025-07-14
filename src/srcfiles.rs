@@ -23,6 +23,8 @@ use std::path::PathBuf;
 use proc_macro2 as _; // To autocargo with our features (namely `span-locations`)
 use syn::visit::Visit;
 
+use crate::path::normalized_extend_path;
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct Error {
@@ -271,7 +273,7 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
                         self.mod_parent_dir()
                     };
                     p.extend(self.mod_ancestors.iter());
-                    p.extend(Path::new(&first_path_value));
+                    normalized_extend_path(&mut p, first_path_value);
                     p
                 };
 
@@ -318,7 +320,7 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
                     Ok(path) => {
                         let source_path = {
                             let mut p = parent_dir(self.current).to_owned();
-                            p.extend(Path::new(&path.value()));
+                            normalized_extend_path(&mut p, path.value());
                             p
                         };
                         match fs::File::open(&source_path) {
@@ -495,10 +497,10 @@ mod tests {
                 "src/aaa/ooo/ppp.rs",
                 "src/aaa/ooo/qqq/mod.rs",
                 "src/aaa/ooo/rrr/sss.rs",
-                "src/../str1.txt",
                 "src/str2.txt",
                 "src/str3.txt",
                 "src/subdir/bytes1.txt",
+                "str1.txt",
             ]
             .into_iter()
             .map(Path::new)
@@ -538,6 +540,8 @@ mod tests {
                     #[path = "n.rs"]
                     mod nnn;
                 }
+                #[path = "../ppp.rs"]
+                mod ppp;
             },
             "src/a/mmm/n.rs" => {},
             "src/ccc/d.rs" => {
@@ -547,6 +551,7 @@ mod tests {
                 }
             },
             "src/ccc/yyy/z.rs" => {},
+            "src/ppp.rs" => {},
         }
         .unwrap();
 
@@ -563,6 +568,7 @@ mod tests {
                 "src/a/mmm/n.rs",
                 "src/ccc/d.rs",
                 "src/ccc/yyy/z.rs",
+                "src/ppp.rs",
             ]
             .into_iter()
             .map(Path::new)
@@ -643,7 +649,7 @@ mod tests {
                 .iter()
                 .map(|x| x.strip_prefix(&dir).unwrap())
                 .collect::<HashSet<_>>(),
-            ["src/lib.rs", "src/../README.md"]
+            ["src/lib.rs", "README.md"]
                 .into_iter()
                 .map(Path::new)
                 .collect::<HashSet<_>>(),
