@@ -155,7 +155,10 @@ impl<'meta> Fixups<'meta> {
 
         for (platform_expr, fixup) in &self.fixup_config.platform_fixup {
             if fixup.version_applies(&self.package.version)
-                && platform_expr.eval(&self.config.platform[platform_name])
+                && platform_expr.eval(
+                    &self.config.platform[platform_name],
+                    Some(&self.package.version),
+                )
             {
                 configs.push(fixup);
             }

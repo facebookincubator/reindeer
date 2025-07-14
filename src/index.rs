@@ -399,7 +399,9 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                     DepKind::Dev => false,
                 }
                 && match &manifest_dep.target {
-                    Some(platform_expr) => platform_expr.eval(&self.config.platform[platform_name]),
+                    Some(platform_expr) => {
+                        platform_expr.eval(&self.config.platform[platform_name], None)
+                    }
                     None => true,
                 }
                 && !fixups.omit_dep(
@@ -490,9 +492,8 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                                     DepKind::Dev => false,
                                 }
                                 && match &manifest_dep.target {
-                                    Some(platform_expr) => {
-                                        platform_expr.eval(&self.config.platform[platform_name])
-                                    }
+                                    Some(platform_expr) => platform_expr
+                                        .eval(&self.config.platform[platform_name], None),
                                     None => true,
                                 }
                             {
@@ -575,7 +576,9 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                     DepKind::Dev => false,
                 }
                 && match &manifest_dep.target {
-                    Some(platform_expr) => platform_expr.eval(&self.config.platform[platform_name]),
+                    Some(platform_expr) => {
+                        platform_expr.eval(&self.config.platform[platform_name], None)
+                    }
                     None => true,
                 }
             {

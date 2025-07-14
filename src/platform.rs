@@ -15,6 +15,8 @@ use std::fmt::Display;
 
 use nom_language::error::VerboseError;
 use nom_language::error::convert_error;
+use semver::Version;
+use semver::VersionReq;
 use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeSeed;
@@ -222,6 +224,7 @@ pub enum PlatformExpr {
     // Predicates
     Value { key: String, value: String },
     Bool { key: String },
+    Version(VersionReq),
 
     // Helpers
     Unix,
@@ -260,7 +263,7 @@ impl PlatformExpr {
         Err(anyhow::Error::new(err).context(format!("Bad platform expression `{input}`")))
     }
 
-    pub fn eval(&self, config: &PlatformConfig) -> bool {
+    pub fn eval(&self, config: &PlatformConfig, version: Option<&Version>) -> bool {
         match self {
             PlatformExpr::Bool { key } => config.cfg.contains_key(key),
             PlatformExpr::Value { key, value } => {
@@ -271,19 +274,23 @@ impl PlatformExpr {
                     config.cfg.get(key).is_some_and(|set| set.contains(value))
                 }
             }
-            PlatformExpr::Not(pred) => !pred.eval(config),
-            PlatformExpr::Any(preds) => preds.iter().any(|pred| pred.eval(config)),
-            PlatformExpr::All(preds) => preds.iter().all(|pred| pred.eval(config)),
+            PlatformExpr::Version(req) => match version {
+                None => false,
+                Some(version) => req.matches(version),
+            },
+            PlatformExpr::Not(pred) => !pred.eval(config, version),
+            PlatformExpr::Any(preds) => preds.iter().any(|pred| pred.eval(config, version)),
+            PlatformExpr::All(preds) => preds.iter().all(|pred| pred.eval(config, version)),
             PlatformExpr::Unix => PlatformExpr::Value {
                 key: "target_family".to_owned(),
                 value: "unix".to_owned(),
             }
-            .eval(config),
+            .eval(config, version),
             PlatformExpr::Windows => PlatformExpr::Value {
                 key: "target_family".to_owned(),
                 value: "windows".to_owned(),
             }
-            .eval(config),
+            .eval(config, version),
         }
     }
 }
