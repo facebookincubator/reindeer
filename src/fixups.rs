@@ -612,11 +612,9 @@ impl<'meta> Fixups<'meta> {
         &self,
         platform_name: &PlatformName,
         index: &'meta Index<'meta>,
-    ) -> anyhow::Result<Option<BTreeSet<&str>>> {
+    ) -> anyhow::Result<BTreeSet<&str>> {
         // Get features according to Cargo.
-        let Some(mut features) = index.resolved_features(self.package, platform_name) else {
-            return Ok(None);
-        };
+        let mut features = index.resolved_features(self.package, platform_name);
 
         // Apply extra feature fixups.
         for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
@@ -627,7 +625,7 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        Ok(Some(features))
+        Ok(features)
     }
 
     pub fn omit_feature(
@@ -712,21 +710,17 @@ impl<'meta> Fixups<'meta> {
         index: &'meta Index<'meta>,
         target: &'meta ManifestTarget,
     ) -> anyhow::Result<
-        Option<
-            Vec<(
-                Option<&'meta Manifest>,
-                RuleRef,
-                Option<&'meta str>,
-                &'meta NodeDepKind,
-            )>,
-        >,
+        Vec<(
+            Option<&'meta Manifest>,
+            RuleRef,
+            Option<&'meta str>,
+            &'meta NodeDepKind,
+        )>,
     > {
         let mut ret = vec![];
 
         // Get dependencies according to Cargo.
-        let Some(deps) = index.resolved_deps_for_target(self.package, target, platform_name) else {
-            return Ok(None);
-        };
+        let deps = index.resolved_deps_for_target(self.package, target, platform_name);
 
         // Collect fixups.
         let mut omit_deps = HashSet::new();
@@ -834,7 +828,7 @@ impl<'meta> Fixups<'meta> {
             ));
         }
 
-        Ok(Some(ret))
+        Ok(ret)
     }
 
     pub fn omit_dep(&self, platform_name: &PlatformName, dep: &str) -> anyhow::Result<bool> {

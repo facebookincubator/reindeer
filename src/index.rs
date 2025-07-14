@@ -33,6 +33,7 @@ use crate::resolve::DepIndex;
 
 /// Index for interesting things in Cargo metadata
 pub struct Index<'meta> {
+    config: &'meta Config,
     /// Map a PkgId to the Manifest (package) with its details
     pkgid_to_pkg: HashMap<&'meta PkgId, &'meta Manifest>,
     /// Map a PkgId to a Node (ie all the details of a resolve dependency)
@@ -112,6 +113,7 @@ impl<'meta> Index<'meta> {
             .collect();
 
         let mut index = Index {
+            config,
             pkgid_to_pkg,
             pkgid_to_node: metadata.resolve.nodes.iter().map(|n| (&n.id, n)).collect(),
             pkgid_platform_features: HashMap::new(),
@@ -243,23 +245,34 @@ impl<'meta> Index<'meta> {
         })
     }
 
+    pub fn compatible_platforms(&self, pkg: &Manifest) -> BTreeSet<&'meta PlatformName> {
+        let mut compatible_platforms = BTreeSet::new();
+        for platform_name in self.config.platform.keys() {
+            if self
+                .pkgid_platform_features
+                .contains_key(&(&pkg.id, platform_name))
+            {
+                compatible_platforms.insert(platform_name);
+            }
+        }
+        compatible_platforms
+    }
+
     /// Return the set of features resolved for a particular package
     pub fn resolved_features(
         &self,
         pkg: &Manifest,
         platform_name: &PlatformName,
-    ) -> Option<BTreeSet<&str>> {
+    ) -> BTreeSet<&str> {
         let mut features = BTreeSet::new();
-        for &feature in &self
-            .pkgid_platform_features
-            .get(&(&pkg.id, platform_name))?
-            .features
-        {
-            if !feature.starts_with("dep:") {
-                features.insert(feature);
+        if let Some(resolve) = self.pkgid_platform_features.get(&(&pkg.id, platform_name)) {
+            for &feature in &resolve.features {
+                if !feature.starts_with("dep:") {
+                    features.insert(feature);
+                }
             }
         }
-        Some(features)
+        features
     }
 
     /// Return resolved dependencies for a target.
@@ -268,81 +281,77 @@ impl<'meta> Index<'meta> {
         pkg: &'meta Manifest,
         tgt: &'meta ManifestTarget,
         platform_name: &PlatformName,
-    ) -> Option<impl Iterator<Item = ResolvedDep<'meta>> + '_> {
+    ) -> impl Iterator<Item = ResolvedDep<'meta>> + '_ {
         // Target must be the target for the given package.
         assert!(pkg.targets.contains(tgt));
 
         let mut resolved_deps = HashMap::new();
 
-        for &(rename, dep_kind, dep_id) in &self
-            .pkgid_platform_features
-            .get(&(&pkg.id, platform_name))?
-            .deps
-        {
-            if match dep_kind.kind {
-                DepKind::Normal => {
-                    tgt.kind_lib()
-                        || tgt.kind_proc_macro()
-                        || tgt.kind_bin()
-                        || tgt.kind_cdylib()
-                        || tgt.kind_staticlib()
-                }
-                DepKind::Dev => tgt.kind_bench() || tgt.kind_test() || tgt.kind_example(),
-                DepKind::Build => tgt.kind_custom_build(),
-            } {
-                let dep = &self.pkgid_to_pkg[dep_id];
-                // Key by everything except `target`.
-                let NodeDepKind {
-                    kind,
-                    target: _,
-                    artifact,
-                    extern_name,
-                    compile_target,
-                    bin_name,
-                } = dep_kind;
-                let (unconditional_deps, conditional_deps) = resolved_deps
-                    .entry((
-                        &dep.id,
+        if let Some(resolve) = self.pkgid_platform_features.get(&(&pkg.id, platform_name)) {
+            for &(rename, dep_kind, dep_id) in &resolve.deps {
+                if match dep_kind.kind {
+                    DepKind::Normal => {
+                        tgt.kind_lib()
+                            || tgt.kind_proc_macro()
+                            || tgt.kind_bin()
+                            || tgt.kind_cdylib()
+                            || tgt.kind_staticlib()
+                    }
+                    DepKind::Dev => tgt.kind_bench() || tgt.kind_test() || tgt.kind_example(),
+                    DepKind::Build => tgt.kind_custom_build(),
+                } {
+                    let dep = &self.pkgid_to_pkg[dep_id];
+                    // Key by everything except `target`.
+                    let NodeDepKind {
                         kind,
+                        target: _,
                         artifact,
                         extern_name,
                         compile_target,
                         bin_name,
-                    ))
-                    .or_insert_with(|| (vec![], vec![]));
-                let v = (rename, dep_kind, dep);
-                if dep_kind.target.is_none() {
-                    unconditional_deps.push(v);
-                } else {
-                    conditional_deps.push(v);
-                };
+                    } = dep_kind;
+                    let (unconditional_deps, conditional_deps) = resolved_deps
+                        .entry((
+                            &dep.id,
+                            kind,
+                            artifact,
+                            extern_name,
+                            compile_target,
+                            bin_name,
+                        ))
+                        .or_insert_with(|| (vec![], vec![]));
+                    let v = (rename, dep_kind, dep);
+                    if dep_kind.target.is_none() {
+                        unconditional_deps.push(v);
+                    } else {
+                        conditional_deps.push(v);
+                    };
+                }
             }
         }
 
-        Some(
-            resolved_deps
-                .into_iter()
-                .flat_map(|((pkgid, ..), (unconditional_deps, conditional_deps))| {
-                    // When there are "unconditional" deps (i.e. `target` is None),
-                    // all "conditional" deps are ignored. AFAIK, it's not possible
-                    // to have more than one "unconditional" dep. Make sure that
-                    // assumption holds up because otherwise it means somewhere
-                    // in `resolved_deps` we did something wrong.
-                    match unconditional_deps.len() {
-                        0 => conditional_deps,
-                        1 => unconditional_deps,
-                        _ => panic!(
-                            "`{}` had more than one unconditional dep for `{}` {:?}",
-                            pkg.name, pkgid, unconditional_deps,
-                        ),
-                    }
-                })
-                .map(|(rename, dep_kind, dep)| ResolvedDep {
-                    package: dep,
-                    rename,
-                    dep_kind,
-                }),
-        )
+        resolved_deps
+            .into_iter()
+            .flat_map(|((pkgid, ..), (unconditional_deps, conditional_deps))| {
+                // When there are "unconditional" deps (i.e. `target` is None),
+                // all "conditional" deps are ignored. AFAIK, it's not possible
+                // to have more than one "unconditional" dep. Make sure that
+                // assumption holds up because otherwise it means somewhere
+                // in `resolved_deps` we did something wrong.
+                match unconditional_deps.len() {
+                    0 => conditional_deps,
+                    1 => unconditional_deps,
+                    _ => panic!(
+                        "`{}` had more than one unconditional dep for `{}` {:?}",
+                        pkg.name, pkgid, unconditional_deps,
+                    ),
+                }
+            })
+            .map(|(rename, dep_kind, dep)| ResolvedDep {
+                package: dep,
+                rename,
+                dep_kind,
+            })
     }
 }
 

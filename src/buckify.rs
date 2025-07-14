@@ -467,6 +467,7 @@ fn generate_target_rules<'scope>(
     let mut base = PlatformRustCommon::default();
     // Per platform rule bits
     let mut perplat: BTreeMap<PlatformName, PlatformRustCommon> = BTreeMap::new();
+    let compatible_platforms = index.compatible_platforms(pkg);
 
     if matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local) {
         // Get a list of the most obvious sources for the crate. This is either
@@ -533,14 +534,10 @@ fn generate_target_rules<'scope>(
     )
     .context("mapped_srcs(paths)")?;
 
-    let mut compatible_platforms = BTreeSet::new();
     let mut platform_features = Vec::new();
     let mut feature_in_how_many_platforms = HashMap::new();
-    for platform_name in config.platform.keys() {
-        let Some(features) = fixups.compute_features(platform_name, index)? else {
-            continue;
-        };
-        compatible_platforms.insert(platform_name.to_owned());
+    for &platform_name in &compatible_platforms {
+        let features = fixups.compute_features(platform_name, index)?;
         for &feature in &features {
             *feature_in_how_many_platforms.entry(feature).or_insert(0) += 1;
         }
@@ -548,7 +545,7 @@ fn generate_target_rules<'scope>(
     }
     for &(platform_name, ref features) in &platform_features {
         for &feature in features {
-            if feature_in_how_many_platforms[feature] == platform_features.len() {
+            if feature_in_how_many_platforms[feature] == compatible_platforms.len() {
                 base.features.insert(feature.to_owned());
             } else {
                 perplat
@@ -564,10 +561,8 @@ fn generate_target_rules<'scope>(
     // be emitted if we actually emit some rules below.
     let mut platform_deps = Vec::new();
     let mut dep_in_how_many_platforms = HashMap::new();
-    for platform_name in config.platform.keys() {
-        let Some(deps) = fixups.compute_deps(platform_name, index, tgt)? else {
-            continue;
-        };
+    for &platform_name in &compatible_platforms {
+        let deps = fixups.compute_deps(platform_name, index, tgt)?;
         for (_manifest, dep, rename, dep_kind) in &deps {
             if let TargetReq::Cdylib = dep_kind.target_req() {
                 let artifact = &dep_kind.artifact;
@@ -592,7 +587,7 @@ fn generate_target_rules<'scope>(
     for &(platform_name, ref deps) in &platform_deps {
         for &(manifest, ref dep, rename, dep_kind) in deps {
             let key = (dep.clone(), rename, dep_kind);
-            let recipient = if dep_in_how_many_platforms[&key] == platform_deps.len() {
+            let recipient = if dep_in_how_many_platforms[&key] == compatible_platforms.len() {
                 &mut base
             } else {
                 perplat
@@ -786,12 +781,21 @@ fn generate_target_rules<'scope>(
         if index.is_public_target(pkg, TargetReq::Lib) && !index.is_root_package(pkg)
             || index.is_public_target(pkg, TargetReq::Staticlib)
         {
+            let platforms =
+                if !config.buck.alias_with_platforms.is_default && !tgt.crate_proc_macro() {
+                    Some(
+                        compatible_platforms
+                            .iter()
+                            .map(|&platform_name| platform_name.clone())
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
             rules.push(Rule::Alias(Alias {
                 name: index.public_rule_name(pkg),
                 actual: index.private_rule_name(pkg),
-                platforms: (!config.buck.alias_with_platforms.is_default
-                    && !tgt.crate_proc_macro())
-                .then_some(compatible_platforms),
+                platforms,
                 visibility: fixups.public_visibility(),
             }));
         }
@@ -846,11 +850,20 @@ fn generate_target_rules<'scope>(
         let actual = Name(format!("{}-{}", index.private_rule_name(pkg), tgt.name));
 
         if index.is_public_target(pkg, TargetReq::Bin(&tgt.name)) {
+            let platforms = if !config.buck.alias_with_platforms.is_default {
+                Some(
+                    compatible_platforms
+                        .iter()
+                        .map(|&platform_name| platform_name.clone())
+                        .collect(),
+                )
+            } else {
+                None
+            };
             rules.push(Rule::Alias(Alias {
                 name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
                 actual: actual.clone(),
-                platforms: (!config.buck.alias_with_platforms.is_default)
-                    .then_some(compatible_platforms),
+                platforms,
                 visibility: fixups.public_visibility(),
             }));
         }
