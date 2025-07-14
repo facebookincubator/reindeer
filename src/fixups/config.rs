@@ -110,36 +110,6 @@ impl FixupConfigFile {
         Ok(fixup_config)
     }
 
-    pub fn base(&self, version: &semver::Version) -> Option<&FixupConfig> {
-        if self.base.version_applies(version) {
-            Some(&self.base)
-        } else {
-            None
-        }
-    }
-
-    pub fn platform_configs<'a>(
-        &'a self,
-        version: &'a semver::Version,
-    ) -> impl Iterator<Item = (&'a PlatformExpr, &'a FixupConfig)> + 'a {
-        self.platform_fixup
-            .iter()
-            .filter(move |(_, cfg)| cfg.version_applies(version))
-    }
-
-    pub fn configs<'a>(
-        &'a self,
-        version: &'a semver::Version,
-    ) -> impl Iterator<Item = (Option<&'a PlatformExpr>, &'a FixupConfig)> + 'a {
-        self.base(version)
-            .into_iter()
-            .map(|base| (None, base))
-            .chain(
-                self.platform_configs(version)
-                    .map(|(plat, cfg)| (Some(plat), cfg)),
-            )
-    }
-
     pub fn collect_unused_globs(&self, pkg: &str, unused: &mut UnusedGlobs) {
         let mut collect =
             |globset: &TrackedGlobSet| globset.collect_unused_globs(unused, pkg, &self.toml);

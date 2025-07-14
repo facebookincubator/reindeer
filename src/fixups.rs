@@ -53,6 +53,7 @@ use crate::fixups::config::CargoEnvPurpose;
 use crate::fixups::config::CargoEnvs;
 use crate::fixups::config::CustomVisibility;
 pub use crate::fixups::config::ExportSources;
+use crate::fixups::config::FixupConfig;
 use crate::fixups::config::FixupConfigFile;
 use crate::glob::GlobSetKind;
 use crate::glob::Globs;
@@ -63,7 +64,6 @@ use crate::index::ResolvedDep;
 use crate::path::normalize_path;
 use crate::path::normalized_extend_path;
 use crate::path::relative_path;
-use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
 use crate::subtarget::Subtarget;
@@ -143,6 +143,29 @@ impl<'meta> FixupsCache<'meta> {
 }
 
 impl<'meta> Fixups<'meta> {
+    fn configs(&self, platform_name: &PlatformName) -> anyhow::Result<Vec<&FixupConfig>> {
+        let mut configs = Vec::new();
+
+        if self
+            .fixup_config
+            .base
+            .version_applies(&self.package.version)
+        {
+            configs.push(&self.fixup_config.base);
+        }
+
+        for (platform_expr, fixup) in &self.fixup_config.platform_fixup {
+            let predicate = PlatformPredicate::parse(platform_expr)?;
+            if fixup.version_applies(&self.package.version)
+                && predicate.eval(&self.config.platform[platform_name])
+            {
+                configs.push(fixup);
+            }
+        }
+
+        Ok(configs)
+    }
+
     // Return true if the script applies to this target.
     // There's a few cases:
     // - if the script doesn't specify a target, then it applies to the main "lib" target of the package
@@ -292,9 +315,8 @@ impl<'meta> Fixups<'meta> {
 
         for platform_name in compatible_platforms {
             let mut has_explicit_buildscript_fixup = false;
-            for (plat, fixup) in self.fixup_config.configs(&self.package.version) {
-                if self.fixup_applies(plat, platform_name)? && !fixup.buildscript.defaulted_to_empty
-                {
+            for fixup in self.configs(platform_name)? {
+                if !fixup.buildscript.defaulted_to_empty {
                     has_explicit_buildscript_fixup = true;
                     break;
                 }
@@ -321,13 +343,11 @@ impl<'meta> Fixups<'meta> {
 
         let mut cxx_library = Vec::new();
         let mut prebuilt_cxx_library = Vec::new();
-        let mut library_platforms = BTreeSet::new();
+        let mut library_fixups = BTreeSet::new();
         let mut buildscript_platforms = BTreeSet::new();
         for &platform_name in compatible_platforms {
-            for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-                if self.fixup_applies(platform, platform_name)?
-                    && library_platforms.insert(platform)
-                {
+            for fixup in self.configs(platform_name)? {
+                if library_fixups.insert(&raw const *fixup) {
                     cxx_library.extend(&fixup.cxx_library);
                     prebuilt_cxx_library.extend(&fixup.prebuilt_cxx_library);
                 }
@@ -552,22 +572,20 @@ impl<'meta> Fixups<'meta> {
                 &buildscript_platforms,
                 |platform_name| {
                     let mut build_cargo_env = BTreeMap::new();
-                    for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-                        if self.fixup_applies(platform, platform_name)? {
-                            for cargo_env in fixup.cargo_env.iter() {
-                                match cargo_env.purpose() {
-                                    CargoEnvPurpose::BuildOnly | CargoEnvPurpose::BuildAndRun => {}
-                                    CargoEnvPurpose::RunOnly => continue,
-                                }
-                                let value = if cargo_env == CargoEnv::CARGO_CRATE_NAME {
-                                    Some(StringOrPath::String("build_script_build".to_owned()))
-                                } else {
-                                    let required = !matches!(fixup.cargo_env, CargoEnvs::All);
-                                    self.cargo_env_value(cargo_env, required, target)?
-                                };
-                                if let Some(value) = value {
-                                    build_cargo_env.insert(cargo_env, value);
-                                }
+                    for fixup in self.configs(platform_name)? {
+                        for cargo_env in fixup.cargo_env.iter() {
+                            match cargo_env.purpose() {
+                                CargoEnvPurpose::BuildOnly | CargoEnvPurpose::BuildAndRun => {}
+                                CargoEnvPurpose::RunOnly => continue,
+                            }
+                            let value = if cargo_env == CargoEnv::CARGO_CRATE_NAME {
+                                Some(StringOrPath::String("build_script_build".to_owned()))
+                            } else {
+                                let required = !matches!(fixup.cargo_env, CargoEnvs::All);
+                                self.cargo_env_value(cargo_env, required, target)?
+                            };
+                            if let Some(value) = value {
+                                build_cargo_env.insert(cargo_env, value);
                             }
                         }
                     }
@@ -582,18 +600,16 @@ impl<'meta> Fixups<'meta> {
                 &buildscript_platforms,
                 |platform_name| {
                     let mut run_cargo_env = BTreeMap::new();
-                    for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-                        if self.fixup_applies(platform, platform_name)? {
-                            for cargo_env in fixup.cargo_env.iter() {
-                                match cargo_env.purpose() {
-                                    CargoEnvPurpose::RunOnly | CargoEnvPurpose::BuildAndRun => {}
-                                    CargoEnvPurpose::BuildOnly => continue,
-                                }
-                                let required = !matches!(fixup.cargo_env, CargoEnvs::All);
-                                let value = self.cargo_env_value(cargo_env, required, target)?;
-                                if let Some(value) = value {
-                                    run_cargo_env.insert(cargo_env, value);
-                                }
+                    for fixup in self.configs(platform_name)? {
+                        for cargo_env in fixup.cargo_env.iter() {
+                            match cargo_env.purpose() {
+                                CargoEnvPurpose::RunOnly | CargoEnvPurpose::BuildAndRun => {}
+                                CargoEnvPurpose::BuildOnly => continue,
+                            }
+                            let required = !matches!(fixup.cargo_env, CargoEnvs::All);
+                            let value = self.cargo_env_value(cargo_env, required, target)?;
+                            if let Some(value) = value {
+                                run_cargo_env.insert(cargo_env, value);
                             }
                         }
                     }
@@ -608,11 +624,9 @@ impl<'meta> Fixups<'meta> {
                 &buildscript_platforms,
                 |platform_name| {
                     let mut buildscript_run_env = BTreeMap::new();
-                    for (platform_expr, fixup) in self.fixup_config.configs(&self.package.version) {
-                        if self.fixup_applies(platform_expr, platform_name)? {
-                            if let Some(BuildscriptRun { env }) = &fixup.buildscript.run {
-                                buildscript_run_env.extend(env);
-                            }
+                    for fixup in self.configs(platform_name)? {
+                        if let Some(BuildscriptRun { env }) = &fixup.buildscript.run {
+                            buildscript_run_env.extend(env);
                         }
                     }
                     Ok(buildscript_run_env)
@@ -644,11 +658,9 @@ impl<'meta> Fixups<'meta> {
         let mut features = index.resolved_features(self.package, platform_name);
 
         // Apply extra feature fixups.
-        for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? {
-                for feature in &fixup.features {
-                    features.insert(feature);
-                }
+        for fixup in self.configs(platform_name)? {
+            for feature in &fixup.features {
+                features.insert(feature);
             }
         }
 
@@ -660,9 +672,8 @@ impl<'meta> Fixups<'meta> {
         platform_name: &PlatformName,
         feature: &str,
     ) -> anyhow::Result<bool> {
-        for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? && fixup.omit_features.contains(feature)
-            {
+        for fixup in self.configs(platform_name)? {
+            if fixup.omit_features.contains(feature) {
                 return Ok(true);
             }
         }
@@ -676,11 +687,9 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<BTreeSet<String>> {
         let mut cfgs = BTreeSet::new();
 
-        for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? {
-                for cfg in &config.cfgs {
-                    cfgs.insert(cfg.clone());
-                }
+        for config in self.configs(platform_name)? {
+            for cfg in &config.cfgs {
+                cfgs.insert(cfg.clone());
             }
         }
 
@@ -690,10 +699,8 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_rustc_flags(&self, platform_name: &PlatformName) -> anyhow::Result<Vec<String>> {
         let mut rustc_flags = Vec::new();
 
-        for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? {
-                rustc_flags.extend_from_slice(&config.rustc_flags);
-            }
+        for config in self.configs(platform_name)? {
+            rustc_flags.extend_from_slice(&config.rustc_flags);
         }
 
         Ok(rustc_flags)
@@ -705,10 +712,8 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<Vec<BTreeMap<String, Vec<String>>>> {
         let mut rustc_flags_select = Vec::new();
 
-        for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? {
-                rustc_flags_select.extend_from_slice(&config.rustc_flags_select);
-            }
+        for config in self.configs(platform_name)? {
+            rustc_flags_select.extend_from_slice(&config.rustc_flags_select);
         }
 
         Ok(rustc_flags_select)
@@ -738,11 +743,7 @@ impl<'meta> Fixups<'meta> {
 
         // Collect fixups.
         let mut omit_deps = HashSet::new();
-        for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-            if !self.fixup_applies(platform, platform_name)? {
-                continue;
-            }
-
+        for fixup in self.configs(platform_name)? {
             let fixup_omit_deps;
             let fixup_extra_deps;
             if target.crate_bin() && target.kind_custom_build() {
@@ -846,8 +847,8 @@ impl<'meta> Fixups<'meta> {
     }
 
     pub fn omit_dep(&self, platform_name: &PlatformName, dep: &str) -> anyhow::Result<bool> {
-        for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? && fixup.omit_deps.contains(dep) {
+        for fixup in self.configs(platform_name)? {
+            if fixup.omit_deps.contains(dep) {
                 return Ok(true);
             }
         }
@@ -863,35 +864,33 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<BTreeMap<String, StringOrPath>> {
         let mut ret = BTreeMap::new();
 
-        for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? {
-                ret.extend(
-                    config
-                        .env
-                        .iter()
-                        .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
-                );
+        for config in self.configs(platform_name)? {
+            ret.extend(
+                config
+                    .env
+                    .iter()
+                    .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
+            );
 
-                for cargo_env in config.cargo_env.iter() {
-                    match cargo_env {
-                        // Not set for builds, only build script execution
-                        CargoEnv::CARGO_MANIFEST_LINKS => continue,
-                        CargoEnv::CARGO_CRATE_NAME
-                        | CargoEnv::CARGO_MANIFEST_DIR
-                        | CargoEnv::CARGO_PKG_AUTHORS
-                        | CargoEnv::CARGO_PKG_DESCRIPTION
-                        | CargoEnv::CARGO_PKG_NAME
-                        | CargoEnv::CARGO_PKG_REPOSITORY
-                        | CargoEnv::CARGO_PKG_VERSION
-                        | CargoEnv::CARGO_PKG_VERSION_MAJOR
-                        | CargoEnv::CARGO_PKG_VERSION_MINOR
-                        | CargoEnv::CARGO_PKG_VERSION_PATCH
-                        | CargoEnv::CARGO_PKG_VERSION_PRE => {}
-                    }
-                    let required = !matches!(config.cargo_env, CargoEnvs::All);
-                    if let Some(value) = self.cargo_env_value(cargo_env, required, target)? {
-                        ret.insert(cargo_env.to_string(), value);
-                    }
+            for cargo_env in config.cargo_env.iter() {
+                match cargo_env {
+                    // Not set for builds, only build script execution
+                    CargoEnv::CARGO_MANIFEST_LINKS => continue,
+                    CargoEnv::CARGO_CRATE_NAME
+                    | CargoEnv::CARGO_MANIFEST_DIR
+                    | CargoEnv::CARGO_PKG_AUTHORS
+                    | CargoEnv::CARGO_PKG_DESCRIPTION
+                    | CargoEnv::CARGO_PKG_NAME
+                    | CargoEnv::CARGO_PKG_REPOSITORY
+                    | CargoEnv::CARGO_PKG_VERSION
+                    | CargoEnv::CARGO_PKG_VERSION_MAJOR
+                    | CargoEnv::CARGO_PKG_VERSION_MINOR
+                    | CargoEnv::CARGO_PKG_VERSION_PATCH
+                    | CargoEnv::CARGO_PKG_VERSION_PRE => {}
+                }
+                let required = !matches!(config.cargo_env, CargoEnvs::All);
+                if let Some(value) = self.cargo_env_value(cargo_env, required, target)? {
+                    ret.insert(cargo_env.to_string(), value);
                 }
             }
         }
@@ -992,21 +991,16 @@ impl<'meta> Fixups<'meta> {
             ret.insert(src);
         }
 
-        for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? {
-                ret.extend(self.compute_extra_srcs(&fixup.extra_srcs)?);
-            }
+        for fixup in self.configs(platform_name)? {
+            ret.extend(self.compute_extra_srcs(&fixup.extra_srcs)?);
         }
 
-        for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? {
-                let mapped_files = fixup.overlay_and_mapped_files(&self.fixup_dir)?;
-                ret.retain(|path| {
-                    let path_in_crate = relative_path(&manifest_rel, path);
-                    !mapped_files.contains(&path_in_crate)
-                        && !fixup.omit_srcs.is_match(&path_in_crate)
-                });
-            }
+        for fixup in self.configs(platform_name)? {
+            let mapped_files = fixup.overlay_and_mapped_files(&self.fixup_dir)?;
+            ret.retain(|path| {
+                let path_in_crate = relative_path(&manifest_rel, path);
+                !mapped_files.contains(&path_in_crate) && !fixup.omit_srcs.is_match(&path_in_crate)
+            });
         }
 
         log::debug!(
@@ -1074,40 +1068,38 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<BTreeMap<SubtargetOrPath, BuckPath>> {
         let mut ret = BTreeMap::new();
 
-        for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? {
-                for (k, v) in &config.extra_mapped_srcs {
+        for config in self.configs(platform_name)? {
+            for (k, v) in &config.extra_mapped_srcs {
+                ret.insert(
+                    // If the mapped source is target-like, take it as-is since
+                    // we have nothing to resolve or find.
+                    if k.starts_with(':') || k.contains("//") {
+                        SubtargetOrPath::Path(BuckPath(PathBuf::from(k)))
+                    } else {
+                        self.subtarget_or_path(Path::new(k))?
+                    },
+                    BuckPath(mapped_manifest_dir.join(v)),
+                );
+            }
+
+            if let Some(overlay) = &config.overlay {
+                let overlay_dir = self.fixup_dir.join(overlay);
+                let relative_overlay_dir = relative_path(self.third_party_dir, &overlay_dir);
+                let overlay_files = config.overlay_files(&self.fixup_dir)?;
+
+                log::debug!(
+                    "pkg {} target {} overlay_dir {} overlay_files {:?}",
+                    self.package,
+                    target.name,
+                    overlay_dir.display(),
+                    overlay_files
+                );
+
+                for file in overlay_files {
                     ret.insert(
-                        // If the mapped source is target-like, take it as-is since
-                        // we have nothing to resolve or find.
-                        if k.starts_with(':') || k.contains("//") {
-                            SubtargetOrPath::Path(BuckPath(PathBuf::from(k)))
-                        } else {
-                            self.subtarget_or_path(Path::new(k))?
-                        },
-                        BuckPath(mapped_manifest_dir.join(v)),
+                        SubtargetOrPath::Path(BuckPath(relative_overlay_dir.join(&file))),
+                        BuckPath(mapped_manifest_dir.join(&file)),
                     );
-                }
-
-                if let Some(overlay) = &config.overlay {
-                    let overlay_dir = self.fixup_dir.join(overlay);
-                    let relative_overlay_dir = relative_path(self.third_party_dir, &overlay_dir);
-                    let overlay_files = config.overlay_files(&self.fixup_dir)?;
-
-                    log::debug!(
-                        "pkg {} target {} overlay_dir {} overlay_files {:?}",
-                        self.package,
-                        target.name,
-                        overlay_dir.display(),
-                        overlay_files
-                    );
-
-                    for file in overlay_files {
-                        ret.insert(
-                            SubtargetOrPath::Path(BuckPath(relative_overlay_dir.join(&file))),
-                            BuckPath(mapped_manifest_dir.join(&file)),
-                        );
-                    }
                 }
             }
         }
@@ -1120,9 +1112,8 @@ impl<'meta> Fixups<'meta> {
         platform_name: &PlatformName,
     ) -> anyhow::Result<bool> {
         if self.buildscript_target().is_some() {
-            for (platform, config) in self.fixup_config.configs(&self.package.version) {
-                if self.fixup_applies(platform, platform_name)? && config.buildscript.run.is_some()
-                {
+            for config in self.configs(platform_name)? {
+                if config.buildscript.run.is_some() {
                     return Ok(true);
                 }
             }
@@ -1137,8 +1128,8 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<Option<String>> {
         let mut link_style = None;
 
-        for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? && config.link_style.is_some() {
+        for config in self.configs(platform_name)? {
+            if config.link_style.is_some() {
                 link_style = config.link_style.as_ref();
             }
         }
@@ -1153,8 +1144,8 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<Option<String>> {
         let mut preferred_linkage = None;
 
-        for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? && config.preferred_linkage.is_some() {
+        for config in self.configs(platform_name)? {
+            if config.preferred_linkage.is_some() {
                 preferred_linkage = config.preferred_linkage.as_ref();
             }
         }
@@ -1169,25 +1160,10 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<Vec<String>> {
         let mut linker_flags = Vec::new();
 
-        for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if self.fixup_applies(platform, platform_name)? {
-                linker_flags.extend_from_slice(&config.linker_flags);
-            }
+        for config in self.configs(platform_name)? {
+            linker_flags.extend_from_slice(&config.linker_flags);
         }
 
         Ok(linker_flags)
-    }
-
-    fn fixup_applies(
-        &self,
-        platform: Option<&PlatformExpr>,
-        platform_name: &PlatformName,
-    ) -> anyhow::Result<bool> {
-        if let Some(platform_expr) = platform {
-            let predicate = PlatformPredicate::parse(platform_expr)?;
-            Ok(predicate.eval(&self.config.platform[platform_name]))
-        } else {
-            Ok(true)
-        }
     }
 }
