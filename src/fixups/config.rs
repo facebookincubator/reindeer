@@ -31,7 +31,6 @@ use strum::IntoEnumIterator as _;
 use walkdir::WalkDir;
 
 use crate::buck::RuleRef;
-use crate::buckify::relative_path;
 use crate::cargo::Manifest;
 use crate::fixups::buildscript::BuildscriptFixups;
 use crate::fixups::buildscript::CxxLibraryFixup;
@@ -39,6 +38,7 @@ use crate::fixups::buildscript::ExportedHeaders;
 use crate::fixups::buildscript::PrebuiltCxxLibraryFixup;
 use crate::glob::TrackedGlobSet;
 use crate::glob::UnusedGlobs;
+use crate::path::relative_path;
 use crate::platform::PlatformExpr;
 
 /// Top-level fixup config file (correspondins to a fixups.toml)

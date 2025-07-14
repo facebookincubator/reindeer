@@ -41,6 +41,7 @@ mod fixups;
 mod glob;
 mod index;
 mod lockfile;
+mod path;
 mod platform;
 mod remap;
 mod resolve;

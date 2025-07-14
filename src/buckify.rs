@@ -68,64 +68,14 @@ use crate::glob::UnusedGlobs;
 use crate::index::Index;
 use crate::lockfile::Lockfile;
 use crate::lockfile::LockfilePackage;
+use crate::path::normalize_path;
+use crate::path::relative_path;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
 use crate::platform::platform_names_for_expr;
 use crate::srcfiles::crate_srcfiles;
 use crate::subtarget::CollectSubtargets;
 use crate::subtarget::Subtarget;
-
-// normalize a/b/../c => a/c and a/./b => a/b
-pub fn normalize_path(path: &Path) -> PathBuf {
-    #![allow(clippy::enum_glob_use)]
-    use std::path::Component::*;
-
-    let max_len = path.as_os_str().len();
-    let mut ret = PathBuf::with_capacity(max_len);
-
-    for c in path.components() {
-        match c {
-            Normal(_) | RootDir | Prefix(_) => ret.push(c),
-            ParentDir => match ret.components().next_back() {
-                Some(Normal(_)) => {
-                    ret.pop();
-                }
-                Some(RootDir | Prefix(_)) | None => {}
-                Some(ParentDir | CurDir) => {
-                    unreachable!();
-                }
-            },
-            CurDir => {}
-        };
-    }
-
-    if ret.as_os_str().is_empty() {
-        ret.push(CurDir.as_os_str());
-    }
-
-    ret
-}
-
-// Compute a path for `to` relative to `base`.
-pub fn relative_path(mut base: &Path, to: &Path) -> PathBuf {
-    let mut res = PathBuf::new();
-
-    while !to.starts_with(base) {
-        log::debug!(
-            "relative_path: to={}, base={}, res={}",
-            to.display(),
-            base.display(),
-            res.display()
-        );
-        res.push("..");
-        base = base.parent().expect("root dir not prefix of other?");
-    }
-
-    res.join(
-        to.strip_prefix(base)
-            .expect("already worked out it was a prefix"),
-    )
-}
 
 /// Take a stream of platform-tagged items and apply them to the appropriate rule.
 /// This also handles mapping a PlatformExpr into PlatformNames.
