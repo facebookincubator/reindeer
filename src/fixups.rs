@@ -71,7 +71,7 @@ use config::FixupConfigFile;
 /// Fixups for a specific package & target
 pub struct Fixups<'meta> {
     config: &'meta Config,
-    third_party_dir: PathBuf,
+    third_party_dir: &'meta Path,
     package: &'meta Manifest,
     fixup_dir: PathBuf,
     fixup_config: FixupConfigFile,
@@ -94,7 +94,7 @@ impl<'meta> Fixups<'meta> {
     /// Get any fixups needed for a specific package
     pub fn new(
         config: &'meta Config,
-        paths: &Paths,
+        paths: &'meta Paths,
         package: &'meta Manifest,
         public: bool,
     ) -> anyhow::Result<Self> {
@@ -125,7 +125,7 @@ impl<'meta> Fixups<'meta> {
         }
 
         Ok(Fixups {
-            third_party_dir: paths.third_party_dir.to_path_buf(),
+            third_party_dir: &paths.third_party_dir,
             manifest_dir: package.manifest_dir(),
             package,
             fixup_dir,
@@ -163,7 +163,7 @@ impl<'meta> Fixups<'meta> {
             || matches!(self.package.source, Source::Local)
         {
             // Path to vendored file looks like "vendor/foo-1.0.0/src/lib.rs"
-            let manifest_dir = relative_path(&self.third_party_dir, self.manifest_dir);
+            let manifest_dir = relative_path(self.third_party_dir, self.manifest_dir);
             let path = manifest_dir.join(relative_to_manifest_dir);
             Ok(SubtargetOrPath::Path(BuckPath(path)))
         } else if let Source::Git { repo, .. } = &self.package.source {
@@ -267,7 +267,7 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<Vec<Rule>> {
         let mut res = Vec::new();
 
-        let rel_fixup = relative_path(&self.third_party_dir, &self.fixup_dir);
+        let rel_fixup = relative_path(self.third_party_dir, &self.fixup_dir);
 
         let buildscript_rule_name = match self.buildscript_rule_name() {
             None => {
@@ -906,7 +906,7 @@ impl<'meta> Fixups<'meta> {
                     || matches!(self.package.source, Source::Local)
                 {
                     StringOrPath::Path(BuckPath(relative_path(
-                        &self.third_party_dir,
+                        self.third_party_dir,
                         self.manifest_dir,
                     )))
                 } else if let VendorConfig::LocalRegistry = self.config.vendor {
@@ -978,7 +978,7 @@ impl<'meta> Fixups<'meta> {
             matches!(self.config.vendor, VendorConfig::Source(_))
                 || matches!(self.package.source, Source::Local)
         );
-        let manifest_rel = relative_path(&self.third_party_dir, self.manifest_dir);
+        let manifest_rel = relative_path(self.third_party_dir, self.manifest_dir);
 
         let srcs_globs: Vec<String> = srcs
             .iter()
@@ -1112,7 +1112,7 @@ impl<'meta> Fixups<'meta> {
 
             let len_before = extra_srcs.len();
             let mut insert = |absolute_path: &Path| {
-                let tp_rel_path = relative_path(&self.third_party_dir, absolute_path);
+                let tp_rel_path = relative_path(self.third_party_dir, absolute_path);
                 extra_srcs.insert(normalize_path(&tp_rel_path));
             };
 
@@ -1167,7 +1167,7 @@ impl<'meta> Fixups<'meta> {
 
             if let Some(overlay) = &config.overlay {
                 let overlay_dir = self.fixup_dir.join(overlay);
-                let relative_overlay_dir = relative_path(&self.third_party_dir, &overlay_dir);
+                let relative_overlay_dir = relative_path(self.third_party_dir, &overlay_dir);
                 let overlay_files = config.overlay_files(&self.fixup_dir)?;
 
                 log::debug!(
