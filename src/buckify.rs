@@ -512,33 +512,32 @@ fn generate_target_rules<'scope>(
         }
     };
 
-    // Get a list of the most obvious sources for the crate. This is either a list of
-    // filename, or a list of globs.
-    // If we're configured to get precise sources and we're using 2018+ edition source, then
-    // parse the crate to see what files are actually used.
-    let mut srcs = if (matches!(config.vendor, VendorConfig::Source(_))
-        || matches!(pkg.source, Source::Local))
-        && fixups.precise_srcs()
-        && edition >= Edition::Rust2018
-    {
-        measure_time::trace_time!("srcfiles for {}", pkg);
-        srcfiles(manifest_dir.to_owned(), tgt.src_path.clone())
-    } else {
-        vec![]
-    };
-
-    if srcs.is_empty() {
-        // If that didn't work out, get srcs the globby way
-        let dir_containing_src = tgt.src_path.parent().unwrap();
-        srcs.push(relative_path(manifest_dir, dir_containing_src).join("**/*.rs"));
-    }
-
     // Platform-specific rule bits which are common to all platforms
     let mut base = PlatformRustCommon::default();
     // Per platform rule bits
     let mut perplat: BTreeMap<PlatformName, PlatformRustCommon> = BTreeMap::new();
 
     if matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local) {
+        // Get a list of the most obvious sources for the crate. This is either
+        // a list of filename, or a list of globs.
+        let mut srcs = Vec::new();
+
+        // If we're configured to get precise sources and we're using 2018+ edition
+        // source, then parse the crate to see what files are actually used.
+        if (matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local))
+            && fixups.precise_srcs()
+            && edition >= Edition::Rust2018
+        {
+            measure_time::trace_time!("srcfiles for {}", pkg);
+            srcs = srcfiles(manifest_dir.to_owned(), tgt.src_path.clone());
+        }
+
+        if srcs.is_empty() {
+            // If that didn't work out, get srcs the globby way
+            let dir_containing_src = tgt.src_path.parent().unwrap();
+            srcs.push(relative_path(manifest_dir, dir_containing_src).join("**/*.rs"));
+        }
+
         unzip_platform(
             config,
             &mut base,
