@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::fs;
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -100,6 +101,55 @@ fn unzip_platform<T: Clone>(
         }
     }
 
+    Ok(())
+}
+
+fn evaluate_for_platforms<T, R>(
+    common: &mut PlatformRustCommon,
+    perplat: &mut BTreeMap<PlatformName, PlatformRustCommon>,
+    platforms: &BTreeSet<&PlatformName>,
+    mut evaluate: impl FnMut(&PlatformName) -> anyhow::Result<T>,
+    mut apply: impl FnMut(&mut PlatformRustCommon, T::Item) -> R,
+) -> anyhow::Result<()>
+where
+    T: IntoIterator<Item: Eq + Hash>,
+{
+    let mut entries: Vec<(&PlatformName, Vec<T::Item>)> = Vec::new();
+    for &platform_name in platforms {
+        let collection = evaluate(platform_name)?;
+        entries.push((platform_name, Vec::from_iter(collection)));
+    }
+
+    let mut platform_multiplicity: HashMap<&T::Item, usize> = HashMap::new();
+    for (_, collection) in &entries {
+        for value in collection {
+            *platform_multiplicity.entry(value).or_insert(0) += 1;
+        }
+    }
+
+    let mut identical_in_every_platform = VecDeque::new();
+    for (_, collection) in &entries {
+        for value in collection {
+            identical_in_every_platform.push_back(platform_multiplicity[value] == platforms.len());
+        }
+    }
+
+    for (i, (platform_name, collection)) in entries.into_iter().enumerate() {
+        for value in collection {
+            if identical_in_every_platform.pop_front().unwrap() {
+                if i == 0 {
+                    apply(common, value);
+                }
+            } else {
+                apply(
+                    perplat
+                        .entry(platform_name.clone())
+                        .or_insert_with(PlatformRustCommon::default),
+                    value,
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -494,28 +544,13 @@ fn generate_target_rules<'scope>(
             srcs.extend(glob.walk(manifest_dir));
         }
 
-        let mut platform_srcs = Vec::new();
-        let mut src_in_how_many_platforms = HashMap::new();
-        for &platform_name in &compatible_platforms {
-            let srcs = fixups.compute_srcs(platform_name, &srcs)?;
-            for path in &srcs {
-                *src_in_how_many_platforms.entry(path.clone()).or_insert(0) += 1;
-            }
-            platform_srcs.push((platform_name, srcs));
-        }
-        for &(platform_name, ref srcs) in &platform_srcs {
-            for path in srcs {
-                if src_in_how_many_platforms[path] == compatible_platforms.len() {
-                    base.srcs.insert(BuckPath(path.to_owned()));
-                } else {
-                    perplat
-                        .entry(platform_name.clone())
-                        .or_insert_with(PlatformRustCommon::default)
-                        .srcs
-                        .insert(BuckPath(path.to_owned()));
-                }
-            }
-        }
+        evaluate_for_platforms(
+            &mut base,
+            &mut perplat,
+            &compatible_platforms,
+            |platform| fixups.compute_srcs(platform, &srcs),
+            |rule, src| rule.srcs.insert(BuckPath(src)),
+        )?;
     } else if let VendorConfig::LocalRegistry = config.vendor {
         let extract_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
         base.srcs
@@ -548,28 +583,13 @@ fn generate_target_rules<'scope>(
     )
     .context("mapped_srcs(paths)")?;
 
-    let mut platform_features = Vec::new();
-    let mut feature_in_how_many_platforms = HashMap::new();
-    for &platform_name in &compatible_platforms {
-        let features = fixups.compute_features(platform_name, index)?;
-        for &feature in &features {
-            *feature_in_how_many_platforms.entry(feature).or_insert(0) += 1;
-        }
-        platform_features.push((platform_name, features));
-    }
-    for &(platform_name, ref features) in &platform_features {
-        for &feature in features {
-            if feature_in_how_many_platforms[feature] == compatible_platforms.len() {
-                base.features.insert(feature.to_owned());
-            } else {
-                perplat
-                    .entry(platform_name.clone())
-                    .or_insert_with(PlatformRustCommon::default)
-                    .features
-                    .insert(feature.to_owned());
-            }
-        }
-    }
+    evaluate_for_platforms(
+        &mut base,
+        &mut perplat,
+        &compatible_platforms,
+        |platform| fixups.compute_features(platform, index),
+        |rule, feature| rule.features.insert(feature.to_owned()),
+    )?;
 
     // Compute set of dependencies any rule we generate here will need. They will only
     // be emitted if we actually emit some rules below.
