@@ -231,6 +231,13 @@ pub enum PlatformExpr {
     Windows,
 }
 
+impl Default for PlatformExpr {
+    fn default() -> Self {
+        // Always true
+        PlatformExpr::All(Vec::new())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum PredicateParseError {
     TrailingJunk(String),

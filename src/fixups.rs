@@ -147,8 +147,8 @@ impl<'meta> Fixups<'meta> {
 
         configs.push(&self.fixup_config.base);
 
-        for (platform_expr, fixup) in &self.fixup_config.platform_fixup {
-            if platform_expr.eval(
+        for fixup in &self.fixup_config.platform_fixup {
+            if fixup.platform.eval(
                 &self.config.platform[platform_name],
                 Some(&self.package.version),
             ) {

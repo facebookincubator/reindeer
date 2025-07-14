@@ -80,7 +80,7 @@ pub struct FixupConfigFile {
     pub base: FixupConfig,
 
     /// Platform-specific configs
-    pub platform_fixup: Vec<(PlatformExpr, FixupConfig)>,
+    pub platform_fixup: Vec<FixupConfig>,
 }
 
 impl FixupConfigFile {
@@ -118,9 +118,7 @@ impl FixupConfigFile {
             collect(&export_sources.srcs);
             collect(&export_sources.exclude)
         }
-        for fixup in
-            iter::once(&self.base).chain(self.platform_fixup.iter().map(|(_platform, fixup)| fixup))
-        {
+        for fixup in iter::once(&self.base).chain(&self.platform_fixup) {
             collect(&fixup.extra_srcs);
             collect(&fixup.omit_srcs);
             for cxx_library in &fixup.cxx_library {
@@ -155,6 +153,10 @@ pub struct ExportSources {
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct FixupConfig {
+    /// Cfg expression determining what platforms this fixup applies to.
+    #[serde(skip)]
+    pub platform: PlatformExpr,
+
     /// Extra src globs, rooted in manifest dir for package
     #[serde(default)]
     pub extra_srcs: TrackedGlobSet,
@@ -410,7 +412,7 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
             export_sources: Option<ExportSources>,
             compatible_with: Option<Vec<RuleRef>>,
             target_compatible_with: Option<Vec<RuleRef>>,
-            platform_fixup: Vec<(PlatformExpr, FixupConfig)>,
+            platform_fixup: Vec<FixupConfig>,
         }
 
         impl<'de, M> MapAccess<'de> for &mut FixupsMap<M>
@@ -469,10 +471,11 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
                         }
                         _ => {
                             if field.starts_with("cfg(") {
-                                let platform_expr =
-                                    PlatformExpr::parse(&field).map_err(M::Error::custom)?;
-                                let fixup_config: FixupConfig = self.map.next_value()?;
-                                self.platform_fixup.push((platform_expr, fixup_config));
+                                self.platform_fixup.push(FixupConfig {
+                                    platform: PlatformExpr::parse(&field)
+                                        .map_err(M::Error::custom)?,
+                                    ..self.map.next_value()?
+                                });
                             } else {
                                 return seed.deserialize(StringDeserializer::new(field)).map(Some);
                             }
