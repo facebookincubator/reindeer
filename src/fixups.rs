@@ -65,7 +65,7 @@ use crate::path::relative_path;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
-use crate::platform::platform_names_for_expr;
+use crate::platform::compatible_platform_names_for_expr;
 use crate::subtarget::Subtarget;
 
 mod buildscript;
@@ -273,6 +273,7 @@ impl<'meta> Fixups<'meta> {
         manifest_dir: Option<SubtargetOrPath>,
         index: &Index,
         target: &ManifestTarget,
+        compatible_platforms: &BTreeSet<&PlatformName>,
     ) -> anyhow::Result<Vec<Rule>> {
         let mut res = Vec::new();
 
@@ -353,7 +354,11 @@ impl<'meta> Fixups<'meta> {
                 match platform_expr {
                     None => buildscript_run.base.env.extend(env_entries),
                     Some(expr) => {
-                        for platform_name in platform_names_for_expr(self.config, expr)? {
+                        for platform_name in compatible_platform_names_for_expr(
+                            self.config,
+                            expr,
+                            compatible_platforms,
+                        )? {
                             buildscript_run
                                 .platform
                                 .entry(platform_name.clone())

@@ -191,18 +191,21 @@ where
     deserializer.deserialize_map(PlatformsVisitor)
 }
 
-pub fn platform_names_for_expr<'config>(
+pub fn compatible_platform_names_for_expr<'config>(
     config: &'config Config,
     expr: &PlatformExpr,
-) -> anyhow::Result<Vec<&'config PlatformName>> {
+    compatible_platforms: &BTreeSet<&PlatformName>,
+) -> anyhow::Result<impl Iterator<Item = &'config PlatformName>> {
     let pred = PlatformPredicate::parse(expr)?;
 
-    let res = config
-        .platform
-        .iter()
-        .filter(|(_name, platconfig)| pred.eval(platconfig))
-        .map(|(name, _config)| name)
-        .collect();
+    let res = compatible_platforms.iter().filter_map(move |name| {
+        let (name, platform) = config.platform.get_key_value(name).unwrap();
+        if pred.eval(platform) {
+            Some(name)
+        } else {
+            None
+        }
+    });
     Ok(res)
 }
 

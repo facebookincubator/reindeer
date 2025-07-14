@@ -73,7 +73,7 @@ use crate::path::normalize_path;
 use crate::path::relative_path;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
-use crate::platform::platform_names_for_expr;
+use crate::platform::compatible_platform_names_for_expr;
 use crate::srcfiles::crate_srcfiles;
 use crate::subtarget::CollectSubtargets;
 use crate::subtarget::Subtarget;
@@ -82,6 +82,7 @@ use crate::subtarget::Subtarget;
 /// This also handles mapping a PlatformExpr into PlatformNames.
 fn unzip_platform<T: Clone>(
     config: &Config,
+    compatible_platforms: &BTreeSet<&PlatformName>,
     common: &mut PlatformRustCommon,
     perplat: &mut BTreeMap<PlatformName, PlatformRustCommon>,
     mut extend: impl FnMut(&mut PlatformRustCommon, T),
@@ -90,7 +91,8 @@ fn unzip_platform<T: Clone>(
     for (platform, thing) in things.into_iter() {
         match platform {
             Some(expr) => {
-                for plat in platform_names_for_expr(config, &expr)? {
+                for plat in compatible_platform_names_for_expr(config, &expr, compatible_platforms)?
+                {
                     extend(perplat.entry(plat.clone()).or_default(), thing.clone())
                 }
             }
@@ -494,6 +496,7 @@ fn generate_target_rules<'scope>(
 
         unzip_platform(
             config,
+            &compatible_platforms,
             &mut base,
             &mut perplat,
             |rule, srcs| {
@@ -519,6 +522,7 @@ fn generate_target_rules<'scope>(
 
     unzip_platform(
         config,
+        &compatible_platforms,
         &mut base,
         &mut perplat,
         |rule, map| {
@@ -639,12 +643,14 @@ fn generate_target_rules<'scope>(
             manifest_dir_subtarget,
             index,
             tgt,
+            &compatible_platforms,
         )?;
         return Ok((rules, dep_pkgs));
     }
 
     unzip_platform(
         config,
+        &compatible_platforms,
         &mut base,
         &mut perplat,
         |rule, (flags, flags_select)| {
@@ -670,6 +676,7 @@ fn generate_target_rules<'scope>(
 
     unzip_platform(
         config,
+        &compatible_platforms,
         &mut base,
         &mut perplat,
         |rule, ()| {
@@ -692,6 +699,7 @@ fn generate_target_rules<'scope>(
 
     unzip_platform(
         config,
+        &compatible_platforms,
         &mut base,
         &mut perplat,
         |rule, env| {
@@ -708,6 +716,7 @@ fn generate_target_rules<'scope>(
 
     unzip_platform(
         config,
+        &compatible_platforms,
         &mut bin_base,
         &mut bin_perplat,
         |rule, link_style| {
@@ -720,6 +729,7 @@ fn generate_target_rules<'scope>(
 
     unzip_platform(
         config,
+        &compatible_platforms,
         &mut bin_base,
         &mut bin_perplat,
         |rule, linker_flags| {
@@ -742,6 +752,7 @@ fn generate_target_rules<'scope>(
 
     unzip_platform(
         config,
+        &compatible_platforms,
         &mut lib_base,
         &mut lib_perplat,
         |rule, preferred_linkage| {
