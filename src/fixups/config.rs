@@ -10,9 +10,12 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
+use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
+use anyhow::Context as _;
+use anyhow::bail;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::de::Error as _;
@@ -25,6 +28,7 @@ use walkdir::WalkDir;
 
 use crate::buck::RuleRef;
 use crate::buckify::relative_path;
+use crate::cargo::Manifest;
 use crate::fixups::buildscript::BuildscriptFixups;
 use crate::fixups::buildscript::CxxLibraryFixup;
 use crate::fixups::buildscript::PrebuiltCxxLibraryFixup;
@@ -72,6 +76,36 @@ pub struct FixupConfigFile {
 }
 
 impl FixupConfigFile {
+    pub(super) fn load(fixup_dir: &Path, package: &Manifest, public: bool) -> anyhow::Result<Self> {
+        let fixup_path = fixup_dir.join("fixups.toml");
+
+        let Ok(content) = fs::read_to_string(&fixup_path) else {
+            log::debug!("no fixups at {}", fixup_path.display());
+            return Ok(FixupConfigFile::default());
+        };
+
+        log::debug!("read fixups from {}", fixup_path.display());
+        let fixup_config: FixupConfigFile = toml::from_str(&content)
+            .with_context(|| format!("Failed to parse {}", fixup_path.display()))?;
+
+        if fixup_config.custom_visibility.is_some() && !public {
+            return Err(
+                anyhow::Error::msg("only public packages can have a fixup `visibility`.")
+                    .context(format!("package {package} is private.")),
+            );
+        }
+
+        for (expr, platform_fixup) in &fixup_config.platform_fixup {
+            if !platform_fixup.buildscript.build.defaulted_to_empty {
+                bail!(
+                    "platform-specific buildscript build fixup is not supported: {expr}.buildscript.build"
+                );
+            }
+        }
+
+        Ok(fixup_config)
+    }
+
     pub fn base(&self, version: &semver::Version) -> Option<&FixupConfig> {
         if self.base.version_applies(version) {
             Some(&self.base)

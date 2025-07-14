@@ -12,12 +12,13 @@ use std::collections::BTreeSet;
 use std::collections::HashSet;
 use std::collections::btree_map;
 use std::fmt;
-use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::PoisonError;
 
 use anyhow::Context;
-use anyhow::anyhow;
 use anyhow::bail;
 
 use crate::Paths;
@@ -45,7 +46,14 @@ use crate::cargo::TargetKind;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
+use crate::fixups::buildscript::BuildscriptRun;
+use crate::fixups::buildscript::CxxLibraryFixup;
+use crate::fixups::buildscript::PrebuiltCxxLibraryFixup;
+use crate::fixups::config::CargoEnv;
+use crate::fixups::config::CargoEnvs;
 use crate::fixups::config::CustomVisibility;
+pub use crate::fixups::config::ExportSources;
+use crate::fixups::config::FixupConfigFile;
 use crate::glob::Globs;
 use crate::glob::NO_EXCLUDE;
 use crate::glob::SerializableGlobSet as GlobSet;
@@ -60,21 +68,13 @@ use crate::subtarget::Subtarget;
 mod buildscript;
 mod config;
 
-use buildscript::BuildscriptRun;
-use buildscript::CxxLibraryFixup;
-use buildscript::PrebuiltCxxLibraryFixup;
-use config::CargoEnv;
-use config::CargoEnvs;
-pub use config::ExportSources;
-use config::FixupConfigFile;
-
 /// Fixups for a specific package & target
 pub struct Fixups<'meta> {
     config: &'meta Config,
     third_party_dir: &'meta Path,
     package: &'meta Manifest,
     fixup_dir: PathBuf,
-    fixup_config: FixupConfigFile,
+    fixup_config: Arc<FixupConfigFile>,
     manifest_dir: &'meta Path,
 }
 
@@ -90,50 +90,52 @@ impl<'meta> fmt::Debug for Fixups<'meta> {
     }
 }
 
-impl<'meta> Fixups<'meta> {
-    /// Get any fixups needed for a specific package
-    pub fn new(
-        config: &'meta Config,
-        paths: &'meta Paths,
-        package: &'meta Manifest,
-        public: bool,
-    ) -> anyhow::Result<Self> {
-        let fixup_dir = paths.third_party_dir.join("fixups").join(&package.name);
-        let fixup_path = fixup_dir.join("fixups.toml");
+#[derive(Debug)]
+pub struct FixupsCache<'meta> {
+    config: &'meta Config,
+    paths: &'meta Paths,
+    fixups: Mutex<BTreeMap<&'meta str, Arc<FixupConfigFile>>>,
+}
 
-        let fixup_config: FixupConfigFile = if let Ok(file) = fs::read_to_string(&fixup_path) {
-            log::debug!("read fixups from {}", fixup_path.display());
-            toml::from_str(&file).context(format!("Failed to parse {}", fixup_path.display()))?
+impl<'meta> FixupsCache<'meta> {
+    pub fn new(config: &'meta Config, paths: &'meta Paths) -> Self {
+        FixupsCache {
+            config,
+            paths,
+            fixups: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    /// Get fixups.toml for a specific package.
+    pub fn get(&self, package: &'meta Manifest, public: bool) -> anyhow::Result<Fixups<'meta>> {
+        let fixup_dir = self
+            .paths
+            .third_party_dir
+            .join("fixups")
+            .join(&package.name);
+
+        let mut fixups_map = self.fixups.lock().unwrap_or_else(PoisonError::into_inner);
+        let fixup_config = if let Some(arc) = fixups_map.get(package.name.as_str()) {
+            Arc::clone(arc)
         } else {
-            log::debug!("no fixups at {}", fixup_path.display());
-            FixupConfigFile::default()
+            let fixup_config = FixupConfigFile::load(&fixup_dir, package, public)?;
+            let arc = Arc::new(fixup_config);
+            fixups_map.insert(&package.name, Arc::clone(&arc));
+            arc
         };
 
-        if fixup_config.custom_visibility.is_some() && !public {
-            return Err(anyhow!(
-                "only public packages can have a fixup `visibility`."
-            ))
-            .with_context(|| format!("package {package} is private."));
-        }
-
-        for (expr, platform_fixup) in &fixup_config.platform_fixup {
-            if !platform_fixup.buildscript.build.defaulted_to_empty {
-                bail!(
-                    "platform-specific buildscript build fixup is not supported: {expr}.buildscript.build"
-                );
-            }
-        }
-
         Ok(Fixups {
-            third_party_dir: &paths.third_party_dir,
+            third_party_dir: &self.paths.third_party_dir,
             manifest_dir: package.manifest_dir(),
             package,
             fixup_dir,
             fixup_config,
-            config,
+            config: self.config,
         })
     }
+}
 
+impl<'meta> Fixups<'meta> {
     // Return true if the script applies to this target.
     // There's a few cases:
     // - if the script doesn't specify a target, then it applies to the main "lib" target of the package

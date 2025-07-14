@@ -14,7 +14,6 @@ use std::collections::HashSet;
 
 use anyhow::Context as _;
 
-use crate::Paths;
 use crate::buck::Name;
 use crate::cargo::DepKind;
 use crate::cargo::Manifest;
@@ -26,7 +25,7 @@ use crate::cargo::NodeDepKind;
 use crate::cargo::PkgId;
 use crate::cargo::TargetReq;
 use crate::config::Config;
-use crate::fixups::Fixups;
+use crate::fixups::FixupsCache;
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
@@ -85,8 +84,8 @@ impl<'meta> Index<'meta> {
     /// dependencies.
     pub fn new(
         config: &'meta Config,
-        paths: &'meta Paths,
         metadata: &'meta Metadata,
+        fixups: &FixupsCache<'meta>,
     ) -> anyhow::Result<Index<'meta>> {
         let pkgid_to_pkg: HashMap<_, _> = metadata.packages.iter().map(|m| (&m.id, m)).collect();
 
@@ -181,7 +180,7 @@ impl<'meta> Index<'meta> {
                 pkgid_to_node: &index.pkgid_to_node,
                 public_package_names: &index.public_package_names,
                 config,
-                paths,
+                fixups,
             };
             // Feature selection for the current workspace.
             for pkg in &index.workspace_members {
@@ -356,7 +355,7 @@ struct FeatureResolver<'a, 'meta> {
     pkgid_to_node: &'a HashMap<&'meta PkgId, &'meta Node>,
     public_package_names: &'a BTreeSet<&'meta str>,
     config: &'meta Config,
-    paths: &'meta Paths,
+    fixups: &'a FixupsCache<'meta>,
 }
 
 impl<'a, 'meta> FeatureResolver<'a, 'meta> {
@@ -382,7 +381,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         // Omit dependencies according to fixups.
         let pkg = self.pkgid_to_pkg[pkgid];
         let public = self.public_package_names.contains(pkg.name.as_str());
-        let fixups = Fixups::new(self.config, self.paths, pkg, public)?;
+        let fixups = self.fixups.get(pkg, public)?;
 
         // Go through the manifest dependencies and enable all that are non-optional.
         for manifest_dep in &pkg.dependencies {
@@ -462,7 +461,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         // Omit features according to fixups.
         let pkg = self.pkgid_to_pkg[pkgid];
         let public = self.public_package_names.contains(pkg.name.as_str());
-        let fixups = Fixups::new(self.config, self.paths, pkg, public)?;
+        let fixups = self.fixups.get(pkg, public)?;
         if fixups.omit_feature(platform_name, enable_feature)? {
             return Ok(());
         }
@@ -553,7 +552,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         // Omit dependencies according to fixups.
         let pkg = self.pkgid_to_pkg[pkgid];
         let public = self.public_package_names.contains(pkg.name.as_str());
-        let fixups = Fixups::new(self.config, self.paths, pkg, public)?;
+        let fixups = self.fixups.get(pkg, public)?;
         if fixups.omit_dep(platform_name, enable_dependency)? {
             return Ok(());
         }

@@ -61,7 +61,7 @@ use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::fixups::ExportSources;
-use crate::fixups::Fixups;
+use crate::fixups::FixupsCache;
 use crate::glob::Globs;
 use crate::glob::NO_EXCLUDE;
 use crate::index::Index;
@@ -155,6 +155,7 @@ struct RuleContext<'meta> {
     paths: &'meta Paths,
     index: Index<'meta>,
     lockfile: &'meta Lockfile,
+    fixups: FixupsCache<'meta>,
     done: Mutex<HashSet<(&'meta PkgId, TargetReq<'meta>)>>,
 }
 
@@ -436,7 +437,7 @@ fn generate_target_rules<'scope>(
     log::debug!("Generating rules for package {} target {}", pkg, tgt.name);
 
     let public = index.is_public_package_name(&pkg.name);
-    let fixups = Fixups::new(config, paths, pkg, public)?;
+    let fixups = context.fixups.get(pkg, public)?;
 
     if fixups.omit_target(tgt) {
         return Ok((vec![], vec![]));
@@ -994,20 +995,7 @@ fn generate_target_rules<'scope>(
     Ok((rules, dep_pkgs))
 }
 
-fn do_buckify(
-    config: &Config,
-    paths: &Paths,
-    lockfile: &Lockfile,
-    index: Index,
-) -> anyhow::Result<BTreeSet<Rule>> {
-    let context = &RuleContext {
-        config,
-        paths,
-        index,
-        lockfile,
-        done: Mutex::new(HashSet::new()),
-    };
-
+fn do_buckify<'a>(context: &'a RuleContext<'a>) -> anyhow::Result<BTreeSet<Rule>> {
     let (tx, rx) = mpsc::channel();
 
     {
@@ -1032,7 +1020,7 @@ fn do_buckify(
     let mut rules: BTreeSet<_> = match rx.iter().collect::<anyhow::Result<_>>() {
         Ok(rules) => rules,
         Err(err) => {
-            if let Some(custom_err_msg) = config.unresolved_fixup_error_message.as_ref() {
+            if let Some(custom_err_msg) = context.config.unresolved_fixup_error_message.as_ref() {
                 log::warn!(
                     "Additional info on how to fix unresolved fixup errors: {}",
                     custom_err_msg
@@ -1044,7 +1032,7 @@ fn do_buckify(
 
     // Fill in all http_archive rules with all the sub_targets which got
     // mentioned by fixups.
-    if !matches!(config.vendor, VendorConfig::Source(_)) {
+    if !matches!(context.config.vendor, VendorConfig::Source(_)) {
         let mut subtargets = CollectSubtargets::new();
 
         for rule in &rules {
@@ -1119,8 +1107,17 @@ pub(crate) fn buckify(
 
     log::trace!("Metadata {:#?}", metadata);
 
-    let index = Index::new(config, paths, &metadata)?;
-    let rules = do_buckify(config, paths, &lockfile, index)?;
+    let fixups = FixupsCache::new(config, paths);
+    let index = Index::new(config, &metadata, &fixups)?;
+    let context = RuleContext {
+        config,
+        paths,
+        index,
+        lockfile: &lockfile,
+        fixups,
+        done: Mutex::new(HashSet::new()),
+    };
+    let rules = do_buckify(&context)?;
 
     // Emit build rules to stdout
     if stdout {
