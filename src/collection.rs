@@ -107,10 +107,9 @@ where
 
 pub struct MultilineArray<'a, A>(&'a A);
 
-impl<'a, A, T> Serialize for MultilineArray<'a, A>
+impl<'a, A> Serialize for MultilineArray<'a, A>
 where
-    &'a A: IntoIterator<Item = &'a T>,
-    T: Serialize + 'a,
+    &'a A: IntoIterator<Item: Serialize>,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -118,21 +117,24 @@ where
     {
         let mut array = serializer.serialize_seq(Some(MULTILINE))?;
         for element in self.0 {
-            array.serialize_element(element)?;
+            array.serialize_element(&element)?;
         }
         array.end()
     }
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct SelectSet {
-    pub common: BTreeSet<String>,
-    pub selects: BTreeMap<String, BTreeSet<String>>,
+pub struct Select<T> {
+    pub common: T,
+    pub selects: BTreeMap<String, T>,
 }
 
-impl SelectSet {
-    pub fn is_empty(&self) -> bool {
-        self.common.is_empty() && self.selects.is_empty()
+impl<T> Select<T> {
+    pub fn is_empty<'a>(&'a self) -> bool
+    where
+        &'a T: IntoIterator,
+    {
+        self.common.into_iter().next().is_none() && self.selects.is_empty()
     }
 }
 
@@ -140,13 +142,20 @@ impl SelectSet {
 // and want to extend the implementation below, this link is a good reference
 // for ideas:
 // https://github.com/bazelbuild/rules_rust/blob/0.40.0/crate_universe/src/utils/starlark/select_set.rs#L15-L27
-impl Serialize for SelectSet {
+impl<T> Serialize for Select<T>
+where
+    T: Serialize,
+    for<'a> &'a T: IntoIterator<Item: Serialize>,
+{
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let mut plus = serializer.serialize_tuple_struct("+", MULTILINE)?;
-        match (self.common.is_empty(), self.selects.is_empty()) {
+        match (
+            self.common.into_iter().next().is_none(),
+            self.selects.is_empty(),
+        ) {
             (_, true) => {
                 plus.serialize_field(&self.common)?;
             }
@@ -168,6 +177,8 @@ mod test {
     use indoc::indoc;
 
     use super::*;
+
+    type SelectSet = Select<BTreeSet<String>>;
 
     #[test]
     fn select_set_empty() {

@@ -686,7 +686,7 @@ fn generate_target_rules<'scope>(
                 rule.rustc_flags
                     .selects
                     .entry(k)
-                    .or_insert(BTreeSet::new())
+                    .or_insert_with(Vec::new)
                     .extend(v);
             });
         },

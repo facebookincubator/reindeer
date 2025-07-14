@@ -26,7 +26,7 @@ use serde::ser::SerializeSeq;
 use serde::ser::Serializer;
 use serde_starlark::FunctionCall;
 
-use crate::collection::SelectSet;
+use crate::collection::Select;
 use crate::collection::SetOrMap;
 use crate::config::BuckConfig;
 use crate::platform::PlatformName;
@@ -151,16 +151,6 @@ impl SubtargetOrPath {
 
     fn is_path(&self) -> bool {
         matches!(self, SubtargetOrPath::Path(_))
-    }
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename = "select")]
-pub struct Select<K, V>(BTreeMap<K, V>);
-
-impl<K, V> Default for Select<K, V> {
-    fn default() -> Self {
-        Self(Default::default())
     }
 }
 
@@ -354,7 +344,7 @@ pub struct Common {
 pub struct PlatformRustCommon {
     pub srcs: BTreeSet<BuckPath>,
     pub mapped_srcs: BTreeMap<SubtargetOrPath, BuckPath>,
-    pub rustc_flags: SelectSet,
+    pub rustc_flags: Select<Vec<String>>,
     pub features: BTreeSet<String>,
     pub deps: BTreeSet<RuleRef>,
     pub named_deps: BTreeMap<String, RuleRef>,
