@@ -1106,22 +1106,20 @@ impl<'meta> Fixups<'meta> {
         Ok(ret)
     }
 
-    /// Return mapping from rules of generated source to local name.
-    pub fn compute_gen_srcs(&self, target: &ManifestTarget) -> Vec<(Option<PlatformExpr>, ())> {
-        let mut ret = vec![];
-
-        if self.buildscript_rule_name().is_none() {
-            // No generated sources
-            return ret;
-        }
-
-        for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if !target.kind_custom_build() && config.buildscript.run.is_some() {
-                ret.push((platform.cloned(), ()));
+    pub fn has_buildscript_for_platform(
+        &self,
+        target: &ManifestTarget,
+        platform_name: &PlatformName,
+    ) -> anyhow::Result<bool> {
+        if !target.kind_custom_build() && self.buildscript_target().is_some() {
+            for (platform, config) in self.fixup_config.configs(&self.package.version) {
+                if self.fixup_applies(platform, platform_name)? && config.buildscript.run.is_some()
+                {
+                    return Ok(true);
+                }
             }
         }
-
-        ret
+        Ok(false)
     }
 
     /// Compute link_style (how dependencies should be linked)

@@ -694,17 +694,18 @@ fn generate_target_rules<'scope>(
     )
     .context("rustc_flags")?;
 
-    unzip_platform(
-        config,
-        &compatible_platforms,
+    evaluate_for_platforms(
         &mut base,
         &mut perplat,
+        &compatible_platforms,
+        |platform| {
+            Ok(if fixups.has_buildscript_for_platform(tgt, platform)? {
+                Some(())
+            } else {
+                None
+            })
+        },
         |rule, ()| {
-            log::debug!(
-                "pkg {} target {}: adding OUT_DIR for gen_srcs",
-                pkg,
-                tgt.name,
-            );
             rule.env.insert(
                 "OUT_DIR".to_owned(),
                 StringOrPath::String(format!(
@@ -713,9 +714,7 @@ fn generate_target_rules<'scope>(
                 )),
             );
         },
-        fixups.compute_gen_srcs(tgt),
-    )
-    .context("OUT_DIR for gen_srcs")?;
+    )?;
 
     unzip_platform(
         config,
