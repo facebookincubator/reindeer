@@ -179,9 +179,7 @@ where
                 keyword("cfg"),
                 cut(delimited(sep('('), parse_predicate, sep(')'))),
             ),
-            map(atom, |triple| PlatformExpr::Bool {
-                key: triple.to_owned(),
-            }),
+            map(atom, |triple| PlatformExpr::Target(triple.to_owned())),
         )),
     )
     .parse(i)
@@ -191,6 +189,13 @@ where
 mod test {
     use crate::cfg;
     use crate::platform::PlatformExpr::*;
+
+    #[test]
+    fn test_target_triple() {
+        let res = cfg::parse::<(_, nom::error::ErrorKind)>("x86_64-unknown-linux-gnu");
+        println!("res = {:?}", res);
+        assert_eq!(res, Ok(("", Target("x86_64-unknown-linux-gnu".to_owned()))));
+    }
 
     #[test]
     fn test_unix() {

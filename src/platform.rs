@@ -32,6 +32,7 @@ use crate::cfg;
 /// "doesn't matter" or "all possible values".
 #[derive(Clone, Debug)]
 pub struct PlatformConfig {
+    pub target: Option<String>,
     pub is_execution_platform: Option<bool>,
     /// Set of features enabled in this platform. If omitted, the "default"
     /// feature will be enabled if one exists.
@@ -93,12 +94,14 @@ where
         where
             M: MapAccess<'de>,
         {
+            let mut target = None;
             let mut is_execution_platform = None;
             let mut features = None;
             let mut cfg = HashMap::new();
 
             while let Some(key) = map.next_key::<String>()? {
                 match key.as_str() {
+                    "target" => target = map.next_value()?,
                     "execution-platform" => is_execution_platform = map.next_value()?,
                     "features" => {
                         let seed = FeaturesVisitor(self.0);
@@ -112,6 +115,7 @@ where
             }
 
             Ok(PlatformConfig {
+                target,
                 is_execution_platform,
                 features,
                 // Populated later.
@@ -225,6 +229,7 @@ pub enum PlatformExpr {
     Value { key: String, value: String },
     Bool { key: String },
     Version(VersionReq),
+    Target(String),
 
     // Helpers
     Unix,
@@ -285,6 +290,7 @@ impl PlatformExpr {
                 None => false,
                 Some(version) => req.matches(version),
             },
+            PlatformExpr::Target(target) => config.target.as_ref() == Some(target),
             PlatformExpr::Not(pred) => !pred.eval(config, version),
             PlatformExpr::Any(preds) => preds.iter().any(|pred| pred.eval(config, version)),
             PlatformExpr::All(preds) => preds.iter().all(|pred| pred.eval(config, version)),
