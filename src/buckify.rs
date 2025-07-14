@@ -736,23 +736,13 @@ fn generate_target_rules<'scope>(
         |rule, link_style| rule.link_style = Some(link_style),
     )?;
 
-    unzip_platform(
-        config,
-        &compatible_platforms,
+    evaluate_for_platforms(
         &mut bin_base,
         &mut bin_perplat,
-        |rule, linker_flags| {
-            log::debug!(
-                "pkg {} target {}: linker_flags {:?}",
-                pkg,
-                tgt.name,
-                linker_flags
-            );
-            rule.linker_flags = linker_flags;
-        },
-        fixups.compute_linker_flags(),
-    )
-    .context("linker_flags")?;
+        &compatible_platforms,
+        |platform| fixups.compute_linker_flags(platform).map(Some),
+        |rule, linker_flags| rule.linker_flags.extend(linker_flags),
+    )?;
 
     // "preferred_linkage" only really applies to libraries, so maintain separate library base &
     // perplat

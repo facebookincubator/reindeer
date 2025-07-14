@@ -1155,15 +1155,19 @@ impl<'meta> Fixups<'meta> {
     }
 
     /// Compute linker_flags (extra flags for the linker)
-    pub fn compute_linker_flags(&self) -> Vec<(Option<PlatformExpr>, Vec<String>)> {
-        let mut ret = Vec::new();
+    pub fn compute_linker_flags(
+        &self,
+        platform_name: &PlatformName,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut linker_flags = Vec::new();
+
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if !config.linker_flags.is_empty() {
-                ret.push((platform.cloned(), config.linker_flags.clone()));
+            if self.fixup_applies(platform, platform_name)? {
+                linker_flags.extend_from_slice(&config.linker_flags);
             }
         }
 
-        ret
+        Ok(linker_flags)
     }
 
     fn fixup_applies(
