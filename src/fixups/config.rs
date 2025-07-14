@@ -205,7 +205,7 @@ pub struct FixupConfig {
     pub rustc_flags: Vec<String>,
     /// Select logic for rustc_flags
     #[serde(default)]
-    pub rustc_flags_select: BTreeMap<String, Vec<String>>,
+    pub rustc_flags_select: Vec<BTreeMap<String, Vec<String>>>,
     /// Extra configs
     #[serde(default)]
     pub cfgs: BTreeSet<String>,

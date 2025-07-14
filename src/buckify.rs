@@ -682,13 +682,7 @@ fn generate_target_rules<'scope>(
                 flags_select
             );
             rule.rustc_flags.common.extend(flags);
-            flags_select.into_iter().for_each(|(k, v)| {
-                rule.rustc_flags
-                    .selects
-                    .entry(k)
-                    .or_insert_with(Vec::new)
-                    .extend(v);
-            });
+            rule.rustc_flags.selects.extend(flags_select);
         },
         fixups.compute_cmdline(tgt),
     )

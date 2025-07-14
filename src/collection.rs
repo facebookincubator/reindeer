@@ -126,7 +126,7 @@ where
 #[derive(Debug, Default, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Select<T> {
     pub common: T,
-    pub selects: BTreeMap<String, T>,
+    pub selects: Vec<BTreeMap<String, T>>,
 }
 
 impl<T> Select<T> {
@@ -160,12 +160,16 @@ where
                 plus.serialize_field(&self.common)?;
             }
             (true, false) => {
-                plus.serialize_field(&FunctionCall::new("select", [&self.selects]))?;
+                for select in &self.selects {
+                    plus.serialize_field(&FunctionCall::new("select", [select]))?;
+                }
             }
             (false, false) => {
-                // force common to be always serialized over mutliple lines
+                // force common to be always serialized over multiple lines
                 plus.serialize_field(&MultilineArray(&self.common))?;
-                plus.serialize_field(&FunctionCall::new("select", [&self.selects]))?;
+                for select in &self.selects {
+                    plus.serialize_field(&FunctionCall::new("select", [select]))?;
+                }
             }
         }
         plus.end()
@@ -235,7 +239,7 @@ mod test {
 
     #[test]
     fn select_set_only_selects() {
-        let selects = BTreeMap::from([
+        let selects = Vec::from([BTreeMap::from([
             (
                 "DEFAULT".to_owned(),
                 BTreeSet::from(["a".to_owned(), "b".to_owned()]),
@@ -248,7 +252,7 @@ mod test {
                 "ovr_config//third-party/some/constraints:2".to_owned(),
                 BTreeSet::from(["d".to_owned(), "e".to_owned()]),
             ),
-        ]);
+        ])]);
 
         let select_set = SelectSet {
             selects,
@@ -278,15 +282,24 @@ mod test {
     #[test]
     fn select_set_common_and_selects() {
         let common = BTreeSet::from(["a".to_owned()]);
-        let selects = BTreeMap::from([
-            (
-                "DEFAULT".to_owned(),
-                BTreeSet::from(["a".to_owned(), "b".to_owned()]),
-            ),
-            (
-                "ovr_config//third-party/some/constraints:1".to_owned(),
-                BTreeSet::from(["c".to_owned()]),
-            ),
+        let selects = Vec::from([
+            BTreeMap::from([
+                (
+                    "DEFAULT".to_owned(),
+                    BTreeSet::from(["a".to_owned(), "b".to_owned()]),
+                ),
+                (
+                    "ovr_config//third-party/some/constraints:1".to_owned(),
+                    BTreeSet::from(["c".to_owned()]),
+                ),
+            ]),
+            BTreeMap::from([
+                ("DEFAULT".to_owned(), BTreeSet::new()),
+                (
+                    "ovr_config//third-party/some/constraints:2".to_owned(),
+                    BTreeSet::from(["d".to_owned()]),
+                ),
+            ]),
         ]);
 
         let select_set = SelectSet { common, selects };
@@ -300,6 +313,9 @@ mod test {
                     "b",
                 ],
                 "ovr_config//third-party/some/constraints:1": ["c"],
+            }) + select({
+                "DEFAULT": [],
+                "ovr_config//third-party/some/constraints:2": ["d"],
             })
         "#};
 

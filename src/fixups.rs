@@ -653,7 +653,7 @@ impl<'meta> Fixups<'meta> {
         target: &ManifestTarget,
     ) -> Vec<(
         Option<PlatformExpr>,
-        (Vec<String>, BTreeMap<String, Vec<String>>),
+        (Vec<String>, Vec<BTreeMap<String, Vec<String>>>),
     )> {
         let mut ret = vec![];
         if self.buildscript_target().is_none() {
@@ -671,7 +671,7 @@ impl<'meta> Fixups<'meta> {
             }
 
             if !flags.is_empty() {
-                ret.push((platform.cloned(), (flags, Default::default())));
+                ret.push((platform.cloned(), (flags, Vec::new())));
             }
         }
 
@@ -684,7 +684,7 @@ impl<'meta> Fixups<'meta> {
         target: &ManifestTarget,
     ) -> Vec<(
         Option<PlatformExpr>,
-        (Vec<String>, BTreeMap<String, Vec<String>>),
+        (Vec<String>, Vec<BTreeMap<String, Vec<String>>>),
     )> {
         let mut ret = vec![];
 
