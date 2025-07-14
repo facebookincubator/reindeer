@@ -10,6 +10,8 @@
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::hash_map;
+use std::env;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -20,6 +22,7 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 
 use anyhow::Context;
 use anyhow::bail;
@@ -31,6 +34,7 @@ use serde::de::MapAccess;
 use serde::de::Visitor;
 use serde::de::value::MapAccessDeserializer;
 
+use crate::Args;
 use crate::glob::TrackedGlobSet;
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
@@ -329,7 +333,7 @@ where
     deserializer.deserialize_any(VendorConfigVisitor)
 }
 
-pub fn read_config(reindeer_toml: &Path) -> anyhow::Result<Config> {
+pub fn read_config(reindeer_toml: &Path, args: &Args) -> anyhow::Result<Config> {
     let dir = reindeer_toml
         .parent()
         .context("Invalid path to reindeer.toml")?;
@@ -385,6 +389,73 @@ pub fn read_config(reindeer_toml: &Path) -> anyhow::Result<Config> {
             platform_config
                 .execution_platforms
                 .insert(platform_name.clone());
+        }
+    }
+
+    let rustc = || {
+        if let Some(rustc_from_arg) = &args.rustc_path {
+            Command::new(rustc_from_arg)
+        } else if let Some(rustc_from_env) = env::var_os("RUSTC") {
+            Command::new(rustc_from_env)
+        } else if let Some(rustc_from_config) = &config.cargo.rustc {
+            Command::new(config.config_dir.join(rustc_from_config))
+        } else {
+            Command::new("rustc")
+        }
+    };
+
+    // Populate target cfg from rustc.
+    for platform in config.platform.values_mut() {
+        let Some(target) = &platform.target else {
+            continue;
+        };
+
+        // Run `rustc --print=cfg --target={target}`
+        let Ok(output) = rustc()
+            .arg("--print=cfg")
+            .arg("--target")
+            .arg(target)
+            .output()
+        else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let Ok(output) = str::from_utf8(&output.stdout) else {
+            continue;
+        };
+
+        // Parse lines that look like this:
+        //
+        //     target_env=""
+        //     target_has_atomic
+        //     target_has_atomic="ptr"
+        //
+        let mut supplemental_target_cfg = HashMap::new();
+        for line in output.lines() {
+            if line.starts_with("target_") {
+                if let Some((k, v)) = line.split_once('=') {
+                    if let Ok(toml::Value::String(v)) = v.parse() {
+                        supplemental_target_cfg
+                            .entry(k.to_owned())
+                            .or_insert_with(HashSet::new)
+                            .insert(v);
+                    }
+                } else {
+                    supplemental_target_cfg
+                        .entry(line.to_owned())
+                        .or_insert_with(HashSet::new);
+                }
+            }
+        }
+
+        // Insert into platform.cfg, but not overriding any entries provided
+        // by reindeer.toml.
+        for (k, v) in supplemental_target_cfg {
+            if let hash_map::Entry::Vacant(entry) = platform.cfg.entry(k) {
+                entry.insert(v);
+            }
         }
     }
 

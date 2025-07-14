@@ -132,7 +132,7 @@ fn try_main() -> anyhow::Result<()> {
 
     if let Some(from_args) = args.third_party_dir.as_deref() {
         let third_party_dir = dunce::canonicalize(from_args)?;
-        config = config::read_config(&third_party_dir.join("reindeer.toml"))?;
+        config = config::read_config(&third_party_dir.join("reindeer.toml"), &args)?;
 
         let manifest_path = args
             .manifest_path
@@ -147,7 +147,7 @@ fn try_main() -> anyhow::Result<()> {
         };
     } else {
         let config_path = args.config.as_deref().unwrap_or(Path::new("reindeer.toml"));
-        config = config::read_config(config_path)?;
+        config = config::read_config(config_path, &args)?;
 
         // These unwrap sequences look gnarly, but essentially
         // - `reindeer` (no flags) == `reindeer -c reindeer.toml`
