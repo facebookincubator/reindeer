@@ -470,86 +470,73 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         if resolve.features.insert(enable_feature) {
             if let Some(enable_dependency) = enable_feature.strip_prefix("dep:") {
                 self.enable_dependency_for_platform(pkgid, platform_name, enable_dependency)?;
-            } else {
-                if let Some(required_features) = pkg.features.get(enable_feature) {
-                    for required_feature in required_features {
-                        if let Some((dep, enable_feature)) = required_feature.split_once("/") {
-                            let enable_dep = !dep.ends_with('?');
-                            let dep = dep.strip_suffix('?').unwrap_or(dep);
-                            // Find which dependency this feature refers to.
-                            let dep_index =
-                                DepIndex::new(self.pkgid_to_pkg, self.pkgid_to_node, pkgid);
-                            for manifest_dep in &self.pkgid_to_pkg[pkgid].dependencies {
-                                if dep == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
-                                    && match manifest_dep.kind {
-                                        DepKind::Normal | DepKind::Build => true,
-                                        DepKind::Dev => false,
-                                    }
-                                    && match &manifest_dep.target {
-                                        Some(platform_expr) => {
-                                            PlatformPredicate::parse(platform_expr)?
-                                                .eval(&self.config.platform[platform_name])
-                                        }
-                                        None => true,
-                                    }
-                                {
-                                    let node_dep = dep_index.resolve(manifest_dep)?;
-                                    let dep_platforms = platforms_for_dependency(
-                                        node_dep,
-                                        self.pkgid_to_pkg[&node_dep.pkg],
-                                        platform_name,
-                                        &self.config.platform[platform_name],
-                                    );
-                                    if manifest_dep.optional && enable_dep {
-                                        if pkg.features.contains_key(dep) {
-                                            self.enable_feature_for_platform(
-                                                pkgid,
-                                                platform_name,
-                                                dep,
-                                            )?;
-                                        }
-                                        self.enable_dependency_for_platform(
+            } else if let Some(required_features) = pkg.features.get(enable_feature) {
+                for required_feature in required_features {
+                    if let Some((dep, enable_feature)) = required_feature.split_once("/") {
+                        let enable_dep = !dep.ends_with('?');
+                        let dep = dep.strip_suffix('?').unwrap_or(dep);
+                        // Find which dependency this feature refers to.
+                        let dep_index = DepIndex::new(self.pkgid_to_pkg, self.pkgid_to_node, pkgid);
+                        for manifest_dep in &self.pkgid_to_pkg[pkgid].dependencies {
+                            if dep == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
+                                && match manifest_dep.kind {
+                                    DepKind::Normal | DepKind::Build => true,
+                                    DepKind::Dev => false,
+                                }
+                                && match &manifest_dep.target {
+                                    Some(platform_expr) => PlatformPredicate::parse(platform_expr)?
+                                        .eval(&self.config.platform[platform_name]),
+                                    None => true,
+                                }
+                            {
+                                let node_dep = dep_index.resolve(manifest_dep)?;
+                                let dep_platforms = platforms_for_dependency(
+                                    node_dep,
+                                    self.pkgid_to_pkg[&node_dep.pkg],
+                                    platform_name,
+                                    &self.config.platform[platform_name],
+                                );
+                                if manifest_dep.optional && enable_dep {
+                                    if pkg.features.contains_key(dep) {
+                                        self.enable_feature_for_platform(
                                             pkgid,
                                             platform_name,
                                             dep,
                                         )?;
-                                        for &dep_platform_name in &dep_platforms {
-                                            if manifest_dep.uses_default_features
-                                                && self.pkgid_to_pkg[&node_dep.pkg]
-                                                    .features
-                                                    .contains_key("default")
-                                            {
-                                                self.enable_feature_for_platform(
-                                                    &node_dep.pkg,
-                                                    dep_platform_name,
-                                                    "default",
-                                                )?;
-                                            }
-                                            for required_feature in &manifest_dep.features {
-                                                self.enable_feature_for_platform(
-                                                    &node_dep.pkg,
-                                                    dep_platform_name,
-                                                    required_feature,
-                                                )?;
-                                            }
+                                    }
+                                    self.enable_dependency_for_platform(pkgid, platform_name, dep)?;
+                                    for &dep_platform_name in &dep_platforms {
+                                        if manifest_dep.uses_default_features
+                                            && self.pkgid_to_pkg[&node_dep.pkg]
+                                                .features
+                                                .contains_key("default")
+                                        {
+                                            self.enable_feature_for_platform(
+                                                &node_dep.pkg,
+                                                dep_platform_name,
+                                                "default",
+                                            )?;
+                                        }
+                                        for required_feature in &manifest_dep.features {
+                                            self.enable_feature_for_platform(
+                                                &node_dep.pkg,
+                                                dep_platform_name,
+                                                required_feature,
+                                            )?;
                                         }
                                     }
-                                    for dep_platform_name in dep_platforms {
-                                        self.enable_feature_for_platform(
-                                            &node_dep.pkg,
-                                            dep_platform_name,
-                                            enable_feature,
-                                        )?;
-                                    }
+                                }
+                                for dep_platform_name in dep_platforms {
+                                    self.enable_feature_for_platform(
+                                        &node_dep.pkg,
+                                        dep_platform_name,
+                                        enable_feature,
+                                    )?;
                                 }
                             }
-                        } else {
-                            self.enable_feature_for_platform(
-                                pkgid,
-                                platform_name,
-                                required_feature,
-                            )?;
                         }
+                    } else {
+                        self.enable_feature_for_platform(pkgid, platform_name, required_feature)?;
                     }
                 }
             }
