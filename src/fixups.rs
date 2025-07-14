@@ -850,40 +850,40 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_env(
         &self,
         target: &ManifestTarget,
-    ) -> anyhow::Result<Vec<(Option<PlatformExpr>, BTreeMap<String, StringOrPath>)>> {
-        let mut ret = vec![];
+        platform_name: &PlatformName,
+    ) -> anyhow::Result<BTreeMap<String, StringOrPath>> {
+        let mut ret = BTreeMap::new();
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            let mut map: BTreeMap<String, StringOrPath> = config
-                .env
-                .iter()
-                .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone())))
-                .collect();
+            if self.fixup_applies(platform, platform_name)? {
+                ret.extend(
+                    config
+                        .env
+                        .iter()
+                        .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
+                );
 
-            for cargo_env in config.cargo_env.iter() {
-                match cargo_env {
-                    // Not set for builds, only build script execution
-                    CargoEnv::CARGO_MANIFEST_LINKS => continue,
-                    CargoEnv::CARGO_CRATE_NAME
-                    | CargoEnv::CARGO_MANIFEST_DIR
-                    | CargoEnv::CARGO_PKG_AUTHORS
-                    | CargoEnv::CARGO_PKG_DESCRIPTION
-                    | CargoEnv::CARGO_PKG_NAME
-                    | CargoEnv::CARGO_PKG_REPOSITORY
-                    | CargoEnv::CARGO_PKG_VERSION
-                    | CargoEnv::CARGO_PKG_VERSION_MAJOR
-                    | CargoEnv::CARGO_PKG_VERSION_MINOR
-                    | CargoEnv::CARGO_PKG_VERSION_PATCH
-                    | CargoEnv::CARGO_PKG_VERSION_PRE => {}
+                for cargo_env in config.cargo_env.iter() {
+                    match cargo_env {
+                        // Not set for builds, only build script execution
+                        CargoEnv::CARGO_MANIFEST_LINKS => continue,
+                        CargoEnv::CARGO_CRATE_NAME
+                        | CargoEnv::CARGO_MANIFEST_DIR
+                        | CargoEnv::CARGO_PKG_AUTHORS
+                        | CargoEnv::CARGO_PKG_DESCRIPTION
+                        | CargoEnv::CARGO_PKG_NAME
+                        | CargoEnv::CARGO_PKG_REPOSITORY
+                        | CargoEnv::CARGO_PKG_VERSION
+                        | CargoEnv::CARGO_PKG_VERSION_MAJOR
+                        | CargoEnv::CARGO_PKG_VERSION_MINOR
+                        | CargoEnv::CARGO_PKG_VERSION_PATCH
+                        | CargoEnv::CARGO_PKG_VERSION_PRE => {}
+                    }
+                    let required = !matches!(config.cargo_env, CargoEnvs::All);
+                    if let Some(value) = self.cargo_env_value(cargo_env, required, target)? {
+                        ret.insert(cargo_env.to_string(), value);
+                    }
                 }
-                let required = !matches!(config.cargo_env, CargoEnvs::All);
-                if let Some(value) = self.cargo_env_value(cargo_env, required, target)? {
-                    map.insert(cargo_env.to_string(), value);
-                }
-            }
-
-            if !map.is_empty() {
-                ret.push((platform.cloned(), map));
             }
         }
 

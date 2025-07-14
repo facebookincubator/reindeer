@@ -716,18 +716,13 @@ fn generate_target_rules<'scope>(
         },
     )?;
 
-    unzip_platform(
-        config,
-        &compatible_platforms,
+    evaluate_for_platforms(
         &mut base,
         &mut perplat,
-        |rule, env| {
-            log::debug!("pkg {} target {}: adding env {:?}", pkg, tgt.name, env);
-            rule.env.extend(env);
-        },
-        fixups.compute_env(tgt)?,
-    )
-    .context("env")?;
+        &compatible_platforms,
+        |platform| fixups.compute_env(tgt, platform),
+        |rule, (key, value)| rule.env.insert(key, value),
+    )?;
 
     // "link_style" only really applies to binaries, so maintain separate binary base & perplat
     let mut bin_base = base.clone();

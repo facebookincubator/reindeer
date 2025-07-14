@@ -130,7 +130,7 @@ impl PartialOrd for BuckPath {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(untagged)]
 pub enum StringOrPath {
     String(String),
