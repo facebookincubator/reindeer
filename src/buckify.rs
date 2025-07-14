@@ -728,18 +728,13 @@ fn generate_target_rules<'scope>(
     let mut bin_base = base.clone();
     let mut bin_perplat = perplat.clone();
 
-    unzip_platform(
-        config,
-        &compatible_platforms,
+    evaluate_for_platforms(
         &mut bin_base,
         &mut bin_perplat,
-        |rule, link_style| {
-            log::debug!("pkg {} target {}: link_style {}", pkg, tgt.name, link_style);
-            rule.link_style = Some(link_style);
-        },
-        fixups.compute_link_style(),
-    )
-    .context("link_style")?;
+        &compatible_platforms,
+        |platform| fixups.compute_link_style(platform),
+        |rule, link_style| rule.link_style = Some(link_style),
+    )?;
 
     unzip_platform(
         config,

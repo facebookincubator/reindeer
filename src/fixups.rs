@@ -1123,15 +1123,19 @@ impl<'meta> Fixups<'meta> {
     }
 
     /// Compute link_style (how dependencies should be linked)
-    pub fn compute_link_style(&self) -> Vec<(Option<PlatformExpr>, String)> {
-        let mut ret = Vec::new();
+    pub fn compute_link_style(
+        &self,
+        platform_name: &PlatformName,
+    ) -> anyhow::Result<Option<String>> {
+        let mut link_style = None;
+
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if let Some(link_style) = config.link_style.as_ref() {
-                ret.push((platform.cloned(), link_style.clone()));
+            if self.fixup_applies(platform, platform_name)? && config.link_style.is_some() {
+                link_style = config.link_style.as_ref();
             }
         }
 
-        ret
+        Ok(link_style.cloned())
     }
 
     /// Compute preferred_linkage (how dependents should link you)
