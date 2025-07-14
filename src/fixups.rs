@@ -19,7 +19,6 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::PoisonError;
 
-use anyhow::Context;
 use anyhow::bail;
 
 use crate::Paths;
@@ -999,8 +998,7 @@ impl<'meta> Fixups<'meta> {
                 });
 
         let mut common_files = HashSet::new();
-        let srcs_globs = Globs::new(GlobSetKind::from_iter(&srcs).context("Srcs")?, NO_EXCLUDE);
-        for path in srcs_globs.walk(self.manifest_dir) {
+        for path in &srcs {
             let mut src = manifest_rel.clone();
             normalized_extend_path(&mut src, path);
             common_files.insert(src);

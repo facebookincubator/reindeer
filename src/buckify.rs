@@ -62,6 +62,7 @@ use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::fixups::ExportSources;
 use crate::fixups::FixupsCache;
+use crate::glob::GlobSetKind;
 use crate::glob::Globs;
 use crate::glob::NO_EXCLUDE;
 use crate::glob::UnusedGlobs;
@@ -485,7 +486,9 @@ fn generate_target_rules<'scope>(
         if srcs.is_empty() {
             // If that didn't work out, get srcs the globby way
             let dir_containing_src = tgt.src_path.parent().unwrap();
-            srcs.push(relative_path(manifest_dir, dir_containing_src).join("**/*.rs"));
+            let pattern = relative_path(manifest_dir, dir_containing_src).join("**/*.rs");
+            let glob = Globs::new(GlobSetKind::from_iter([pattern]).unwrap(), NO_EXCLUDE);
+            srcs.extend(glob.walk(manifest_dir));
         }
 
         unzip_platform(
