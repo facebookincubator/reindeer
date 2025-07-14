@@ -77,23 +77,24 @@ use crate::srcfiles::crate_srcfiles;
 use crate::subtarget::CollectSubtargets;
 use crate::subtarget::Subtarget;
 
-fn evaluate_for_platforms<T, R>(
-    common: &mut PlatformRustCommon,
-    perplat: &mut BTreeMap<PlatformName, PlatformRustCommon>,
+pub fn evaluate_for_platforms<Rule, Collection, R>(
+    common: &mut Rule,
+    perplat: &mut BTreeMap<PlatformName, Rule>,
     platforms: &BTreeSet<&PlatformName>,
-    mut evaluate: impl FnMut(&PlatformName) -> anyhow::Result<T>,
-    mut apply: impl FnMut(&mut PlatformRustCommon, T::Item) -> R,
+    mut evaluate: impl FnMut(&PlatformName) -> anyhow::Result<Collection>,
+    mut apply: impl FnMut(&mut Rule, Collection::Item) -> R,
 ) -> anyhow::Result<()>
 where
-    T: IntoIterator<Item: Eq + Hash>,
+    Rule: Default,
+    Collection: IntoIterator<Item: Eq + Hash>,
 {
-    let mut entries: Vec<(&PlatformName, Vec<T::Item>)> = Vec::new();
+    let mut entries: Vec<(&PlatformName, Vec<Collection::Item>)> = Vec::new();
     for &platform_name in platforms {
         let collection = evaluate(platform_name)?;
         entries.push((platform_name, Vec::from_iter(collection)));
     }
 
-    let mut platform_multiplicity: HashMap<&T::Item, usize> = HashMap::new();
+    let mut platform_multiplicity: HashMap<&Collection::Item, usize> = HashMap::new();
     for (_, collection) in &entries {
         for value in collection {
             *platform_multiplicity.entry(value).or_insert(0) += 1;
@@ -117,7 +118,7 @@ where
                 apply(
                     perplat
                         .entry(platform_name.clone())
-                        .or_insert_with(PlatformRustCommon::default),
+                        .or_insert_with(Rule::default),
                     value,
                 );
             }
@@ -670,7 +671,7 @@ fn generate_target_rules<'scope>(
         &mut perplat,
         &compatible_platforms,
         |platform| {
-            Ok(if fixups.has_buildscript_for_platform(tgt, platform)? {
+            Ok(if fixups.has_buildscript_for_platform(platform)? {
                 Some(())
             } else {
                 None

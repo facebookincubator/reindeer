@@ -10,7 +10,6 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
-use std::collections::btree_map;
 use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
@@ -35,6 +34,7 @@ use crate::buck::RustBinary;
 use crate::buck::StringOrPath;
 use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
+use crate::buckify::evaluate_for_platforms;
 use crate::buckify::short_name_for_git_repo;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
@@ -49,6 +49,7 @@ use crate::fixups::buildscript::CxxLibraryFixup;
 use crate::fixups::buildscript::ExportedHeaders;
 use crate::fixups::buildscript::PrebuiltCxxLibraryFixup;
 use crate::fixups::config::CargoEnv;
+use crate::fixups::config::CargoEnvPurpose;
 use crate::fixups::config::CargoEnvs;
 use crate::fixups::config::CustomVisibility;
 pub use crate::fixups::config::ExportSources;
@@ -65,7 +66,6 @@ use crate::path::relative_path;
 use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
 use crate::platform::PlatformPredicate;
-use crate::platform::compatible_platform_names_for_expr;
 use crate::subtarget::Subtarget;
 
 mod buildscript;
@@ -290,8 +290,16 @@ impl<'meta> Fixups<'meta> {
             Some(name) => name,
         };
 
-        for (plat, fixup) in self.fixup_config.configs(&self.package.version) {
-            if plat.is_none() && fixup.buildscript.defaulted_to_empty {
+        for platform_name in compatible_platforms {
+            let mut has_explicit_buildscript_fixup = false;
+            for (plat, fixup) in self.fixup_config.configs(&self.package.version) {
+                if self.fixup_applies(plat, platform_name)? && !fixup.buildscript.defaulted_to_empty
+                {
+                    has_explicit_buildscript_fixup = true;
+                    break;
+                }
+            }
+            if !has_explicit_buildscript_fixup {
                 let unresolved_package_msg = format!(
                     "{} v{} has a build script, but {} does not say what to do with it. Add `buildscript.run = false` or `buildscript.run = true`",
                     self.package.name,
@@ -306,71 +314,28 @@ impl<'meta> Fixups<'meta> {
                     bail!("Unresolved fixup errors, fix them and rerun buckify.");
                 } else {
                     log::warn!("{}", unresolved_package_msg);
+                    break;
                 }
             }
         }
-
-        // Generate features extracting them from the buildscript RustBinary.
-        let features = buildscript_build.common.base.features.clone();
-        let mut platform = BTreeMap::new();
-        for (platform_name, buildscript_build_common) in &buildscript_build.common.platform {
-            platform.insert(
-                platform_name.clone(),
-                PlatformBuildscriptGenrule {
-                    features: buildscript_build_common.features.clone(),
-                    env: BTreeMap::new(),
-                },
-            );
-        }
-
-        let mut buildscript = None;
-        let (local_manifest_dir, manifest_dir) = match manifest_dir {
-            None => (None, None),
-            Some(SubtargetOrPath::Path(path)) => (Some(path), None),
-            Some(SubtargetOrPath::Subtarget(subtarget)) => (None, Some(subtarget)),
-        };
-        let default_buildscript_run = || BuildscriptGenrule {
-            name: self.buildscript_genrule_name(),
-            buildscript_rule: buildscript_rule_name.clone(),
-            package_name: self.package.name.clone(),
-            version: self.package.version.clone(),
-            local_manifest_dir: local_manifest_dir.clone(),
-            manifest_dir: manifest_dir.clone(),
-            base: PlatformBuildscriptGenrule {
-                features: features.clone(),
-                env: BTreeMap::new(),
-            },
-            platform: platform.clone(),
-        };
 
         let mut cxx_library = Vec::new();
         let mut prebuilt_cxx_library = Vec::new();
-        for (platform_expr, fixup) in self.fixup_config.configs(&self.package.version) {
-            if let Some(BuildscriptRun { env }) = &fixup.buildscript.run {
-                let env_entries = env
-                    .iter()
-                    .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone())));
-                let buildscript_run = buildscript.get_or_insert_with(default_buildscript_run);
-                match platform_expr {
-                    None => buildscript_run.base.env.extend(env_entries),
-                    Some(expr) => {
-                        for platform_name in compatible_platform_names_for_expr(
-                            self.config,
-                            expr,
-                            compatible_platforms,
-                        )? {
-                            buildscript_run
-                                .platform
-                                .entry(platform_name.clone())
-                                .or_insert_with(PlatformBuildscriptGenrule::default)
-                                .env
-                                .extend(env_entries.clone());
-                        }
-                    }
+        let mut library_platforms = BTreeSet::new();
+        let mut buildscript_platforms = BTreeSet::new();
+        for &platform_name in compatible_platforms {
+            for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
+                if self.fixup_applies(platform, platform_name)?
+                    && library_platforms.insert(platform)
+                {
+                    cxx_library.extend(&fixup.cxx_library);
+                    prebuilt_cxx_library.extend(&fixup.prebuilt_cxx_library);
                 }
             }
-            cxx_library.extend(&fixup.cxx_library);
-            prebuilt_cxx_library.extend(&fixup.prebuilt_cxx_library);
+
+            if self.has_buildscript_for_platform(platform_name)? {
+                buildscript_platforms.insert(platform_name);
+            }
         }
 
         // Emit a C++ library build rule (elsewhere - add a dependency to it)
@@ -534,7 +499,7 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        if let Some(mut buildscript_run) = buildscript {
+        if !buildscript_platforms.is_empty() {
             buildscript_build.common.base.env.extend(
                 self.fixup_config
                     .base
@@ -547,59 +512,116 @@ impl<'meta> Fixups<'meta> {
             buildscript_build.common.base.link_style =
                 self.fixup_config.base.buildscript.build.link_style.clone();
 
-            for (_platform, fixup) in self.fixup_config.configs(&self.package.version) {
-                for cargo_env in fixup.cargo_env.iter() {
-                    let required = !matches!(fixup.cargo_env, CargoEnvs::All);
-                    let (add_to_build, add_to_run) = match cargo_env {
-                        // Set for compilation only, not build script execution
-                        CargoEnv::CARGO_CRATE_NAME => (true, false),
-                        // For execution, controlled by prelude//rust/tools/buildscript_run.py
-                        CargoEnv::CARGO_MANIFEST_DIR => (true, false),
-                        // Controlled by prelude//rust/cargo_buildscript.bzl
-                        CargoEnv::CARGO_PKG_NAME | CargoEnv::CARGO_PKG_VERSION => (true, false),
-                        // Set for build script execution only, not compilation
-                        CargoEnv::CARGO_MANIFEST_LINKS => (false, true),
-                        // Set for both
-                        CargoEnv::CARGO_PKG_AUTHORS
-                        | CargoEnv::CARGO_PKG_DESCRIPTION
-                        | CargoEnv::CARGO_PKG_REPOSITORY
-                        | CargoEnv::CARGO_PKG_VERSION_MAJOR
-                        | CargoEnv::CARGO_PKG_VERSION_MINOR
-                        | CargoEnv::CARGO_PKG_VERSION_PATCH
-                        | CargoEnv::CARGO_PKG_VERSION_PRE => (true, true),
-                    };
+            let (local_manifest_dir, manifest_dir) = match manifest_dir {
+                None => (None, None),
+                Some(SubtargetOrPath::Path(path)) => (Some(path), None),
+                Some(SubtargetOrPath::Subtarget(subtarget)) => (None, Some(subtarget)),
+            };
 
-                    if add_to_build {
-                        if let btree_map::Entry::Vacant(entry) = buildscript_build
-                            .common
-                            .base
-                            .env
-                            .entry(cargo_env.to_string())
-                        {
-                            let value = if cargo_env == CargoEnv::CARGO_CRATE_NAME {
-                                Some(StringOrPath::String("build_script_build".to_owned()))
-                            } else {
-                                self.cargo_env_value(cargo_env, required, target)?
-                            };
-                            if let Some(value) = value {
-                                entry.insert(value);
-                            }
-                        }
-                    }
+            let mut buildscript_run = BuildscriptGenrule {
+                name: self.buildscript_genrule_name(),
+                buildscript_rule: buildscript_rule_name.clone(),
+                package_name: self.package.name.clone(),
+                version: self.package.version.clone(),
+                local_manifest_dir,
+                manifest_dir,
+                base: PlatformBuildscriptGenrule {
+                    features: buildscript_build.common.base.features.clone(),
+                    env: BTreeMap::new(),
+                },
+                platform: BTreeMap::new(),
+            };
 
-                    if add_to_run {
-                        if let btree_map::Entry::Vacant(entry) =
-                            buildscript_run.base.env.entry(cargo_env.to_string())
-                        {
-                            if let Some(value) =
-                                self.cargo_env_value(cargo_env, required, target)?
-                            {
-                                entry.insert(value);
-                            }
-                        }
-                    }
+            for &platform_name in &buildscript_platforms {
+                if let Some(buildscript_build_common) =
+                    buildscript_build.common.platform.get(platform_name)
+                {
+                    buildscript_run.platform.insert(
+                        platform_name.clone(),
+                        PlatformBuildscriptGenrule {
+                            features: buildscript_build_common.features.clone(),
+                            env: BTreeMap::new(),
+                        },
+                    );
                 }
             }
+
+            evaluate_for_platforms(
+                &mut buildscript_build.common.base,
+                &mut buildscript_build.common.platform,
+                &buildscript_platforms,
+                |platform_name| {
+                    let mut build_cargo_env = BTreeMap::new();
+                    for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
+                        if self.fixup_applies(platform, platform_name)? {
+                            for cargo_env in fixup.cargo_env.iter() {
+                                match cargo_env.purpose() {
+                                    CargoEnvPurpose::BuildOnly | CargoEnvPurpose::BuildAndRun => {}
+                                    CargoEnvPurpose::RunOnly => continue,
+                                }
+                                let value = if cargo_env == CargoEnv::CARGO_CRATE_NAME {
+                                    Some(StringOrPath::String("build_script_build".to_owned()))
+                                } else {
+                                    let required = !matches!(fixup.cargo_env, CargoEnvs::All);
+                                    self.cargo_env_value(cargo_env, required, target)?
+                                };
+                                if let Some(value) = value {
+                                    build_cargo_env.insert(cargo_env, value);
+                                }
+                            }
+                        }
+                    }
+                    Ok(build_cargo_env)
+                },
+                |rule, (cargo_env, value)| rule.env.insert(cargo_env.to_string(), value),
+            )?;
+
+            evaluate_for_platforms(
+                &mut buildscript_run.base,
+                &mut buildscript_run.platform,
+                &buildscript_platforms,
+                |platform_name| {
+                    let mut run_cargo_env = BTreeMap::new();
+                    for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
+                        if self.fixup_applies(platform, platform_name)? {
+                            for cargo_env in fixup.cargo_env.iter() {
+                                match cargo_env.purpose() {
+                                    CargoEnvPurpose::RunOnly | CargoEnvPurpose::BuildAndRun => {}
+                                    CargoEnvPurpose::BuildOnly => continue,
+                                }
+                                let required = !matches!(fixup.cargo_env, CargoEnvs::All);
+                                let value = self.cargo_env_value(cargo_env, required, target)?;
+                                if let Some(value) = value {
+                                    run_cargo_env.insert(cargo_env, value);
+                                }
+                            }
+                        }
+                    }
+                    Ok(run_cargo_env)
+                },
+                |rule, (cargo_env, value)| rule.env.insert(cargo_env.to_string(), value),
+            )?;
+
+            evaluate_for_platforms(
+                &mut buildscript_run.base,
+                &mut buildscript_run.platform,
+                &buildscript_platforms,
+                |platform_name| {
+                    let mut buildscript_run_env = BTreeMap::new();
+                    for (platform_expr, fixup) in self.fixup_config.configs(&self.package.version) {
+                        if self.fixup_applies(platform_expr, platform_name)? {
+                            if let Some(BuildscriptRun { env }) = &fixup.buildscript.run {
+                                buildscript_run_env.extend(env);
+                            }
+                        }
+                    }
+                    Ok(buildscript_run_env)
+                },
+                |rule, (key, value)| {
+                    rule.env
+                        .insert(key.clone(), StringOrPath::String(value.clone()));
+                },
+            )?;
 
             // Emit the build script itself
             res.push(Rule::BuildscriptBinary(buildscript_build));
@@ -1095,10 +1117,9 @@ impl<'meta> Fixups<'meta> {
 
     pub fn has_buildscript_for_platform(
         &self,
-        target: &ManifestTarget,
         platform_name: &PlatformName,
     ) -> anyhow::Result<bool> {
-        if !target.kind_custom_build() && self.buildscript_target().is_some() {
+        if self.buildscript_target().is_some() {
             for (platform, config) in self.fixup_config.configs(&self.package.version) {
                 if self.fixup_applies(platform, platform_name)? && config.buildscript.run.is_some()
                 {

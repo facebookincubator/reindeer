@@ -46,7 +46,7 @@ impl Default for BuildscriptFixups {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct BuildscriptBuild {
     #[serde(default)]
@@ -56,20 +56,6 @@ pub struct BuildscriptBuild {
     pub extra_deps: BTreeSet<String>,
     #[serde(default)]
     pub omit_deps: BTreeSet<String>,
-    #[serde(skip_deserializing)]
-    pub defaulted_to_empty: bool,
-}
-
-impl Default for BuildscriptBuild {
-    fn default() -> Self {
-        BuildscriptBuild {
-            env: BTreeMap::new(),
-            link_style: None,
-            extra_deps: BTreeSet::new(),
-            omit_deps: BTreeSet::new(),
-            defaulted_to_empty: true,
-        }
-    }
 }
 
 /// Run the buildscript and extract rustc command line flags + generated sources.

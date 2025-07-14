@@ -16,7 +16,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use anyhow::bail;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::de::DeserializeSeed;
@@ -106,14 +105,6 @@ impl FixupConfigFile {
                 anyhow::Error::msg("only public packages can have a fixup `visibility`.")
                     .context(format!("package {package} is private.")),
             );
-        }
-
-        for (expr, platform_fixup) in &fixup_config.platform_fixup {
-            if !platform_fixup.buildscript.build.defaulted_to_empty {
-                bail!(
-                    "platform-specific buildscript build fixup is not supported: {expr}.buildscript.build"
-                );
-            }
         }
 
         Ok(fixup_config)
@@ -318,6 +309,7 @@ impl Default for CargoEnvs {
     Ord,
     PartialEq,
     Eq,
+    Hash,
     Deserialize,
     strum::Display,
     strum::EnumIter
@@ -336,6 +328,35 @@ pub enum CargoEnv {
     CARGO_PKG_VERSION_MINOR,
     CARGO_PKG_VERSION_PATCH,
     CARGO_PKG_VERSION_PRE,
+}
+
+pub enum CargoEnvPurpose {
+    BuildOnly,
+    RunOnly,
+    BuildAndRun,
+}
+
+impl CargoEnv {
+    pub fn purpose(&self) -> CargoEnvPurpose {
+        match self {
+            // Set for compilation only, not build script execution
+            CargoEnv::CARGO_CRATE_NAME => CargoEnvPurpose::BuildOnly,
+            // For execution, controlled by prelude//rust/tools/buildscript_run.py
+            CargoEnv::CARGO_MANIFEST_DIR => CargoEnvPurpose::BuildOnly,
+            // Controlled by prelude//rust/cargo_buildscript.bzl
+            CargoEnv::CARGO_PKG_NAME | CargoEnv::CARGO_PKG_VERSION => CargoEnvPurpose::BuildOnly,
+            // Set for build script execution only, not compilation
+            CargoEnv::CARGO_MANIFEST_LINKS => CargoEnvPurpose::RunOnly,
+            // Set for both
+            CargoEnv::CARGO_PKG_AUTHORS
+            | CargoEnv::CARGO_PKG_DESCRIPTION
+            | CargoEnv::CARGO_PKG_REPOSITORY
+            | CargoEnv::CARGO_PKG_VERSION_MAJOR
+            | CargoEnv::CARGO_PKG_VERSION_MINOR
+            | CargoEnv::CARGO_PKG_VERSION_PATCH
+            | CargoEnv::CARGO_PKG_VERSION_PRE => CargoEnvPurpose::BuildAndRun,
+        }
+    }
 }
 
 impl CargoEnvs {

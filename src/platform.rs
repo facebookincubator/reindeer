@@ -24,7 +24,6 @@ use serde::de::SeqAccess;
 use serde::de::Visitor;
 
 use crate::cfg;
-use crate::config::Config;
 
 /// A single PlatformConfig represents a single platform. Each field represents a set of
 /// platform attributes which are true for this platform. A non-present attribute means
@@ -189,24 +188,6 @@ where
     }
 
     deserializer.deserialize_map(PlatformsVisitor)
-}
-
-pub fn compatible_platform_names_for_expr<'config>(
-    config: &'config Config,
-    expr: &PlatformExpr,
-    compatible_platforms: &BTreeSet<&PlatformName>,
-) -> anyhow::Result<impl Iterator<Item = &'config PlatformName>> {
-    let pred = PlatformPredicate::parse(expr)?;
-
-    let res = compatible_platforms.iter().filter_map(move |name| {
-        let (name, platform) = config.platform.get_key_value(name).unwrap();
-        if pred.eval(platform) {
-            Some(name)
-        } else {
-            None
-        }
-    });
-    Ok(res)
 }
 
 /// A name of a platform, as used in Config.
