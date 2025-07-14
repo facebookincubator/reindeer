@@ -759,23 +759,13 @@ fn generate_target_rules<'scope>(
     let mut lib_base = base.clone();
     let mut lib_perplat = perplat.clone();
 
-    unzip_platform(
-        config,
-        &compatible_platforms,
+    evaluate_for_platforms(
         &mut lib_base,
         &mut lib_perplat,
-        |rule, preferred_linkage| {
-            log::debug!(
-                "pkg {} target {}: preferred_linkage {}",
-                pkg,
-                tgt.name,
-                preferred_linkage
-            );
-            rule.preferred_linkage = Some(preferred_linkage);
-        },
-        fixups.compute_preferred_linkage(),
-    )
-    .context("preferred_linkage")?;
+        &compatible_platforms,
+        |platform| fixups.compute_preferred_linkage(platform),
+        |rule, preferred_linkage| rule.preferred_linkage = Some(preferred_linkage),
+    )?;
 
     // Standalone binary - binary for a package always takes the package's library as a dependency
     // if there is one

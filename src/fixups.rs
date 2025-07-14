@@ -1139,15 +1139,19 @@ impl<'meta> Fixups<'meta> {
     }
 
     /// Compute preferred_linkage (how dependents should link you)
-    pub fn compute_preferred_linkage(&self) -> Vec<(Option<PlatformExpr>, String)> {
-        let mut ret = Vec::new();
+    pub fn compute_preferred_linkage(
+        &self,
+        platform_name: &PlatformName,
+    ) -> anyhow::Result<Option<String>> {
+        let mut preferred_linkage = None;
+
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            if let Some(preferred_linkage) = config.preferred_linkage.as_ref() {
-                ret.push((platform.cloned(), preferred_linkage.clone()));
+            if self.fixup_applies(platform, platform_name)? && config.preferred_linkage.is_some() {
+                preferred_linkage = config.preferred_linkage.as_ref();
             }
         }
 
-        ret
+        Ok(preferred_linkage.cloned())
     }
 
     /// Compute linker_flags (extra flags for the linker)
