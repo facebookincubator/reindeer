@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 use std::fs;
+use std::iter;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -34,13 +35,18 @@ use crate::buckify::relative_path;
 use crate::cargo::Manifest;
 use crate::fixups::buildscript::BuildscriptFixups;
 use crate::fixups::buildscript::CxxLibraryFixup;
+use crate::fixups::buildscript::ExportedHeaders;
 use crate::fixups::buildscript::PrebuiltCxxLibraryFixup;
-use crate::glob::SerializableGlobSet as GlobSet;
+use crate::glob::TrackedGlobSet;
+use crate::glob::UnusedGlobs;
 use crate::platform::PlatformExpr;
 
 /// Top-level fixup config file (correspondins to a fixups.toml)
 #[derive(Debug, Default)]
 pub struct FixupConfigFile {
+    /// Source text that this config was deserialized from.
+    toml: String,
+
     /// Limit an exposed crate's `alias`'s `visibility` to this.
     /// This only has an effect for top-level crates. Exposed crates
     /// by default get `visibility = ["PUBLIC"]`. Sometimes you want to
@@ -88,8 +94,11 @@ impl FixupConfigFile {
         };
 
         log::debug!("read fixups from {}", fixup_path.display());
+        let visitor = FixupConfigFileVisitor {
+            toml: content.clone(),
+        };
         let fixup_config = toml::Deserializer::parse(&content)
-            .and_then(|de| de.deserialize_map(FixupConfigFileVisitor))
+            .and_then(|de| de.deserialize_map(visitor))
             .with_context(|| format!("Failed to parse {}", fixup_path.display()))?;
 
         if fixup_config.custom_visibility.is_some() && !public {
@@ -139,6 +148,31 @@ impl FixupConfigFile {
                     .map(|(plat, cfg)| (Some(plat), cfg)),
             )
     }
+
+    pub fn collect_unused_globs(&self, pkg: &str, unused: &mut UnusedGlobs) {
+        let mut collect =
+            |globset: &TrackedGlobSet| globset.collect_unused_globs(unused, pkg, &self.toml);
+
+        if let Some(export_sources) = &self.export_sources {
+            collect(&export_sources.srcs);
+            collect(&export_sources.exclude)
+        }
+        for fixup in iter::once(&self.base).chain(self.platform_fixup.values()) {
+            collect(&fixup.extra_srcs);
+            collect(&fixup.omit_srcs);
+            for cxx_library in &fixup.cxx_library {
+                collect(&cxx_library.srcs);
+                collect(&cxx_library.headers);
+                if let ExportedHeaders::Set(exported_headers) = &cxx_library.exported_headers {
+                    collect(exported_headers);
+                }
+                collect(&cxx_library.exclude);
+            }
+            for prebuilt_cxx_library in &fixup.prebuilt_cxx_library {
+                collect(&prebuilt_cxx_library.static_libs);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,10 +181,10 @@ pub struct ExportSources {
     /// Suffix for the rule name
     pub name: String,
     /// Src globs rooted in manifest dir for package
-    pub srcs: Vec<String>,
+    pub srcs: TrackedGlobSet,
     /// Globs to exclude from srcs, rooted in manifest dir for package
     #[serde(default)]
-    pub exclude: Vec<String>,
+    pub exclude: TrackedGlobSet,
     /// Visibility for the rule
     pub visibility: Vec<String>,
 }
@@ -162,10 +196,10 @@ pub struct FixupConfig {
     pub version: Option<semver::VersionReq>,
     /// Extra src globs, rooted in manifest dir for package
     #[serde(default)]
-    pub extra_srcs: Vec<String>,
+    pub extra_srcs: TrackedGlobSet,
     /// Globs to exclude from srcs, rooted in manifest dir for package
     #[serde(default)]
-    pub omit_srcs: GlobSet,
+    pub omit_srcs: TrackedGlobSet,
     /// Extra flags for rustc
     #[serde(default)]
     pub rustc_flags: Vec<String>,
@@ -366,7 +400,9 @@ pub enum CustomVisibility {
     WithVersion(HashMap<semver::VersionReq, Vec<String>>),
 }
 
-struct FixupConfigFileVisitor;
+struct FixupConfigFileVisitor {
+    toml: String,
+}
 
 impl<'de> Visitor<'de> for FixupConfigFileVisitor {
     type Value = FixupConfigFile;
@@ -483,6 +519,7 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
         let base = FixupConfig::deserialize(de)?;
 
         Ok(FixupConfigFile {
+            toml: self.toml,
             custom_visibility: fields.custom_visibility,
             omit_targets: fields.omit_targets.unwrap_or_else(BTreeSet::new),
             precise_srcs: fields.precise_srcs,

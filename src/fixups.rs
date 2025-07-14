@@ -16,6 +16,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::sync::PoisonError;
 
 use anyhow::Context;
@@ -48,15 +49,17 @@ use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::fixups::buildscript::BuildscriptRun;
 use crate::fixups::buildscript::CxxLibraryFixup;
+use crate::fixups::buildscript::ExportedHeaders;
 use crate::fixups::buildscript::PrebuiltCxxLibraryFixup;
 use crate::fixups::config::CargoEnv;
 use crate::fixups::config::CargoEnvs;
 use crate::fixups::config::CustomVisibility;
 pub use crate::fixups::config::ExportSources;
 use crate::fixups::config::FixupConfigFile;
+use crate::glob::GlobSetKind;
 use crate::glob::Globs;
 use crate::glob::NO_EXCLUDE;
-use crate::glob::SerializableGlobSet as GlobSet;
+use crate::glob::TrackedGlobSet;
 use crate::index::Index;
 use crate::index::ResolvedDep;
 use crate::platform::PlatformExpr;
@@ -132,6 +135,10 @@ impl<'meta> FixupsCache<'meta> {
             fixup_config,
             config: self.config,
         })
+    }
+
+    pub fn lock(&self) -> MutexGuard<BTreeMap<&'meta str, Arc<FixupConfigFile>>> {
+        self.fixups.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -408,26 +415,24 @@ impl<'meta> Fixups<'meta> {
                 },
                 // Just collect the sources, excluding things in the exclude list
                 srcs: {
-                    let mut globs = Globs::new(srcs, exclude).context("C++ sources")?;
-                    let srcs = globs
+                    Globs::new(srcs, exclude)
                         .walk(self.manifest_dir)
                         .map(|path| self.subtarget_or_path(&path))
-                        .collect::<anyhow::Result<_>>()?;
-                    if self.config.strict_globs {
-                        globs.check_all_globs_used()?;
-                    }
-                    srcs
+                        .collect::<anyhow::Result<_>>()?
                 },
                 // Collect the nominated headers, plus everything in the fixup include
                 // path(s).
                 headers: {
-                    let mut globs = Globs::new(headers, exclude)?;
+                    let globs = Globs::new(headers, exclude);
                     let mut headers = BTreeSet::new();
                     for path in globs.walk(self.manifest_dir) {
                         headers.insert(self.subtarget_or_path(&path)?);
                     }
 
-                    let mut globs = Globs::new(["**/*.asm", "**/*.h"], NO_EXCLUDE)?;
+                    let globs = Globs::new(
+                        GlobSetKind::from_iter(["**/*.asm", "**/*.h"]).unwrap(),
+                        NO_EXCLUDE,
+                    );
                     for fixup_include_path in fixup_include_paths {
                         for path in globs.walk(self.fixup_dir.join(fixup_include_path)) {
                             headers.insert(SubtargetOrPath::Path(BuckPath(
@@ -439,19 +444,15 @@ impl<'meta> Fixups<'meta> {
                     headers
                 },
                 exported_headers: match exported_headers {
-                    SetOrMap::Set(exported_headers) => {
-                        let mut exported_header_globs = Globs::new(exported_headers, exclude)
-                            .context("C++ exported headers")?;
+                    ExportedHeaders::Set(exported_headers) => {
+                        let exported_header_globs = Globs::new(exported_headers, exclude);
                         let exported_headers = exported_header_globs
                             .walk(self.manifest_dir)
                             .map(|path| self.subtarget_or_path(&path))
                             .collect::<anyhow::Result<_>>()?;
-                        if self.config.strict_globs {
-                            exported_header_globs.check_all_globs_used()?;
-                        }
                         SetOrMap::Set(exported_headers)
                     }
-                    SetOrMap::Map(exported_headers) => SetOrMap::Map(
+                    ExportedHeaders::Map(exported_headers) => SetOrMap::Map(
                         exported_headers
                             .iter()
                             .map(|(name, path)| {
@@ -490,8 +491,7 @@ impl<'meta> Fixups<'meta> {
             ..
         } in prebuilt_cxx_library
         {
-            let mut static_lib_globs =
-                Globs::new(static_libs, NO_EXCLUDE).context("Static libraries")?;
+            let static_lib_globs = Globs::new(static_libs, NO_EXCLUDE);
             for static_lib in static_lib_globs.walk(self.manifest_dir) {
                 let actual = Name(format!(
                     "{}-{}-{}",
@@ -526,9 +526,6 @@ impl<'meta> Fixups<'meta> {
                     static_lib: self.subtarget_or_path(&static_lib)?,
                 };
                 res.push(Rule::PrebuiltCxxLibrary(rule));
-            }
-            if self.config.strict_globs {
-                static_lib_globs.check_all_globs_used()?;
             }
         }
 
@@ -792,8 +789,7 @@ impl<'meta> Fixups<'meta> {
                 if !add_dep || !self.target_match(target, targets) {
                     continue;
                 }
-                let mut static_lib_globs =
-                    Globs::new(static_libs, NO_EXCLUDE).context("Prebuilt C++ libraries")?;
+                let static_lib_globs = Globs::new(static_libs, NO_EXCLUDE);
                 for static_lib in static_lib_globs.walk(self.manifest_dir) {
                     ret.push((
                         None,
@@ -982,15 +978,10 @@ impl<'meta> Fixups<'meta> {
         );
         let manifest_rel = relative_path(self.third_party_dir, self.manifest_dir);
 
-        let srcs_globs: Vec<String> = srcs
-            .iter()
-            .map(|src| src.to_string_lossy().into_owned())
-            .collect();
-
         log::debug!(
             "pkg {}, srcs {:?}, manifest_rel {}",
             self.package,
-            srcs_globs,
+            srcs,
             manifest_rel.display()
         );
 
@@ -1007,14 +998,9 @@ impl<'meta> Fixups<'meta> {
                 });
 
         let mut common_files = HashSet::new();
-        let mut srcs_globs = Globs::new(srcs_globs, NO_EXCLUDE).context("Srcs")?;
+        let srcs_globs = Globs::new(GlobSetKind::from_iter(&srcs).context("Srcs")?, NO_EXCLUDE);
         for path in srcs_globs.walk(self.manifest_dir) {
             common_files.insert(manifest_rel.join(path));
-        }
-        if self.config.strict_globs {
-            // Do not check srcs_globs.check_all_globs_used(). Base sources are
-            // not required because they are either computed precisely or a
-            // random guess of globs.
         }
         if let Some(base) = self.fixup_config.base(&self.package.version) {
             common_files.extend(self.compute_extra_srcs(&base.extra_srcs)?);
@@ -1028,7 +1014,7 @@ impl<'meta> Fixups<'meta> {
                     &base.omit_srcs,
                 ),
                 None => {
-                    no_omit_srcs = GlobSet::default();
+                    no_omit_srcs = TrackedGlobSet::default();
                     (HashSet::default(), &no_omit_srcs)
                 }
             };
@@ -1089,9 +1075,8 @@ impl<'meta> Fixups<'meta> {
         Ok(ret)
     }
 
-    fn compute_extra_srcs(&self, globs: &[String]) -> anyhow::Result<HashSet<PathBuf>> {
+    fn compute_extra_srcs(&self, globs: &TrackedGlobSet) -> anyhow::Result<HashSet<PathBuf>> {
         let mut extra_srcs = HashSet::new();
-        let mut unmatched_globs = Vec::new();
 
         for glob in globs {
             // The extra_srcs are allowed to be located outside this crate's
@@ -1101,7 +1086,7 @@ impl<'meta> Fixups<'meta> {
             // not sufficient; here we pick the right directory to walk for this
             // glob.
             let mut dir_containing_extra_srcs = self.manifest_dir.to_owned();
-            let mut rest_of_glob = Path::new(glob).components();
+            let mut rest_of_glob = glob.components();
             while let Some(component) = rest_of_glob.as_path().components().next() {
                 if component.as_os_str().to_string_lossy().contains('*') {
                     // Ready to do globby stuff.
@@ -1112,10 +1097,10 @@ impl<'meta> Fixups<'meta> {
                 }
             }
 
-            let len_before = extra_srcs.len();
             let mut insert = |absolute_path: &Path| {
                 let tp_rel_path = relative_path(self.third_party_dir, absolute_path);
                 extra_srcs.insert(normalize_path(&tp_rel_path));
+                glob.mark_used();
             };
 
             let rest_of_glob = rest_of_glob.as_path();
@@ -1126,22 +1111,14 @@ impl<'meta> Fixups<'meta> {
                     insert(&dir_containing_extra_srcs);
                 }
             } else {
-                let glob = rest_of_glob.to_string_lossy();
-                for path in Globs::new([glob], NO_EXCLUDE)?.walk(&dir_containing_extra_srcs) {
+                let globs = Globs::new(GlobSetKind::from_iter([rest_of_glob])?, NO_EXCLUDE);
+                for path in globs.walk(&dir_containing_extra_srcs) {
                     insert(&dir_containing_extra_srcs.join(path));
                 }
             }
-
-            if extra_srcs.len() == len_before {
-                unmatched_globs.push(glob);
-            }
         }
 
-        if unmatched_globs.is_empty() {
-            Ok(extra_srcs)
-        } else {
-            bail!("Unmatched globs in extra_srcs: {:?}", unmatched_globs);
-        }
+        Ok(extra_srcs)
     }
 
     pub fn compute_mapped_srcs(

@@ -64,6 +64,7 @@ use crate::fixups::ExportSources;
 use crate::fixups::FixupsCache;
 use crate::glob::Globs;
 use crate::glob::NO_EXCLUDE;
+use crate::glob::UnusedGlobs;
 use crate::index::Index;
 use crate::lockfile::Lockfile;
 use crate::lockfile::LockfilePackage;
@@ -494,7 +495,7 @@ fn generate_target_rules<'scope>(
         // individual contained files.
     } else {
         let rel_manifest = relative_path(&paths.third_party_dir, manifest_dir);
-        let mut license_globs = Globs::new(&config.license_patterns, NO_EXCLUDE)?;
+        let license_globs = Globs::new(&config.license_patterns, NO_EXCLUDE);
         for path in license_globs.walk(manifest_dir) {
             licenses.insert(BuckPath(rel_manifest.join(path)));
         }
@@ -946,18 +947,13 @@ fn generate_target_rules<'scope>(
             || matches!(pkg.source, Source::Local)
         {
             // e.g. {"src/lib.rs": "vendor/foo-1.0.0/src/lib.rs"}
-            let mut globs = Globs::new(srcs, exclude).context("export sources")?;
-            let srcs = globs
+            Globs::new(srcs, exclude)
                 .walk(manifest_dir)
                 .map(|path| {
                     let source = mapped_manifest_dir.join(&path);
                     (BuckPath(path), SubtargetOrPath::Path(BuckPath(source)))
                 })
-                .collect();
-            if config.strict_globs {
-                globs.check_all_globs_used()?;
-            }
-            srcs
+                .collect()
         } else if let VendorConfig::LocalRegistry = config.vendor {
             // e.g. {":foo-1.0.0.git": "foo-1.0.0"}
             let extract_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
@@ -1118,6 +1114,14 @@ pub(crate) fn buckify(
         done: Mutex::new(HashSet::new()),
     };
     let rules = do_buckify(&context)?;
+
+    if config.strict_globs {
+        let mut unused = UnusedGlobs::new();
+        for (name, fixup) in &*context.fixups.lock() {
+            fixup.collect_unused_globs(name, &mut unused);
+        }
+        unused.check()?;
+    }
 
     // Emit build rules to stdout
     if stdout {

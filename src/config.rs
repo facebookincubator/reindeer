@@ -31,11 +31,12 @@ use serde::de::MapAccess;
 use serde::de::Visitor;
 use serde::de::value::MapAccessDeserializer;
 
+use crate::glob::TrackedGlobSet;
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
 use crate::platform::deserialize_platforms;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Path the config was read from
@@ -58,7 +59,7 @@ pub struct Config {
 
     /// List of glob patterns for filenames likely to contain license terms
     #[serde(default)]
-    pub license_patterns: BTreeSet<String>,
+    pub license_patterns: TrackedGlobSet,
 
     /// Fail buckify if there are unresolved fixups
     #[serde(default)]

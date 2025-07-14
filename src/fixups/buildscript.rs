@@ -15,11 +15,14 @@ use serde::Deserializer;
 use serde::de::DeserializeSeed;
 use serde::de::Error as _;
 use serde::de::MapAccess;
+use serde::de::SeqAccess;
 use serde::de::Visitor;
+use serde::de::value::MapAccessDeserializer;
+use serde::de::value::SeqAccessDeserializer;
 
 use crate::buck::RuleRef;
 use crate::cargo::TargetKind;
-use crate::collection::SetOrMap;
+use crate::glob::TrackedGlobSet;
 
 #[derive(Debug)]
 pub struct BuildscriptFixups {
@@ -85,19 +88,19 @@ fn set_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CxxLibraryFixup {
-    pub name: String,      // rule basename
-    pub srcs: Vec<String>, // src globs
+    pub name: String,         // rule basename
+    pub srcs: TrackedGlobSet, // src globs
     // Which targets are we a dependency for. List in the form
     // of kind and name (eg `["bin","cargo"]`). Empty means apply to main lib target.
     #[serde(default)]
     pub targets: Vec<(TargetKind, Option<String>)>,
     #[serde(default)]
-    pub headers: Vec<String>, // header globs
+    pub headers: TrackedGlobSet, // header globs
     #[serde(default)]
-    pub exported_headers: SetOrMap<String>, // exported header globs
+    pub exported_headers: ExportedHeaders, // exported header globs
     #[serde(default = "set_true")]
     pub add_dep: bool, // add to dependencies
     #[serde(default)]
@@ -107,7 +110,7 @@ pub struct CxxLibraryFixup {
     #[serde(default)]
     pub fixup_include_paths: Vec<PathBuf>,
     #[serde(default)]
-    pub exclude: Vec<String>,
+    pub exclude: TrackedGlobSet,
     #[serde(default)]
     pub compiler_flags: Vec<String>,
     #[serde(default)]
@@ -127,11 +130,11 @@ pub struct CxxLibraryFixup {
     pub undefined_symbols: bool,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrebuiltCxxLibraryFixup {
-    pub name: String,             // rule basename
-    pub static_libs: Vec<String>, // static lib globs
+    pub name: String,                // rule basename
+    pub static_libs: TrackedGlobSet, // static lib globs
     #[serde(default = "set_true")]
     pub add_dep: bool, // add to dependencies
     // Which targets are we a dependency for. List in the form
@@ -144,6 +147,53 @@ pub struct PrebuiltCxxLibraryFixup {
     pub compatible_with: Vec<RuleRef>,
     #[serde(default)]
     pub target_compatible_with: Vec<RuleRef>,
+}
+
+#[derive(Debug)]
+pub enum ExportedHeaders {
+    Set(TrackedGlobSet),
+    Map(BTreeMap<String, String>),
+}
+
+impl Default for ExportedHeaders {
+    fn default() -> Self {
+        ExportedHeaders::Set(TrackedGlobSet::default())
+    }
+}
+
+impl<'de> Deserialize<'de> for ExportedHeaders {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ExportedHeadersVisitor;
+
+        impl<'de> Visitor<'de> for ExportedHeadersVisitor {
+            type Value = ExportedHeaders;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("set or map")
+            }
+
+            fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let de = SeqAccessDeserializer::new(seq);
+                TrackedGlobSet::deserialize(de).map(ExportedHeaders::Set)
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let de = MapAccessDeserializer::new(map);
+                BTreeMap::deserialize(de).map(ExportedHeaders::Map)
+            }
+        }
+
+        deserializer.deserialize_any(ExportedHeadersVisitor)
+    }
 }
 
 struct BuildscriptRunVisitor;
