@@ -72,37 +72,10 @@ use crate::lockfile::Lockfile;
 use crate::lockfile::LockfilePackage;
 use crate::path::normalize_path;
 use crate::path::relative_path;
-use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
-use crate::platform::compatible_platform_names_for_expr;
 use crate::srcfiles::crate_srcfiles;
 use crate::subtarget::CollectSubtargets;
 use crate::subtarget::Subtarget;
-
-/// Take a stream of platform-tagged items and apply them to the appropriate rule.
-/// This also handles mapping a PlatformExpr into PlatformNames.
-fn unzip_platform<T: Clone>(
-    config: &Config,
-    compatible_platforms: &BTreeSet<&PlatformName>,
-    common: &mut PlatformRustCommon,
-    perplat: &mut BTreeMap<PlatformName, PlatformRustCommon>,
-    mut extend: impl FnMut(&mut PlatformRustCommon, T),
-    things: impl IntoIterator<Item = (Option<PlatformExpr>, T)>,
-) -> anyhow::Result<()> {
-    for (platform, thing) in things.into_iter() {
-        match platform {
-            Some(expr) => {
-                for plat in compatible_platform_names_for_expr(config, &expr, compatible_platforms)?
-                {
-                    extend(perplat.entry(plat.clone()).or_default(), thing.clone())
-                }
-            }
-            None => extend(common, thing),
-        }
-    }
-
-    Ok(())
-}
 
 fn evaluate_for_platforms<T, R>(
     common: &mut PlatformRustCommon,
@@ -668,25 +641,29 @@ fn generate_target_rules<'scope>(
         return Ok((rules, dep_pkgs));
     }
 
-    unzip_platform(
-        config,
-        &compatible_platforms,
+    evaluate_for_platforms(
         &mut base,
         &mut perplat,
-        |rule, (flags, flags_select)| {
-            log::debug!(
-                "pkg {} target {}: adding flags {:?} and select {:?}",
-                pkg,
-                tgt.name,
-                flags,
-                flags_select
-            );
-            rule.rustc_flags.common.extend(flags);
-            rule.rustc_flags.selects.extend(flags_select);
-        },
-        fixups.compute_cmdline(tgt),
-    )
-    .context("rustc_flags")?;
+        &compatible_platforms,
+        |platform| fixups.compute_rustc_cfg(platform),
+        |rule, cfg| rule.rustc_flags.common.push(format!("--cfg={cfg}")),
+    )?;
+
+    evaluate_for_platforms(
+        &mut base,
+        &mut perplat,
+        &compatible_platforms,
+        |platform| fixups.compute_rustc_flags(platform).map(Some),
+        |rule, flags| rule.rustc_flags.common.extend(flags),
+    )?;
+
+    evaluate_for_platforms(
+        &mut base,
+        &mut perplat,
+        &compatible_platforms,
+        |platform| fixups.compute_rustc_flags_select(platform),
+        |rule, rustc_flags_select| rule.rustc_flags.selects.push(rustc_flags_select),
+    )?;
 
     evaluate_for_platforms(
         &mut base,
@@ -700,12 +677,13 @@ fn generate_target_rules<'scope>(
             })
         },
         |rule, ()| {
+            let genrule = fixups.buildscript_genrule_name();
+            rule.rustc_flags
+                .common
+                .push(format!("@$(location :{genrule}[rustc_flags])"));
             rule.env.insert(
                 "OUT_DIR".to_owned(),
-                StringOrPath::String(format!(
-                    "$(location :{}[out_dir])",
-                    fixups.buildscript_genrule_name(),
-                )),
+                StringOrPath::String(format!("$(location :{genrule}[out_dir])")),
             );
         },
     )?;

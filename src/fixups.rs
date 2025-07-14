@@ -648,61 +648,48 @@ impl<'meta> Fixups<'meta> {
         Ok(false)
     }
 
-    fn buildscript_rustc_flags(
+    pub fn compute_rustc_cfg(
         &self,
-        target: &ManifestTarget,
-    ) -> Vec<(
-        Option<PlatformExpr>,
-        (Vec<String>, Vec<BTreeMap<String, Vec<String>>>),
-    )> {
-        let mut ret = vec![];
-        if self.buildscript_target().is_none() {
-            return ret; // no buildscript
-        }
+        platform_name: &PlatformName,
+    ) -> anyhow::Result<BTreeSet<String>> {
+        let mut cfgs = BTreeSet::new();
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            let mut flags = vec![];
-
-            if !target.kind_custom_build() && config.buildscript.run.is_some() {
-                flags.push(format!(
-                    "@$(location :{}[rustc_flags])",
-                    self.buildscript_genrule_name()
-                ));
-            }
-
-            if !flags.is_empty() {
-                ret.push((platform.cloned(), (flags, Vec::new())));
+            if self.fixup_applies(platform, platform_name)? {
+                for cfg in &config.cfgs {
+                    cfgs.insert(cfg.clone());
+                }
             }
         }
 
-        ret
+        Ok(cfgs)
     }
 
-    /// Return extra command-line options, with platform annotation if needed
-    pub fn compute_cmdline(
-        &self,
-        target: &ManifestTarget,
-    ) -> Vec<(
-        Option<PlatformExpr>,
-        (Vec<String>, Vec<BTreeMap<String, Vec<String>>>),
-    )> {
-        let mut ret = vec![];
+    pub fn compute_rustc_flags(&self, platform_name: &PlatformName) -> anyhow::Result<Vec<String>> {
+        let mut rustc_flags = Vec::new();
 
         for (platform, config) in self.fixup_config.configs(&self.package.version) {
-            let mut flags = vec![];
-
-            flags.extend(config.rustc_flags.clone());
-            flags.extend(config.cfgs.iter().map(|cfg| format!("--cfg={}", cfg)));
-            let flags_select = config.rustc_flags_select.clone();
-
-            if !flags.is_empty() || !flags_select.is_empty() {
-                ret.push((platform.cloned(), (flags, flags_select)));
+            if self.fixup_applies(platform, platform_name)? {
+                rustc_flags.extend_from_slice(&config.rustc_flags);
             }
         }
 
-        ret.extend(self.buildscript_rustc_flags(target));
+        Ok(rustc_flags)
+    }
 
-        ret
+    pub fn compute_rustc_flags_select(
+        &self,
+        platform_name: &PlatformName,
+    ) -> anyhow::Result<Vec<BTreeMap<String, Vec<String>>>> {
+        let mut rustc_flags_select = Vec::new();
+
+        for (platform, config) in self.fixup_config.configs(&self.package.version) {
+            if self.fixup_applies(platform, platform_name)? {
+                rustc_flags_select.extend_from_slice(&config.rustc_flags_select);
+            }
+        }
+
+        Ok(rustc_flags_select)
     }
 
     /// Generate the set of deps for the target. This could just return the unmodified
