@@ -28,7 +28,6 @@ use crate::config::Config;
 use crate::fixups::FixupsCache;
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
-use crate::platform::PlatformPredicate;
 use crate::resolve::DepIndex;
 
 /// Index for interesting things in Cargo metadata
@@ -400,8 +399,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                     DepKind::Dev => false,
                 }
                 && match &manifest_dep.target {
-                    Some(platform_expr) => PlatformPredicate::parse(platform_expr)?
-                        .eval(&self.config.platform[platform_name]),
+                    Some(platform_expr) => platform_expr.eval(&self.config.platform[platform_name]),
                     None => true,
                 }
                 && !fixups.omit_dep(
@@ -492,8 +490,9 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                                     DepKind::Dev => false,
                                 }
                                 && match &manifest_dep.target {
-                                    Some(platform_expr) => PlatformPredicate::parse(platform_expr)?
-                                        .eval(&self.config.platform[platform_name]),
+                                    Some(platform_expr) => {
+                                        platform_expr.eval(&self.config.platform[platform_name])
+                                    }
                                     None => true,
                                 }
                             {
@@ -576,8 +575,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                     DepKind::Dev => false,
                 }
                 && match &manifest_dep.target {
-                    Some(platform_expr) => PlatformPredicate::parse(platform_expr)?
-                        .eval(&self.config.platform[platform_name]),
+                    Some(platform_expr) => platform_expr.eval(&self.config.platform[platform_name]),
                     None => true,
                 }
             {

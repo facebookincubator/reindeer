@@ -34,7 +34,7 @@ use nom::sequence::terminated;
 use unicode_ident::is_xid_continue;
 use unicode_ident::is_xid_start;
 
-use crate::platform::PlatformPredicate;
+use crate::platform::PlatformExpr;
 
 fn sp<'a, E>(i: &'a str) -> IResult<&'a str, &'a str, E>
 where
@@ -124,37 +124,42 @@ where
     )
 }
 
-fn parse_predicate<'a, E>(i: &'a str) -> IResult<&'a str, PlatformPredicate<'a>, E>
+fn parse_predicate<'a, E>(i: &'a str) -> IResult<&'a str, PlatformExpr, E>
 where
     E: ParseError<&'a str> + ContextError<&'a str>,
 {
-    use PlatformPredicate::*;
-
     context(
         "predicate",
         alt((
             map(
                 operator("all", separated_list0(sep(','), parse_predicate)),
-                All,
+                PlatformExpr::All,
             ),
             map(
                 operator("any", separated_list0(sep(','), parse_predicate)),
-                Any,
+                PlatformExpr::Any,
             ),
-            map(operator("not", parse_predicate), |pred| Not(Box::new(pred))),
-            map(keyword("unix"), |_| Unix),
-            map(keyword("windows"), |_| Windows),
+            map(operator("not", parse_predicate), |pred| {
+                PlatformExpr::Not(Box::new(pred))
+            }),
+            map(keyword("unix"), |_| PlatformExpr::Unix),
+            map(keyword("windows"), |_| PlatformExpr::Windows),
             map(
                 separated_pair(atom, sep('='), cut(preceded(sp, string))),
-                |(key, value)| Value { key, value },
+                |(key, value)| PlatformExpr::Value {
+                    key: key.to_owned(),
+                    value: value.to_owned(),
+                },
             ),
-            map(atom, |key| Bool { key }),
+            map(atom, |key| PlatformExpr::Bool {
+                key: key.to_owned(),
+            }),
         )),
     )
     .parse(i)
 }
 
-pub(crate) fn parse<'a, E>(i: &'a str) -> IResult<&'a str, PlatformPredicate<'a>, E>
+pub(crate) fn parse<'a, E>(i: &'a str) -> IResult<&'a str, PlatformExpr, E>
 where
     E: ParseError<&'a str> + ContextError<&'a str>,
 {
@@ -165,7 +170,9 @@ where
                 keyword("cfg"),
                 cut(delimited(sep('('), parse_predicate, sep(')'))),
             ),
-            map(atom, |triple| PlatformPredicate::Bool { key: triple }),
+            map(atom, |triple| PlatformExpr::Bool {
+                key: triple.to_owned(),
+            }),
         )),
     )
     .parse(i)
@@ -174,7 +181,7 @@ where
 #[cfg(test)]
 mod test {
     use crate::cfg;
-    use crate::platform::PlatformPredicate::*;
+    use crate::platform::PlatformExpr::*;
 
     #[test]
     fn test_unix() {
@@ -208,7 +215,15 @@ mod test {
     fn test_atom() {
         let res = cfg::parse::<(_, nom::error::ErrorKind)>("cfg(  foobar  )");
         println!("res = {:?}", res);
-        assert_eq!(res, Ok(("", Bool { key: "foobar" })))
+        assert_eq!(
+            res,
+            Ok((
+                "",
+                Bool {
+                    key: "foobar".to_owned(),
+                }
+            ))
+        )
     }
 
     #[test]
@@ -222,9 +237,11 @@ mod test {
                 "",
                 Any(vec![
                     Bool {
-                        key: "windows_raw_dylib",
+                        key: "windows_raw_dylib".to_owned(),
                     },
-                    Bool { key: "windows-xp" },
+                    Bool {
+                        key: "windows-xp".to_owned(),
+                    },
                 ]),
             )),
         )
@@ -239,8 +256,8 @@ mod test {
             Ok((
                 "",
                 Value {
-                    key: "feature",
-                    value: "bloop"
+                    key: "feature".to_owned(),
+                    value: "bloop".to_owned(),
                 }
             ))
         )
@@ -255,8 +272,8 @@ mod test {
             Ok((
                 "",
                 Value {
-                    key: "target_env",
-                    value: ""
+                    key: "target_env".to_owned(),
+                    value: "".to_owned(),
                 }
             ))
         )
@@ -274,13 +291,13 @@ mod test {
                 "",
                 All(vec!(
                     Not(Box::new(Value {
-                        key: "target_os",
-                        value: "macos"
+                        key: "target_os".to_owned(),
+                        value: "macos".to_owned(),
                     })),
                     Not(Box::new(Windows)),
                     Not(Box::new(Value {
-                        key: "target_os",
-                        value: "ios"
+                        key: "target_os".to_owned(),
+                        value: "ios".to_owned(),
                     }))
                 ))
             ))
@@ -300,17 +317,17 @@ mod test {
                 All(vec![
                     Any(vec![
                         Value {
-                            key: "target_arch",
-                            value: "x86_64"
+                            key: "target_arch".to_owned(),
+                            value: "x86_64".to_owned(),
                         },
                         Value {
-                            key: "target_arch",
-                            value: "aarch64"
+                            key: "target_arch".to_owned(),
+                            value: "aarch64".to_owned(),
                         }
                     ]),
                     Value {
-                        key: "target_os",
-                        value: "hermit"
+                        key: "target_os".to_owned(),
+                        value: "hermit".to_owned(),
                     }
                 ])
             ))

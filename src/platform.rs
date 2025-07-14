@@ -212,34 +212,16 @@ impl Debug for PlatformName {
 
 /// A Cargo-style platform predicate expression
 /// such as `cfg(target_arch = "z80")`.
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-#[derive(Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct PlatformExpr(String);
-
-impl From<String> for PlatformExpr {
-    fn from(s: String) -> Self {
-        PlatformExpr(s)
-    }
-}
-
-impl Display for PlatformExpr {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(&self.0, fmt)
-    }
-}
-
-/// Platform predicate which can be matched against a PlatformConfig
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum PlatformPredicate<'a> {
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum PlatformExpr {
     // Operators
-    Any(Vec<PlatformPredicate<'a>>),
-    All(Vec<PlatformPredicate<'a>>),
-    Not(Box<PlatformPredicate<'a>>),
+    Any(Vec<PlatformExpr>),
+    All(Vec<PlatformExpr>),
+    Not(Box<PlatformExpr>),
 
     // Predicates
-    Value { key: &'a str, value: &'a str },
-    Bool { key: &'a str },
+    Value { key: String, value: String },
+    Bool { key: String },
 
     // Helpers
     Unix,
@@ -265,42 +247,69 @@ impl Display for PredicateParseError {
 
 impl error::Error for PredicateParseError {}
 
-impl<'a> PlatformPredicate<'a> {
-    pub fn parse(input: &'a PlatformExpr) -> anyhow::Result<PlatformPredicate<'a>> {
-        let err = match cfg::parse::<VerboseError<&str>>(&input.0) {
+impl PlatformExpr {
+    pub fn parse(input: &str) -> anyhow::Result<PlatformExpr> {
+        let err = match cfg::parse::<VerboseError<&str>>(input) {
             Ok(("", pred)) => return Ok(pred),
             Ok((rest, _)) => PredicateParseError::TrailingJunk(rest.to_string()),
             Err(nom::Err::Incomplete(_)) => PredicateParseError::Incomplete,
             Err(nom::Err::Error(err)) | Err(nom::Err::Failure(err)) => {
-                PredicateParseError::ParseError(convert_error(input.0.as_str(), err))
+                PredicateParseError::ParseError(convert_error(input, err))
             }
         };
         Err(anyhow::Error::new(err).context(format!("Bad platform expression `{input}`")))
     }
 
     pub fn eval(&self, config: &PlatformConfig) -> bool {
-        use PlatformPredicate::*;
-
         match self {
-            Bool { key } => config.cfg.contains_key(*key),
-            Value { key: "feature", .. } => {
-                // [target.'cfg(feature = "...")'.dependencies] never get applied by Cargo
-                false
+            PlatformExpr::Bool { key } => config.cfg.contains_key(key),
+            PlatformExpr::Value { key, value } => {
+                if key == "feature" {
+                    // [target.'cfg(feature = "...")'.dependencies] never get applied by Cargo
+                    false
+                } else {
+                    config.cfg.get(key).is_some_and(|set| set.contains(value))
+                }
             }
-            Value { key, value } => config.cfg.get(*key).is_some_and(|set| set.contains(*value)),
-            Not(pred) => !pred.eval(config),
-            Any(preds) => preds.iter().any(|pred| pred.eval(config)),
-            All(preds) => preds.iter().all(|pred| pred.eval(config)),
-            Unix => PlatformPredicate::Value {
-                key: "target_family",
-                value: "unix",
+            PlatformExpr::Not(pred) => !pred.eval(config),
+            PlatformExpr::Any(preds) => preds.iter().any(|pred| pred.eval(config)),
+            PlatformExpr::All(preds) => preds.iter().all(|pred| pred.eval(config)),
+            PlatformExpr::Unix => PlatformExpr::Value {
+                key: "target_family".to_owned(),
+                value: "unix".to_owned(),
             }
             .eval(config),
-            Windows => PlatformPredicate::Value {
-                key: "target_family",
-                value: "windows",
+            PlatformExpr::Windows => PlatformExpr::Value {
+                key: "target_family".to_owned(),
+                value: "windows".to_owned(),
             }
             .eval(config),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for PlatformExpr {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PlatformExprVisitor;
+
+        impl<'de> Visitor<'de> for PlatformExprVisitor {
+            type Value = PlatformExpr;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("cfg string")
+            }
+
+            fn visit_str<E>(self, string: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                PlatformExpr::parse(string).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(PlatformExprVisitor)
     }
 }

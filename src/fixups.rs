@@ -65,7 +65,6 @@ use crate::path::normalize_path;
 use crate::path::normalized_extend_path;
 use crate::path::relative_path;
 use crate::platform::PlatformName;
-use crate::platform::PlatformPredicate;
 use crate::subtarget::Subtarget;
 
 mod buildscript;
@@ -143,7 +142,7 @@ impl<'meta> FixupsCache<'meta> {
 }
 
 impl<'meta> Fixups<'meta> {
-    fn configs(&self, platform_name: &PlatformName) -> anyhow::Result<Vec<&FixupConfig>> {
+    fn configs(&self, platform_name: &PlatformName) -> Vec<&FixupConfig> {
         let mut configs = Vec::new();
 
         if self
@@ -155,15 +154,14 @@ impl<'meta> Fixups<'meta> {
         }
 
         for (platform_expr, fixup) in &self.fixup_config.platform_fixup {
-            let predicate = PlatformPredicate::parse(platform_expr)?;
             if fixup.version_applies(&self.package.version)
-                && predicate.eval(&self.config.platform[platform_name])
+                && platform_expr.eval(&self.config.platform[platform_name])
             {
                 configs.push(fixup);
             }
         }
 
-        Ok(configs)
+        configs
     }
 
     // Return true if the script applies to this target.
@@ -315,7 +313,7 @@ impl<'meta> Fixups<'meta> {
 
         for platform_name in compatible_platforms {
             let mut has_explicit_buildscript_fixup = false;
-            for fixup in self.configs(platform_name)? {
+            for fixup in self.configs(platform_name) {
                 if !fixup.buildscript.defaulted_to_empty {
                     has_explicit_buildscript_fixup = true;
                     break;
@@ -346,7 +344,7 @@ impl<'meta> Fixups<'meta> {
         let mut library_fixups = BTreeSet::new();
         let mut buildscript_platforms = BTreeSet::new();
         for &platform_name in compatible_platforms {
-            for fixup in self.configs(platform_name)? {
+            for fixup in self.configs(platform_name) {
                 if library_fixups.insert(&raw const *fixup) {
                     cxx_library.extend(&fixup.cxx_library);
                     prebuilt_cxx_library.extend(&fixup.prebuilt_cxx_library);
@@ -572,7 +570,7 @@ impl<'meta> Fixups<'meta> {
                 &buildscript_platforms,
                 |platform_name| {
                     let mut build_cargo_env = BTreeMap::new();
-                    for fixup in self.configs(platform_name)? {
+                    for fixup in self.configs(platform_name) {
                         for cargo_env in fixup.cargo_env.iter() {
                             match cargo_env.purpose() {
                                 CargoEnvPurpose::BuildOnly | CargoEnvPurpose::BuildAndRun => {}
@@ -600,7 +598,7 @@ impl<'meta> Fixups<'meta> {
                 &buildscript_platforms,
                 |platform_name| {
                     let mut run_cargo_env = BTreeMap::new();
-                    for fixup in self.configs(platform_name)? {
+                    for fixup in self.configs(platform_name) {
                         for cargo_env in fixup.cargo_env.iter() {
                             match cargo_env.purpose() {
                                 CargoEnvPurpose::RunOnly | CargoEnvPurpose::BuildAndRun => {}
@@ -624,7 +622,7 @@ impl<'meta> Fixups<'meta> {
                 &buildscript_platforms,
                 |platform_name| {
                     let mut buildscript_run_env = BTreeMap::new();
-                    for fixup in self.configs(platform_name)? {
+                    for fixup in self.configs(platform_name) {
                         if let Some(BuildscriptRun { env }) = &fixup.buildscript.run {
                             buildscript_run_env.extend(env);
                         }
@@ -658,7 +656,7 @@ impl<'meta> Fixups<'meta> {
         let mut features = index.resolved_features(self.package, platform_name);
 
         // Apply extra feature fixups.
-        for fixup in self.configs(platform_name)? {
+        for fixup in self.configs(platform_name) {
             for feature in &fixup.features {
                 features.insert(feature);
             }
@@ -672,7 +670,7 @@ impl<'meta> Fixups<'meta> {
         platform_name: &PlatformName,
         feature: &str,
     ) -> anyhow::Result<bool> {
-        for fixup in self.configs(platform_name)? {
+        for fixup in self.configs(platform_name) {
             if fixup.omit_features.contains(feature) {
                 return Ok(true);
             }
@@ -687,7 +685,7 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<BTreeSet<String>> {
         let mut cfgs = BTreeSet::new();
 
-        for config in self.configs(platform_name)? {
+        for config in self.configs(platform_name) {
             for cfg in &config.cfgs {
                 cfgs.insert(cfg.clone());
             }
@@ -699,7 +697,7 @@ impl<'meta> Fixups<'meta> {
     pub fn compute_rustc_flags(&self, platform_name: &PlatformName) -> anyhow::Result<Vec<String>> {
         let mut rustc_flags = Vec::new();
 
-        for config in self.configs(platform_name)? {
+        for config in self.configs(platform_name) {
             rustc_flags.extend_from_slice(&config.rustc_flags);
         }
 
@@ -712,7 +710,7 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<Vec<BTreeMap<String, Vec<String>>>> {
         let mut rustc_flags_select = Vec::new();
 
-        for config in self.configs(platform_name)? {
+        for config in self.configs(platform_name) {
             rustc_flags_select.extend_from_slice(&config.rustc_flags_select);
         }
 
@@ -743,7 +741,7 @@ impl<'meta> Fixups<'meta> {
 
         // Collect fixups.
         let mut omit_deps = HashSet::new();
-        for fixup in self.configs(platform_name)? {
+        for fixup in self.configs(platform_name) {
             let fixup_omit_deps;
             let fixup_extra_deps;
             if target.crate_bin() && target.kind_custom_build() {
@@ -847,7 +845,7 @@ impl<'meta> Fixups<'meta> {
     }
 
     pub fn omit_dep(&self, platform_name: &PlatformName, dep: &str) -> anyhow::Result<bool> {
-        for fixup in self.configs(platform_name)? {
+        for fixup in self.configs(platform_name) {
             if fixup.omit_deps.contains(dep) {
                 return Ok(true);
             }
@@ -864,7 +862,7 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<BTreeMap<String, StringOrPath>> {
         let mut ret = BTreeMap::new();
 
-        for config in self.configs(platform_name)? {
+        for config in self.configs(platform_name) {
             ret.extend(
                 config
                     .env
@@ -991,11 +989,11 @@ impl<'meta> Fixups<'meta> {
             ret.insert(src);
         }
 
-        for fixup in self.configs(platform_name)? {
+        for fixup in self.configs(platform_name) {
             ret.extend(self.compute_extra_srcs(&fixup.extra_srcs)?);
         }
 
-        for fixup in self.configs(platform_name)? {
+        for fixup in self.configs(platform_name) {
             let mapped_files = fixup.overlay_and_mapped_files(&self.fixup_dir)?;
             ret.retain(|path| {
                 let path_in_crate = relative_path(&manifest_rel, path);
@@ -1068,7 +1066,7 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<BTreeMap<SubtargetOrPath, BuckPath>> {
         let mut ret = BTreeMap::new();
 
-        for config in self.configs(platform_name)? {
+        for config in self.configs(platform_name) {
             for (k, v) in &config.extra_mapped_srcs {
                 ret.insert(
                     // If the mapped source is target-like, take it as-is since
@@ -1112,7 +1110,7 @@ impl<'meta> Fixups<'meta> {
         platform_name: &PlatformName,
     ) -> anyhow::Result<bool> {
         if self.buildscript_target().is_some() {
-            for config in self.configs(platform_name)? {
+            for config in self.configs(platform_name) {
                 if config.buildscript.run.is_some() {
                     return Ok(true);
                 }
@@ -1128,7 +1126,7 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<Option<String>> {
         let mut link_style = None;
 
-        for config in self.configs(platform_name)? {
+        for config in self.configs(platform_name) {
             if config.link_style.is_some() {
                 link_style = config.link_style.as_ref();
             }
@@ -1144,7 +1142,7 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<Option<String>> {
         let mut preferred_linkage = None;
 
-        for config in self.configs(platform_name)? {
+        for config in self.configs(platform_name) {
             if config.preferred_linkage.is_some() {
                 preferred_linkage = config.preferred_linkage.as_ref();
             }
@@ -1160,7 +1158,7 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<Vec<String>> {
         let mut linker_flags = Vec::new();
 
-        for config in self.configs(platform_name)? {
+        for config in self.configs(platform_name) {
             linker_flags.extend_from_slice(&config.linker_flags);
         }
 
