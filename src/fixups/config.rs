@@ -18,11 +18,14 @@ use anyhow::Context as _;
 use anyhow::bail;
 use serde::Deserialize;
 use serde::Deserializer;
+use serde::de::DeserializeSeed;
 use serde::de::Error as _;
 use serde::de::MapAccess;
 use serde::de::SeqAccess;
 use serde::de::Visitor;
+use serde::de::value::MapAccessDeserializer;
 use serde::de::value::SeqAccessDeserializer;
+use serde::de::value::StringDeserializer;
 use strum::IntoEnumIterator as _;
 use walkdir::WalkDir;
 
@@ -85,7 +88,8 @@ impl FixupConfigFile {
         };
 
         log::debug!("read fixups from {}", fixup_path.display());
-        let fixup_config: FixupConfigFile = toml::from_str(&content)
+        let fixup_config = toml::Deserializer::parse(&content)
+            .and_then(|de| de.deserialize_map(FixupConfigFileVisitor))
             .with_context(|| format!("Failed to parse {}", fixup_path.display()))?;
 
         if fixup_config.custom_visibility.is_some() && !public {
@@ -342,7 +346,7 @@ impl<'de> Visitor<'de> for CargoEnvsVisitor {
         A: SeqAccess<'de>,
     {
         let de = SeqAccessDeserializer::new(seq);
-        Ok(CargoEnvs::Some(<_>::deserialize(de)?))
+        Ok(CargoEnvs::Some(Deserialize::deserialize(de)?))
     }
 }
 
@@ -371,95 +375,123 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
         formatter.write_str("struct FixupConfigFile")
     }
 
-    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
     where
         M: MapAccess<'de>,
     {
-        let mut custom_visibility = None;
-        let mut omit_targets = None;
-        let mut precise_srcs = None;
-        let mut python_ext = None;
-        let mut export_sources = None;
-        let mut compatible_with = None;
-        let mut target_compatible_with = None;
-        let mut base = serde_json::Map::new();
-        let mut platform_fixup = BTreeMap::new();
+        struct FixupsMap<M> {
+            map: M,
+            custom_visibility: Option<CustomVisibility>,
+            omit_targets: Option<BTreeSet<String>>,
+            precise_srcs: Option<bool>,
+            python_ext: Option<String>,
+            export_sources: Option<ExportSources>,
+            compatible_with: Option<Vec<RuleRef>>,
+            target_compatible_with: Option<Vec<RuleRef>>,
+            platform_fixup: BTreeMap<PlatformExpr, FixupConfig>,
+        }
 
-        while let Some(field) = map.next_key::<String>()? {
-            match field.as_str() {
-                "visibility" => {
-                    if custom_visibility.is_some() {
-                        return Err(M::Error::duplicate_field("visibility"));
+        impl<'de, M> MapAccess<'de> for &mut FixupsMap<M>
+        where
+            M: MapAccess<'de>,
+        {
+            type Error = M::Error;
+
+            fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
+            where
+                K: DeserializeSeed<'de>,
+            {
+                while let Some(field) = self.map.next_key::<String>()? {
+                    match field.as_str() {
+                        "visibility" => {
+                            if self.custom_visibility.is_some() {
+                                return Err(M::Error::duplicate_field("visibility"));
+                            }
+                            self.custom_visibility = Some(self.map.next_value()?);
+                        }
+                        "omit_targets" => {
+                            if self.omit_targets.is_some() {
+                                return Err(M::Error::duplicate_field("omit_targets"));
+                            }
+                            self.omit_targets = Some(self.map.next_value()?);
+                        }
+                        "precise_srcs" => {
+                            if self.precise_srcs.is_some() {
+                                return Err(M::Error::duplicate_field("precise_srcs"));
+                            }
+                            self.precise_srcs = Some(self.map.next_value()?);
+                        }
+                        "python_ext" => {
+                            if self.python_ext.is_some() {
+                                return Err(M::Error::duplicate_field("python_ext"));
+                            }
+                            self.python_ext = Some(self.map.next_value()?);
+                        }
+                        "export_sources" => {
+                            if self.export_sources.is_some() {
+                                return Err(M::Error::duplicate_field("export_sources"));
+                            }
+                            self.export_sources = Some(self.map.next_value()?);
+                        }
+                        "compatible_with" => {
+                            if self.compatible_with.is_some() {
+                                return Err(M::Error::duplicate_field("compatible_with"));
+                            }
+                            self.compatible_with = Some(self.map.next_value()?);
+                        }
+                        "target_compatible_with" => {
+                            if self.target_compatible_with.is_some() {
+                                return Err(M::Error::duplicate_field("target_compatible_with"));
+                            }
+                            self.target_compatible_with = Some(self.map.next_value()?);
+                        }
+                        _ => {
+                            if field.starts_with("cfg(") {
+                                let platform_expr = PlatformExpr::from(field);
+                                let fixup_config: FixupConfig = self.map.next_value()?;
+                                self.platform_fixup.insert(platform_expr, fixup_config);
+                            } else {
+                                return seed.deserialize(StringDeserializer::new(field)).map(Some);
+                            }
+                        }
                     }
-                    custom_visibility = Some(map.next_value()?);
                 }
-                "omit_targets" => {
-                    if omit_targets.is_some() {
-                        return Err(M::Error::duplicate_field("omit_targets"));
-                    }
-                    omit_targets = Some(map.next_value()?);
-                }
-                "precise_srcs" => {
-                    if precise_srcs.is_some() {
-                        return Err(M::Error::duplicate_field("precise_srcs"));
-                    }
-                    precise_srcs = Some(map.next_value()?);
-                }
-                "python_ext" => {
-                    if python_ext.is_some() {
-                        return Err(M::Error::duplicate_field("python_ext"));
-                    }
-                    python_ext = Some(map.next_value()?);
-                }
-                "export_sources" => {
-                    if export_sources.is_some() {
-                        return Err(M::Error::duplicate_field("export_sources"));
-                    }
-                    export_sources = Some(map.next_value()?);
-                }
-                "compatible_with" => {
-                    if compatible_with.is_some() {
-                        return Err(M::Error::duplicate_field("compatible_with"));
-                    }
-                    compatible_with = Some(map.next_value()?);
-                }
-                "target_compatible_with" => {
-                    if target_compatible_with.is_some() {
-                        return Err(M::Error::duplicate_field("target_compatible_with"));
-                    }
-                    target_compatible_with = Some(map.next_value()?);
-                }
-                _ => {
-                    if field.starts_with("cfg(") {
-                        let platform_expr = PlatformExpr::from(field);
-                        let fixup_config: FixupConfig = map.next_value()?;
-                        platform_fixup.insert(platform_expr, fixup_config);
-                    } else {
-                        base.insert(field, map.next_value()?);
-                    }
-                }
+                Ok(None)
+            }
+
+            fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
+            where
+                V: DeserializeSeed<'de>,
+            {
+                self.map.next_value_seed(seed)
             }
         }
 
-        Ok(FixupConfigFile {
-            custom_visibility,
-            omit_targets: omit_targets.unwrap_or_else(BTreeSet::new),
-            precise_srcs,
-            python_ext,
-            export_sources,
-            compatible_with: compatible_with.unwrap_or_else(Vec::new),
-            target_compatible_with: target_compatible_with.unwrap_or_else(Vec::new),
-            base: FixupConfig::deserialize(base).map_err(M::Error::custom)?,
-            platform_fixup,
-        })
-    }
-}
+        let mut fields = FixupsMap {
+            map,
+            custom_visibility: None,
+            omit_targets: None,
+            precise_srcs: None,
+            python_ext: None,
+            export_sources: None,
+            compatible_with: None,
+            target_compatible_with: None,
+            platform_fixup: BTreeMap::new(),
+        };
 
-impl<'de> Deserialize<'de> for FixupConfigFile {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_map(FixupConfigFileVisitor)
+        let de = MapAccessDeserializer::new(&mut fields);
+        let base = FixupConfig::deserialize(de)?;
+
+        Ok(FixupConfigFile {
+            custom_visibility: fields.custom_visibility,
+            omit_targets: fields.omit_targets.unwrap_or_else(BTreeSet::new),
+            precise_srcs: fields.precise_srcs,
+            python_ext: fields.python_ext,
+            export_sources: fields.export_sources,
+            compatible_with: fields.compatible_with.unwrap_or_else(Vec::new),
+            target_compatible_with: fields.target_compatible_with.unwrap_or_else(Vec::new),
+            base,
+            platform_fixup: fields.platform_fixup,
+        })
     }
 }
