@@ -494,18 +494,28 @@ fn generate_target_rules<'scope>(
             srcs.extend(glob.walk(manifest_dir));
         }
 
-        unzip_platform(
-            config,
-            &compatible_platforms,
-            &mut base,
-            &mut perplat,
-            |rule, srcs| {
-                log::debug!("pkg {} target {}: adding srcs {:?}", pkg, tgt.name, srcs);
-                rule.srcs.extend(srcs.into_iter().map(BuckPath))
-            },
-            fixups.compute_srcs(srcs)?,
-        )
-        .context("srcs")?;
+        let mut platform_srcs = Vec::new();
+        let mut src_in_how_many_platforms = HashMap::new();
+        for &platform_name in &compatible_platforms {
+            let srcs = fixups.compute_srcs(platform_name, &srcs)?;
+            for path in &srcs {
+                *src_in_how_many_platforms.entry(path.clone()).or_insert(0) += 1;
+            }
+            platform_srcs.push((platform_name, srcs));
+        }
+        for &(platform_name, ref srcs) in &platform_srcs {
+            for path in srcs {
+                if src_in_how_many_platforms[path] == compatible_platforms.len() {
+                    base.srcs.insert(BuckPath(path.to_owned()));
+                } else {
+                    perplat
+                        .entry(platform_name.clone())
+                        .or_insert_with(PlatformRustCommon::default)
+                        .srcs
+                        .insert(BuckPath(path.to_owned()));
+                }
+            }
+        }
     } else if let VendorConfig::LocalRegistry = config.vendor {
         let extract_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
         base.srcs

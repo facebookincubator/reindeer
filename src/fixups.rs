@@ -965,10 +965,9 @@ impl<'meta> Fixups<'meta> {
     /// `srcs` is the normal source glob rooted at the package's manifest dir.
     pub fn compute_srcs(
         &self,
-        srcs: Vec<PathBuf>,
-    ) -> anyhow::Result<Vec<(Option<PlatformExpr>, BTreeSet<PathBuf>)>> {
-        let mut ret: Vec<(Option<PlatformExpr>, BTreeSet<PathBuf>)> = vec![];
-
+        platform_name: &PlatformName,
+        naive_srcs: &[PathBuf],
+    ) -> anyhow::Result<BTreeSet<PathBuf>> {
         // This function is only used in vendoring mode, so it's guaranteed that
         // manifest_dir is a subdirectory of third_party_dir.
         assert!(
@@ -977,97 +976,34 @@ impl<'meta> Fixups<'meta> {
         );
         let manifest_rel = relative_path(self.third_party_dir, self.manifest_dir);
 
-        log::debug!(
-            "pkg {}, srcs {:?}, manifest_rel {}",
-            self.package,
-            srcs,
-            manifest_rel.display()
-        );
-
-        // Do any platforms have an overlay or platform-specific mapped srcs or
-        // omitted sources? If so, the srcs are per-platform.
-        let needs_per_platform_srcs =
-            self.fixup_config
-                .configs(&self.package.version)
-                .any(|(platform, config)| {
-                    platform.is_some()
-                        && (config.overlay.is_some()
-                            || !config.extra_mapped_srcs.is_empty()
-                            || !config.omit_srcs.is_empty())
-                });
-
-        let mut common_files = HashSet::new();
-        for path in &srcs {
+        let mut ret = BTreeSet::new();
+        for path in naive_srcs {
             let mut src = manifest_rel.clone();
             normalized_extend_path(&mut src, path);
-            common_files.insert(src);
-        }
-        if let Some(base) = self.fixup_config.base(&self.package.version) {
-            common_files.extend(self.compute_extra_srcs(&base.extra_srcs)?);
+            ret.insert(src);
         }
 
-        let no_omit_srcs;
-        let (common_overlay_files, common_omit_srcs) =
-            match self.fixup_config.base(&self.package.version) {
-                Some(base) => (
-                    base.overlay_and_mapped_files(&self.fixup_dir)?,
-                    &base.omit_srcs,
-                ),
-                None => {
-                    no_omit_srcs = TrackedGlobSet::default();
-                    (HashSet::default(), &no_omit_srcs)
-                }
-            };
-
-        if !needs_per_platform_srcs {
-            let mut set = BTreeSet::new();
-
-            for file in &common_files {
-                let path_in_crate = relative_path(&manifest_rel, file);
-                if !common_overlay_files.contains(&path_in_crate)
-                    && !common_omit_srcs.is_match(&path_in_crate)
-                {
-                    set.insert(file.clone());
-                }
+        for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
+            if self.fixup_applies(platform, platform_name)? {
+                ret.extend(self.compute_extra_srcs(&fixup.extra_srcs)?);
             }
-
-            ret.push((None, set));
         }
 
-        for (platform, config) in self.fixup_config.platform_configs(&self.package.version) {
-            let mut set = BTreeSet::new();
-
-            let mut files = HashSet::new();
-            files.extend(self.compute_extra_srcs(&config.extra_srcs)?);
-
-            let mut overlay_files = config.overlay_and_mapped_files(&self.fixup_dir)?;
-
-            // If any platform has its own overlay, then we need to treat all sources
-            // as platform-specific to handle any collisions.
-            if needs_per_platform_srcs {
-                overlay_files.extend(common_overlay_files.clone());
-                files.extend(common_files.clone());
-            }
-
-            for file in files {
-                let path_in_crate = relative_path(&manifest_rel, &file);
-                if !overlay_files.contains(&path_in_crate)
-                    && !common_omit_srcs.is_match(&path_in_crate)
-                    && !config.omit_srcs.is_match(&path_in_crate)
-                {
-                    set.insert(file);
-                }
-            }
-
-            if !set.is_empty() {
-                ret.push((Some(platform.clone()), set));
+        for (platform, fixup) in self.fixup_config.configs(&self.package.version) {
+            if self.fixup_applies(platform, platform_name)? {
+                let mapped_files = fixup.overlay_and_mapped_files(&self.fixup_dir)?;
+                ret.retain(|path| {
+                    let path_in_crate = relative_path(&manifest_rel, path);
+                    !mapped_files.contains(&path_in_crate)
+                        && !fixup.omit_srcs.is_match(&path_in_crate)
+                });
             }
         }
 
         log::debug!(
-            "pkg {}, srcs {:?}, manifest_rel {} => {:#?}",
+            "pkg {}, naive_srcs {:?}, manifest_rel {} => {:#?}",
             self.package,
-            srcs,
+            naive_srcs,
             manifest_rel.display(),
             ret
         );
