@@ -51,19 +51,17 @@ checksum_exclude = []
 #
 # A platform's name, like "linux-x86_64", corresponds to one of the strings
 # produced by the `select` expression in prelude/rust/cargo_package.bzl. If you
-# set up your own platforms with custom names, you will also need your own
-# macros that call into cargo_package.bzl's platform handling code with your own
-# `select` that recognizes your custom platforms. For example:
+# set up your own platforms with custom names, you will also need a PACKAGE file
+# that defines how to recognize those platforms using a `select`.
 #
-#     load("@prelude//rust:cargo_package.bzl", "apply_platform_attrs", "cargo")
+#     load("@prelude//rust:cargo_package.bzl", "DEFAULT_REINDEER_PLATFORMS", "set_reindeer_platforms")
 #
-#     PLATFORMS = select({
-#         ...
-#     })
-#
-#     def rust_library(platform = {}, **kwargs):
-#         kwargs = apply_platform_attrs(platform, kwargs, PLATFORMS)
-#         cargo.rust_library(**kwargs)
+#     set_reindeer_platforms(
+#         select({
+#             "DEFAULT": DEFAULT_REINDEER_PLATFORMS,
+#             "ovr_config//cpu:arm32-embedded-fpu": "thumbv7em-none-eabihf",
+#         })
+#     )
 #
 # If `target = "..."` is provided for a platform (like the ones here), Reindeer
 # will run `rustc --print=cfg --target={target}` to obtain platform predicates,
