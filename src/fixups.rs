@@ -10,6 +10,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
+use std::collections::btree_map;
 use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
@@ -50,7 +51,7 @@ use crate::fixups::buildscript::ExportedHeaders;
 use crate::fixups::buildscript::PrebuiltCxxLibraryFixup;
 use crate::fixups::config::CargoEnv;
 use crate::fixups::config::CargoEnvPurpose;
-use crate::fixups::config::CargoEnvs;
+pub use crate::fixups::config::CargoEnvs;
 use crate::fixups::config::CustomVisibility;
 pub use crate::fixups::config::ExportSources;
 use crate::fixups::config::FixupConfig;
@@ -565,21 +566,18 @@ impl<'meta> Fixups<'meta> {
                 &buildscript_platforms,
                 |platform_name| {
                     let mut build_cargo_env = BTreeMap::new();
-                    for fixup in self.configs(platform_name) {
-                        for cargo_env in fixup.cargo_env.iter() {
-                            match cargo_env.purpose() {
-                                CargoEnvPurpose::BuildOnly | CargoEnvPurpose::BuildAndRun => {}
-                                CargoEnvPurpose::RunOnly => continue,
-                            }
-                            let value = if cargo_env == CargoEnv::CARGO_CRATE_NAME {
-                                Some(StringOrPath::String("build_script_build".to_owned()))
-                            } else {
-                                let required = !matches!(fixup.cargo_env, CargoEnvs::All);
-                                self.cargo_env_value(cargo_env, required, target)?
-                            };
-                            if let Some(value) = value {
-                                build_cargo_env.insert(cargo_env, value);
-                            }
+                    for (cargo_env, required) in self.cargo_env(platform_name) {
+                        match cargo_env.purpose() {
+                            CargoEnvPurpose::BuildOnly | CargoEnvPurpose::BuildAndRun => {}
+                            CargoEnvPurpose::RunOnly => continue,
+                        }
+                        let value = if cargo_env == CargoEnv::CARGO_CRATE_NAME {
+                            Some(StringOrPath::String("build_script_build".to_owned()))
+                        } else {
+                            self.cargo_env_value(cargo_env, required, target)?
+                        };
+                        if let Some(value) = value {
+                            build_cargo_env.insert(cargo_env, value);
                         }
                     }
                     Ok(build_cargo_env)
@@ -593,17 +591,14 @@ impl<'meta> Fixups<'meta> {
                 &buildscript_platforms,
                 |platform_name| {
                     let mut run_cargo_env = BTreeMap::new();
-                    for fixup in self.configs(platform_name) {
-                        for cargo_env in fixup.cargo_env.iter() {
-                            match cargo_env.purpose() {
-                                CargoEnvPurpose::RunOnly | CargoEnvPurpose::BuildAndRun => {}
-                                CargoEnvPurpose::BuildOnly => continue,
-                            }
-                            let required = !matches!(fixup.cargo_env, CargoEnvs::All);
-                            let value = self.cargo_env_value(cargo_env, required, target)?;
-                            if let Some(value) = value {
-                                run_cargo_env.insert(cargo_env, value);
-                            }
+                    for (cargo_env, required) in self.cargo_env(platform_name) {
+                        match cargo_env.purpose() {
+                            CargoEnvPurpose::RunOnly | CargoEnvPurpose::BuildAndRun => {}
+                            CargoEnvPurpose::BuildOnly => continue,
+                        }
+                        let value = self.cargo_env_value(cargo_env, required, target)?;
+                        if let Some(value) = value {
+                            run_cargo_env.insert(cargo_env, value);
                         }
                     }
                     Ok(run_cargo_env)
@@ -864,31 +859,56 @@ impl<'meta> Fixups<'meta> {
                     .iter()
                     .map(|(k, v)| (k.clone(), StringOrPath::String(v.clone()))),
             );
+        }
 
-            for cargo_env in config.cargo_env.iter() {
-                match cargo_env {
-                    // Not set for builds, only build script execution
-                    CargoEnv::CARGO_MANIFEST_LINKS => continue,
-                    CargoEnv::CARGO_CRATE_NAME
-                    | CargoEnv::CARGO_MANIFEST_DIR
-                    | CargoEnv::CARGO_PKG_AUTHORS
-                    | CargoEnv::CARGO_PKG_DESCRIPTION
-                    | CargoEnv::CARGO_PKG_NAME
-                    | CargoEnv::CARGO_PKG_REPOSITORY
-                    | CargoEnv::CARGO_PKG_VERSION
-                    | CargoEnv::CARGO_PKG_VERSION_MAJOR
-                    | CargoEnv::CARGO_PKG_VERSION_MINOR
-                    | CargoEnv::CARGO_PKG_VERSION_PATCH
-                    | CargoEnv::CARGO_PKG_VERSION_PRE => {}
-                }
-                let required = !matches!(config.cargo_env, CargoEnvs::All);
+        for (cargo_env, required) in self.cargo_env(platform_name) {
+            match cargo_env {
+                // Not set for builds, only build script execution
+                CargoEnv::CARGO_MANIFEST_LINKS => continue,
+                CargoEnv::CARGO_CRATE_NAME
+                | CargoEnv::CARGO_MANIFEST_DIR
+                | CargoEnv::CARGO_PKG_AUTHORS
+                | CargoEnv::CARGO_PKG_DESCRIPTION
+                | CargoEnv::CARGO_PKG_NAME
+                | CargoEnv::CARGO_PKG_REPOSITORY
+                | CargoEnv::CARGO_PKG_VERSION
+                | CargoEnv::CARGO_PKG_VERSION_MAJOR
+                | CargoEnv::CARGO_PKG_VERSION_MINOR
+                | CargoEnv::CARGO_PKG_VERSION_PATCH
+                | CargoEnv::CARGO_PKG_VERSION_PRE => {}
+            }
+            if let btree_map::Entry::Vacant(entry) = ret.entry(cargo_env.to_string()) {
                 if let Some(value) = self.cargo_env_value(cargo_env, required, target)? {
-                    ret.insert(cargo_env.to_string(), value);
+                    entry.insert(value);
                 }
             }
         }
 
         Ok(ret)
+    }
+
+    fn cargo_env(&self, platform_name: &PlatformName) -> BTreeMap<CargoEnv, bool> {
+        let mut cargo_env_required = None;
+
+        for config in self.configs(platform_name) {
+            if let Some(fixup_cargo_env) = &config.cargo_env {
+                let required = !matches!(fixup_cargo_env, CargoEnvs::All);
+                let cargo_env_required = cargo_env_required.get_or_insert_with(BTreeMap::new);
+                for cargo_env in fixup_cargo_env.iter() {
+                    *cargo_env_required.entry(cargo_env).or_insert(false) |= required;
+                }
+            }
+        }
+
+        let apply_default_cargo_env = cargo_env_required.is_none();
+        let mut cargo_env_required = cargo_env_required.unwrap_or_else(BTreeMap::new);
+        if apply_default_cargo_env {
+            for cargo_env in self.config.cargo_env.iter() {
+                cargo_env_required.entry(cargo_env).or_insert(false);
+            }
+        }
+
+        cargo_env_required
     }
 
     fn cargo_env_value(

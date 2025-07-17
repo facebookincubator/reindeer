@@ -189,8 +189,7 @@ pub struct FixupConfig {
     /// `true` means add all Cargo environment variables.
     /// `false` means add none.
     /// A list of environment variables names adds only those.
-    #[serde(default)]
-    pub cargo_env: CargoEnvs,
+    pub cargo_env: Option<CargoEnvs>,
     /// Path relative to fixups_dir with overlay filesystem
     /// Files in overlay logically add to or replace files in
     /// manifest dir, and therefore have the same directory

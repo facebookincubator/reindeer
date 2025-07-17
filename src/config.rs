@@ -35,6 +35,7 @@ use serde::de::Visitor;
 use serde::de::value::MapAccessDeserializer;
 
 use crate::Args;
+use crate::fixups::CargoEnvs;
 use crate::glob::TrackedGlobSet;
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformName;
@@ -88,6 +89,12 @@ pub struct Config {
     /// Use strict glob matching
     #[serde(default)]
     pub strict_globs: bool,
+
+    /// List of Cargo environment variables (like CARGO_PKG_AUTHORS) to provide
+    /// to crates by default, when not otherwise specified by a crate-specific
+    /// fixup. Default: none.
+    #[serde(default)]
+    pub cargo_env: CargoEnvs,
 
     #[serde(default)]
     pub cargo: CargoConfig,
