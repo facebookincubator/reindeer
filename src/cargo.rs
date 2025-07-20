@@ -13,7 +13,9 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::hash_map;
 use std::env;
 use std::fmt;
 use std::fmt::Debug;
@@ -125,6 +127,9 @@ fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
         &cli_config,
     )?;
 
+    // Load .cargo/config.toml (source replacements).
+    let source_config = cargo::sources::SourceConfigMap::new(&gctx)?;
+
     // Load workspace Cargo.toml.
     let workspace = cargo::core::Workspace::new(&paths.manifest_path, &gctx)?;
 
@@ -138,8 +143,28 @@ fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
         "});
     };
 
+    // Instantiate package sources.
+    let mut source_map = HashMap::new();
+    let yanked_whitelist = HashSet::new();
+    for pkg_id in resolve.iter() {
+        let source_id = pkg_id.source_id();
+        let hash_map::Entry::Vacant(entry) = source_map.entry(source_id) else {
+            continue;
+        };
+        let source = source_config.load(source_id, &yanked_whitelist)?;
+        assert_eq!(source.source_id(), source_id);
+        entry.insert(source);
+    }
+
+    // Load packages from each source into package registry.
+    let mut registry =
+        cargo::core::registry::PackageRegistry::new_with_source_config(&gctx, source_config)?;
+    for mut source in source_map.into_values() {
+        cargo::sources::source::Source::block_until_ready(&mut source)?;
+        registry.add_preloaded(source);
+    }
+
     // Resolve dependency graph.
-    let mut registry = workspace.package_registry()?;
     let keep_previous = None;
     let specs = [];
     let register_patches = true;
