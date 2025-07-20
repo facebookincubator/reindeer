@@ -7,8 +7,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::fmt;
 use std::fs;
 use std::iter;
@@ -16,6 +14,8 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
+use foldhash::HashMap;
+use foldhash::HashSet;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::de::DeserializeSeed;
@@ -245,7 +245,7 @@ impl FixupConfig {
                     .map(|ent| relative_path(&overlay_dir, ent.path()))
                     .collect()
             }
-            None => HashSet::new(),
+            None => HashSet::default(),
         };
 
         Ok(files)

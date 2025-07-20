@@ -9,12 +9,12 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::HashMap;
-use std::collections::HashSet;
 
 use anyhow::Context as _;
 use anyhow::bail;
 use cargo::core::PackageId;
+use foldhash::HashMap;
+use foldhash::HashSet;
 use semver::VersionReq;
 
 use crate::buck::Name;
@@ -120,7 +120,7 @@ impl<'meta> Index<'meta> {
             config,
             pkgid_to_pkg,
             pkgid_to_node: metadata.resolve.nodes.iter().map(|n| (n.id, n)).collect(),
-            pkgid_platform_features: HashMap::new(),
+            pkgid_platform_features: HashMap::default(),
             root_pkg,
             workspace_packages: workspace_members.iter().map(|x| x.id).collect(),
             workspace_members,
@@ -179,7 +179,7 @@ impl<'meta> Index<'meta> {
                 });
         }
 
-        let mut manifest_deps = HashMap::new();
+        let mut manifest_deps = HashMap::default();
         for (&pkgid, node) in &index.pkgid_to_node {
             for node_dep in &node.deps {
                 let manifest = index.pkgid_to_pkg[&node_dep.pkg];
@@ -307,7 +307,7 @@ impl<'meta> Index<'meta> {
         // Target must be the target for the given package.
         assert!(pkg.targets.contains(tgt));
 
-        let mut resolved_deps = HashMap::new();
+        let mut resolved_deps = HashMap::default();
 
         if let Some(resolve) = self.pkgid_platform_features.get(&(pkg.id, platform_name)) {
             for &(rename, dep_kind, dep_id) in &resolve.deps {

@@ -3211,6 +3211,7 @@ dependencies = [
  "dunce",
  "env_logger",
  "fnv",
+ "foldhash",
  "globset",
  "ignore",
  "indexmap 2.10.0",

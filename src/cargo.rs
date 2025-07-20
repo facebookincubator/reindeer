@@ -14,8 +14,6 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::collections::hash_map;
 use std::env;
 use std::fmt;
@@ -36,6 +34,8 @@ use anyhow::Context;
 use anyhow::bail;
 use cargo::core::PackageId;
 use cargo::util::interning::InternedString;
+use foldhash::HashMap;
+use foldhash::HashSet;
 use indoc::indoc;
 use semver::VersionReq;
 use serde::Deserialize;
@@ -152,9 +152,9 @@ fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
     };
 
     // Instantiate package sources.
-    let mut source_map = HashMap::new();
-    let mut shared_sources = HashMap::new();
-    let yanked_whitelist = HashSet::new();
+    let mut source_map = HashMap::default();
+    let mut shared_sources = HashMap::default();
+    let yanked_whitelist = std::collections::HashSet::new();
     for pkg_id in resolve.iter() {
         let source_id = pkg_id.source_id();
         let hash_map::Entry::Vacant(entry) = source_map.entry(source_id) else {
@@ -473,7 +473,7 @@ fn match_artifacts_kind_with_targets<'a>(
         &'a cargo::core::Target,
     )>,
 > {
-    let mut out = HashSet::new();
+    let mut out = HashSet::default();
     let artifact_requirements = artifact_dep.artifact().expect("artifact present");
     for artifact_kind in artifact_requirements.kinds() {
         let mut extend = |kind, filter: &dyn Fn(&&cargo::core::Target) -> bool| {

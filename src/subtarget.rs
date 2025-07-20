@@ -6,8 +6,8 @@
  */
 
 use std::collections::BTreeSet;
-use std::collections::HashMap;
 
+use foldhash::HashMap;
 use serde::Serialize;
 use serde::Serializer;
 
@@ -38,7 +38,7 @@ pub struct CollectSubtargets(HashMap<Name, BTreeSet<BuckPath>>);
 
 impl CollectSubtargets {
     pub fn new() -> Self {
-        CollectSubtargets(HashMap::new())
+        CollectSubtargets(HashMap::default())
     }
 
     pub fn insert(&mut self, item: &impl MaybeHasSubtarget) {

@@ -12,7 +12,6 @@
 //!
 //! [Modules]: https://doc.rust-lang.org/reference/items/modules.html
 
-use std::collections::HashSet;
 use std::error::Error as StdError;
 use std::fmt;
 use std::fs;
@@ -20,6 +19,7 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
+use foldhash::HashSet;
 use proc_macro2 as _; // To autocargo with our features (namely `span-locations`)
 use syn::visit::Visit;
 
@@ -88,7 +88,7 @@ pub fn crate_srcfiles(path: impl AsRef<Path>) -> Sources {
     let path = path.as_ref();
 
     let mut sources = Sources {
-        files: HashSet::new(),
+        files: HashSet::default(),
         errors: vec![],
     };
 
@@ -580,7 +580,7 @@ mod tests {
                 .into_iter()
                 .map(|x| x.to_string())
                 .collect::<HashSet<_>>(),
-            HashSet::<String>::new(),
+            HashSet::<String>::default(),
         );
     }
 
@@ -627,7 +627,7 @@ mod tests {
                 .into_iter()
                 .map(|x| x.to_string())
                 .collect::<HashSet<_>>(),
-            HashSet::<String>::new(),
+            HashSet::<String>::default(),
         );
     }
 
@@ -660,7 +660,7 @@ mod tests {
                 .into_iter()
                 .map(|x| x.to_string())
                 .collect::<HashSet<_>>(),
-            HashSet::<String>::new(),
+            HashSet::<String>::default(),
         );
     }
 }

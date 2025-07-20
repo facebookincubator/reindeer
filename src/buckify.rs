@@ -9,8 +9,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fs;
 use std::hash::Hash;
@@ -28,6 +26,8 @@ use anyhow::bail;
 use cached::proc_macro::cached;
 use cargo::core::PackageId;
 use fnv::FnvHasher;
+use foldhash::HashMap;
+use foldhash::HashSet;
 use itertools::Itertools;
 use url::Url;
 
@@ -94,7 +94,7 @@ where
         entries.push((platform_name, Vec::from_iter(collection)));
     }
 
-    let mut platform_multiplicity: HashMap<&Collection::Item, usize> = HashMap::new();
+    let mut platform_multiplicity: HashMap<&Collection::Item, usize> = HashMap::default();
     for (_, collection) in &entries {
         for value in collection {
             *platform_multiplicity.entry(value).or_insert(0) += 1;
@@ -558,7 +558,7 @@ fn generate_target_rules<'scope>(
     // Compute set of dependencies any rule we generate here will need. They will only
     // be emitted if we actually emit some rules below.
     let mut platform_deps = Vec::new();
-    let mut dep_in_how_many_platforms = HashMap::new();
+    let mut dep_in_how_many_platforms = HashMap::default();
     for &platform_name in &compatible_platforms {
         let deps = fixups.compute_deps(platform_name, index, tgt)?;
         for (_manifest, dep, rename, dep_kind) in &deps {
@@ -1050,7 +1050,7 @@ pub(crate) fn buckify(
         index,
         lockfile: &lockfile,
         fixups,
-        done: Mutex::new(HashSet::new()),
+        done: Mutex::new(HashSet::default()),
     };
     let rules = do_buckify(&context)?;
 

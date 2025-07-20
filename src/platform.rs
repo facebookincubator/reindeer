@@ -6,13 +6,13 @@
  */
 
 use std::collections::BTreeSet;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::error;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
 
+use foldhash::HashMap;
+use foldhash::HashSet;
 use nom_language::error::VerboseError;
 use nom_language::error::convert_error;
 use semver::Version;
@@ -60,7 +60,7 @@ where
         where
             M: MapAccess<'de>,
         {
-            let mut platforms = HashMap::new();
+            let mut platforms = HashMap::default();
             while let Some(platform_name) = map.next_key()? {
                 let seed = PlatformConfigVisitor(&platform_name);
                 let platform_config = map.next_value_seed(seed)?;
@@ -97,7 +97,7 @@ where
             let mut target = None;
             let mut is_execution_platform = None;
             let mut features = None;
-            let mut cfg = HashMap::new();
+            let mut cfg = HashMap::default();
 
             while let Some(key) = map.next_key::<String>()? {
                 match key.as_str() {

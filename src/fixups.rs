@@ -9,7 +9,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::HashSet;
 use std::collections::btree_map;
 use std::fmt;
 use std::path::Path;
@@ -20,6 +19,7 @@ use std::sync::MutexGuard;
 use std::sync::PoisonError;
 
 use anyhow::bail;
+use foldhash::HashSet;
 
 use crate::Paths;
 use crate::buck;
@@ -727,7 +727,7 @@ impl<'meta> Fixups<'meta> {
         let deps = index.resolved_deps_for_target(self.package, target, platform_name);
 
         // Collect fixups.
-        let mut omit_deps = HashSet::new();
+        let mut omit_deps = HashSet::default();
         for fixup in self.configs(platform_name) {
             let fixup_omit_deps;
             let fixup_extra_deps;
@@ -1025,7 +1025,7 @@ impl<'meta> Fixups<'meta> {
     }
 
     fn compute_extra_srcs(&self, globs: &TrackedGlobSet) -> anyhow::Result<HashSet<PathBuf>> {
-        let mut extra_srcs = HashSet::new();
+        let mut extra_srcs = HashSet::default();
 
         for glob in globs {
             // The extra_srcs are allowed to be located outside this crate's

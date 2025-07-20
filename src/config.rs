@@ -8,8 +8,6 @@
 //! Global third-party config
 
 use std::collections::BTreeSet;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::collections::hash_map;
 use std::env;
 use std::fmt;
@@ -26,6 +24,8 @@ use std::process::Command;
 
 use anyhow::Context;
 use anyhow::bail;
+use foldhash::HashMap;
+use foldhash::HashSet;
 use monostate::MustBe;
 use serde::Deserialize;
 use serde::Serialize;
@@ -439,20 +439,20 @@ pub fn read_config(reindeer_toml: &Path, args: &Args) -> anyhow::Result<Config> 
         //     target_has_atomic
         //     target_has_atomic="ptr"
         //
-        let mut supplemental_target_cfg = HashMap::new();
+        let mut supplemental_target_cfg = HashMap::default();
         for line in output.lines() {
             if line.starts_with("target_") {
                 if let Some((k, v)) = line.split_once('=') {
                     if let Ok(toml::Value::String(v)) = v.parse() {
                         supplemental_target_cfg
                             .entry(k.to_owned())
-                            .or_insert_with(HashSet::new)
+                            .or_insert_with(HashSet::default)
                             .insert(v);
                     }
                 } else {
                     supplemental_target_cfg
                         .entry(line.to_owned())
-                        .or_insert_with(HashSet::new);
+                        .or_insert_with(HashSet::default);
                 }
             }
         }
