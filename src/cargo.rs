@@ -240,8 +240,6 @@ impl Debug for PkgId {
 pub struct Metadata {
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub packages: Vec<Manifest>,
-    #[expect(dead_code)]
-    pub version: u32,
     pub workspace_members: Vec<PkgId>,
     /// Resolved dependency graph
     pub resolve: Resolve,
@@ -328,9 +326,6 @@ impl Display for Manifest {
 pub struct ManifestDep {
     /// Dependency name
     pub name: String,
-    /// The source ID of the dependency. May be null, see description for the package source
-    #[expect(dead_code)]
-    pub source: Option<String>,
     /// Dependency version requirement
     pub req: VersionReq,
     /// If renamed, local name for dependency
@@ -350,9 +345,6 @@ pub struct ManifestDep {
     pub artifact: Option<ArtifactDep>,
     /// Target platform for target-specific dependencies
     pub target: Option<PlatformExpr>,
-    /// Registry this dependency is from
-    #[expect(dead_code)]
-    pub registry: Option<String>,
 }
 
 /// Kind of dependency
@@ -372,8 +364,6 @@ pub enum DepKind {
 pub struct ArtifactDep {
     pub kinds: Vec<ArtifactKind>,
     pub lib: bool,
-    #[expect(dead_code)]
-    pub target: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
@@ -453,11 +443,6 @@ impl ManifestTarget {
         self.kind.contains(&TargetKind::Cdylib)
     }
 
-    #[allow(dead_code)]
-    pub fn kind_native_lib(&self) -> bool {
-        self.kind_staticlib() || self.kind_cdylib()
-    }
-
     pub fn crate_rlib(&self) -> bool {
         self.crate_types.contains(&CrateType::Rlib)
     }
@@ -502,9 +487,6 @@ pub struct Node {
     pub id: PkgId,
     /// Dependencies with rename information
     pub deps: Vec<NodeDep>,
-    /// Features selected for package
-    #[expect(dead_code)]
-    pub features: BTreeSet<String>,
 }
 
 /// Resolved dependencies with rename information
