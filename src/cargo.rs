@@ -11,6 +11,7 @@
 //! get metadata about a crate. It also defines all the types for deserializing from Cargo's
 //! JSON output.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
@@ -27,6 +28,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
+use std::rc::Rc;
+use std::task::Poll;
 use std::thread;
 
 use anyhow::Context;
@@ -145,6 +148,7 @@ fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
 
     // Instantiate package sources.
     let mut source_map = HashMap::new();
+    let mut shared_sources = HashMap::new();
     let yanked_whitelist = HashSet::new();
     for pkg_id in resolve.iter() {
         let source_id = pkg_id.source_id();
@@ -153,7 +157,21 @@ fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
         };
         let source = source_config.load(source_id, &yanked_whitelist)?;
         assert_eq!(source.source_id(), source_id);
-        entry.insert(source);
+        let replaced_source_id = source.replaced_source_id();
+        let delegate = match shared_sources.entry(replaced_source_id) {
+            hash_map::Entry::Vacant(entry) => {
+                let source = source_config.load(replaced_source_id, &yanked_whitelist)?;
+                assert_eq!(source.source_id(), replaced_source_id);
+                let rc = Rc::new(RefCell::new(source));
+                Rc::clone(entry.insert(rc))
+            }
+            hash_map::Entry::Occupied(entry) => Rc::clone(entry.get()),
+        };
+        entry.insert(cargo::sources::ReplacedSource::new(
+            source_id,
+            replaced_source_id,
+            Box::new(SharedSource { delegate }),
+        ));
     }
 
     // Load packages from each source into package registry.
@@ -161,7 +179,7 @@ fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
         cargo::core::registry::PackageRegistry::new_with_source_config(&gctx, source_config)?;
     for mut source in source_map.into_values() {
         cargo::sources::source::Source::block_until_ready(&mut source)?;
-        registry.add_preloaded(source);
+        registry.add_preloaded(Box::new(source));
     }
 
     // Resolve dependency graph.
@@ -229,6 +247,80 @@ fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
         .map(|pkg| PkgId(pkg.package_id().to_spec().to_string()));
 
     Ok(metadata)
+}
+
+pub struct SharedSource<'gctx> {
+    delegate: Rc<RefCell<Box<dyn cargo::sources::source::Source + 'gctx>>>,
+}
+
+impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
+    fn source_id(&self) -> cargo::core::SourceId {
+        self.delegate.borrow().source_id()
+    }
+
+    fn supports_checksums(&self) -> bool {
+        self.delegate.borrow().supports_checksums()
+    }
+
+    fn requires_precise(&self) -> bool {
+        self.delegate.borrow().requires_precise()
+    }
+
+    fn query(
+        &mut self,
+        dep: &cargo::core::Dependency,
+        kind: cargo::sources::source::QueryKind,
+        f: &mut dyn FnMut(cargo::sources::IndexSummary),
+    ) -> Poll<anyhow::Result<()>> {
+        self.delegate.borrow_mut().query(dep, kind, f)
+    }
+
+    fn invalidate_cache(&mut self) {
+        self.delegate.borrow_mut().invalidate_cache();
+    }
+
+    fn set_quiet(&mut self, quiet: bool) {
+        self.delegate.borrow_mut().set_quiet(quiet);
+    }
+
+    fn download(
+        &mut self,
+        pkg_id: cargo::core::PackageId,
+    ) -> anyhow::Result<cargo::sources::source::MaybePackage> {
+        self.delegate.borrow_mut().download(pkg_id)
+    }
+
+    fn finish_download(
+        &mut self,
+        pkg_id: cargo::core::PackageId,
+        contents: Vec<u8>,
+    ) -> anyhow::Result<cargo::core::Package> {
+        self.delegate.borrow_mut().finish_download(pkg_id, contents)
+    }
+
+    fn fingerprint(&self, pkg: &cargo::core::Package) -> anyhow::Result<String> {
+        self.delegate.borrow().fingerprint(pkg)
+    }
+
+    fn describe(&self) -> String {
+        self.delegate.borrow().describe()
+    }
+
+    fn add_to_yanked_whitelist(&mut self, pkgs: &[cargo::core::PackageId]) {
+        self.delegate.borrow_mut().add_to_yanked_whitelist(pkgs);
+    }
+
+    fn is_yanked(&mut self, pkg: cargo::core::PackageId) -> Poll<anyhow::Result<bool>> {
+        self.delegate.borrow_mut().is_yanked(pkg)
+    }
+
+    fn block_until_ready(&mut self) -> anyhow::Result<()> {
+        self.delegate.borrow_mut().block_until_ready()
+    }
+
+    fn verify(&self, pkg: cargo::core::PackageId) -> anyhow::Result<()> {
+        self.delegate.borrow().verify(pkg)
+    }
 }
 
 // From cargo-0.91.0/src/cargo/ops/cargo_output_metadata.rs
