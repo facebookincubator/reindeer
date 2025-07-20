@@ -44,7 +44,6 @@ mod lockfile;
 mod path;
 mod platform;
 mod remap;
-mod resolve;
 mod srcfiles;
 mod subtarget;
 mod vendor;
