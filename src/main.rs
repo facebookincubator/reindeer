@@ -105,6 +105,10 @@ enum SubCommand {
         /// Suppresses generation of other output files.
         #[arg(long)]
         stdout: bool,
+        /// (Unsupported.) Bypass `cargo metadata` by using cargo-as-a-library
+        /// to load the lockfile and manifests.
+        #[arg(long)]
+        fast: bool,
     },
     /// Show security report for vendored crates
     #[cfg(fbcode_build)]
@@ -237,7 +241,7 @@ fn try_main() -> anyhow::Result<()> {
             )?;
         }
 
-        SubCommand::Buckify { stdout } => {
+        SubCommand::Buckify { stdout, fast } => {
             if matches!(
                 config.vendor,
                 VendorConfig::LocalRegistry | VendorConfig::Source(_)
@@ -247,7 +251,7 @@ fn try_main() -> anyhow::Result<()> {
                 // default to generating non-vendored targets.
                 config.vendor = VendorConfig::Off;
             }
-            buckify::buckify(&config, &args, &paths, *stdout)?;
+            buckify::buckify(&config, &args, &paths, *stdout, *fast)?;
         }
     }
 

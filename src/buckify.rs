@@ -1032,11 +1032,12 @@ pub(crate) fn buckify(
     args: &Args,
     paths: &Paths,
     stdout: bool,
+    fast: bool,
 ) -> anyhow::Result<()> {
     let (lockfile, metadata) = {
         log::info!("Running `cargo metadata`...");
         measure_time::info_time!("Running `cargo metadata`");
-        cargo_get_lockfile_and_metadata(config, args, paths)?
+        cargo_get_lockfile_and_metadata(config, args, paths, fast)?
     };
 
     log::trace!("Metadata {:#?}", metadata);

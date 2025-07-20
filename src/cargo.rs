@@ -13,12 +13,14 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::env;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::io::BufRead;
 use std::io::BufReader;
+use std::iter;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -26,6 +28,8 @@ use std::process::Stdio;
 use std::thread;
 
 use anyhow::Context;
+use anyhow::bail;
+use indoc::indoc;
 use semver::VersionReq;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -43,7 +47,28 @@ pub fn cargo_get_lockfile_and_metadata(
     config: &Config,
     args: &Args,
     paths: &Paths,
+    fast: bool,
 ) -> anyhow::Result<(Lockfile, Metadata)> {
+    if let VendorConfig::Source(_) = config.vendor {
+        let lockfile = Lockfile::load(paths)?;
+        let metadata = if fast {
+            fast_metadata(config, paths)?
+        } else {
+            slow_metadata(config, args, paths)?
+        };
+        Ok((lockfile, metadata))
+    } else if fast {
+        bail!("`--fast` currently only works with `vendor = true` in reindeer.toml");
+    } else {
+        let metadata = slow_metadata(config, args, paths)?;
+        // In non-vendored mode, we allow `cargo metadata` to make changes to
+        // the lockfile, so load it second.
+        let lockfile = Lockfile::load(paths)?;
+        Ok((lockfile, metadata))
+    }
+}
+
+fn slow_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<Metadata> {
     let mut cargo_flags = vec![
         "metadata",
         "--format-version",
@@ -53,36 +78,320 @@ pub fn cargo_get_lockfile_and_metadata(
         "--all-features",
     ];
 
-    let cargo_home;
-    let lockfile;
-    if !matches!(config.vendor, VendorConfig::Source(_)) {
-        cargo_home = None;
-
-        // Whether or not there is a Cargo.lock already, do not read it yet.
-        // Read it after the `cargo metadata` invocation. In non-vendoring mode
-        // we allow `reindeer buckify` to make changes to the lockfile. In
-        // vendoring mode `reindeer vendor` would have done the same changes.
-        lockfile = None;
-    } else {
-        cargo_home = Some(paths.cargo_home.as_path());
-
+    let cargo_home = if let VendorConfig::Source(_) = config.vendor {
         // The Cargo.lock should already have been updated by the vendor step.
         // We must not change it during buckify or else we'd be generating Buck
         // targets for not the same crate versions that were put in the vendor
         // directory.
         cargo_flags.extend(["--frozen", "--locked", "--offline"]);
-        lockfile = Some(Lockfile::load(paths)?);
+
+        Some(paths.cargo_home.as_path())
+    } else {
+        None
     };
 
-    let metadata: Metadata =
-        run_cargo_json(config, cargo_home, None, args, &cargo_flags).context("parsing metadata")?;
+    run_cargo_json(config, cargo_home, None, args, &cargo_flags).context("parsing metadata")
+}
 
-    let lockfile = match lockfile {
-        Some(existing_lockfile) => existing_lockfile,
-        None => Lockfile::load(paths)?,
+fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
+    // Configure Cargo global context.
+    let shell = cargo::core::Shell::new();
+    let cwd = paths.third_party_dir.clone();
+    let cargo_home = paths.cargo_home.clone();
+    let mut gctx = cargo::GlobalContext::new(shell, cwd, cargo_home);
+
+    let mut unstable_flags = Vec::new();
+    if config.cargo.bindeps {
+        unstable_flags.push("bindeps".to_owned());
+    }
+
+    let verbose = 0;
+    let quiet = false;
+    let color = None;
+    let frozen = true;
+    let locked = true;
+    let offline = true;
+    let target_dir = None;
+    let cli_config = [];
+    gctx.configure(
+        verbose,
+        quiet,
+        color,
+        frozen,
+        locked,
+        offline,
+        &target_dir,
+        &unstable_flags,
+        &cli_config,
+    )?;
+
+    // Load workspace Cargo.toml.
+    let workspace = cargo::core::Workspace::new(&paths.manifest_path, &gctx)?;
+
+    // Load workspace Cargo.lock.
+    let Some(resolve) = cargo::ops::load_pkg_lockfile(&workspace)? else {
+        bail!(indoc! {"
+            When using `vendor = true` in reindeer.toml, `reindeer buckify` requires that a
+            Cargo.lock already exists. Otherwise buckify might be generating Buck targets
+            for not the same crate versions that have been vendored. Run `reindeer vendor`
+            first.
+        "});
     };
 
-    Ok((lockfile, metadata))
+    // Resolve dependency graph.
+    let mut registry = workspace.package_registry()?;
+    let keep_previous = None;
+    let specs = [];
+    let register_patches = true;
+    let resolve = cargo::ops::resolve_with_previous(
+        &mut registry,
+        &workspace,
+        &cargo::core::resolver::CliFeatures::new_all(true),
+        cargo::core::resolver::HasDevUnits::Yes,
+        Some(&resolve),
+        keep_previous,
+        &specs,
+        register_patches,
+    )?;
+
+    // Load vendored Cargo.tomls.
+    let packages = Vec::from_iter(resolve.iter());
+    let package_set = registry.get(&packages)?;
+    let package_vec = package_set.get_many(packages.iter().copied())?;
+
+    let mut metadata = Metadata {
+        packages: Vec::new(),
+        workspace_members: Vec::new(),
+        resolve: Resolve {
+            root: None,
+            nodes: Vec::new(),
+        },
+    };
+
+    // Convert Cargo data structures to Reindeer data structures.
+    let mut package_map = BTreeMap::new();
+    for &pkg in &package_vec {
+        let pkgid = pkg.package_id();
+        package_map.insert(pkgid, pkg);
+
+        // Serialize cargo::core::Package and deserialize to our own Manifest struct.
+        let serialized = pkg.serialized(gctx.cli_unstable(), workspace.unstable_features());
+        let json = serde_json::to_value(serialized).unwrap();
+        let manifest = serde_json::from_value(json)
+            .with_context(|| format!("failed to deserialize manifest of package {pkgid}"))?;
+        metadata.packages.push(manifest);
+
+        if workspace.is_member_id(pkgid) {
+            metadata
+                .workspace_members
+                .push(PkgId(pkgid.to_spec().to_string()));
+        }
+    }
+
+    let mut node_map = BTreeMap::new();
+    for member_pkg in workspace.members() {
+        build_resolve_graph(
+            &mut node_map,
+            member_pkg.package_id(),
+            &resolve,
+            &package_map,
+        )?;
+    }
+
+    metadata.resolve.nodes.extend(node_map.into_values());
+    metadata.resolve.root = workspace
+        .current_opt()
+        .map(|pkg| PkgId(pkg.package_id().to_spec().to_string()));
+
+    Ok(metadata)
+}
+
+// From cargo-0.91.0/src/cargo/ops/cargo_output_metadata.rs
+fn build_resolve_graph(
+    node_map: &mut BTreeMap<cargo::core::PackageId, Node>,
+    pkg_id: cargo::core::PackageId,
+    resolve: &cargo::core::resolver::Resolve,
+    package_map: &BTreeMap<cargo::core::PackageId, &cargo::core::Package>,
+) -> anyhow::Result<()> {
+    if node_map.contains_key(&pkg_id) {
+        return Ok(());
+    }
+
+    let normalize_id =
+        |id| -> cargo::core::PackageId { *package_map.get_key_value(&id).unwrap().0 };
+
+    let deps = {
+        let mut dep_metadatas = Vec::new();
+        let iter = resolve.deps(pkg_id);
+        for (dep_id, deps) in iter {
+            let mut dep_kinds = Vec::new();
+
+            let targets = package_map[&dep_id].targets();
+
+            // Try to get the extern name for lib, or crate name for bins.
+            let extern_name = |target| {
+                resolve
+                    .extern_crate_name_and_dep_name(pkg_id, dep_id, target)
+                    .map(|(ext_crate_name, _)| ext_crate_name)
+            };
+
+            let lib_target = targets.iter().find(|t| t.is_lib());
+
+            for dep in deps.iter() {
+                if let Some(target) = lib_target {
+                    // When we do have a library target, include them in deps if...
+                    let included = match dep.artifact() {
+                        // it is not an artifact dep at all
+                        None => true,
+                        // it is also an artifact dep with `{ …, lib = true }`
+                        Some(a) if a.is_lib() => true,
+                        _ => false,
+                    };
+                    // TODO(bindeps): Cargo shouldn't have `extern_name` field
+                    // if the user is not using -Zbindeps.
+                    // Remove this condition ` after -Zbindeps gets stabilized.
+                    let extern_name = if dep.artifact().is_some() {
+                        Some(extern_name(target)?)
+                    } else {
+                        None
+                    };
+                    if included {
+                        dep_kinds.push(NodeDepKind {
+                            kind: match dep.kind() {
+                                cargo::core::dependency::DepKind::Normal => DepKind::Normal,
+                                cargo::core::dependency::DepKind::Development => DepKind::Dev,
+                                cargo::core::dependency::DepKind::Build => DepKind::Build,
+                            },
+                            target: dep
+                                .platform()
+                                .map(|plat| PlatformExpr::parse(&plat.to_string()).unwrap()),
+                            extern_name: extern_name.map(|intern| intern.as_str().to_owned()),
+                            artifact: None,
+                            compile_target: None,
+                            bin_name: None,
+                        });
+                    }
+                }
+
+                // No need to proceed if there is no artifact dependency.
+                if dep.artifact().is_none() {
+                    continue;
+                }
+
+                let target_set =
+                    match_artifacts_kind_with_targets(dep, targets, pkg_id.name().as_str())?;
+
+                for (kind, target) in target_set {
+                    dep_kinds.push(NodeDepKind {
+                        kind: match dep.kind() {
+                            cargo::core::dependency::DepKind::Normal => DepKind::Normal,
+                            cargo::core::dependency::DepKind::Development => DepKind::Dev,
+                            cargo::core::dependency::DepKind::Build => DepKind::Build,
+                        },
+                        target: dep
+                            .platform()
+                            .map(|plat| PlatformExpr::parse(&plat.to_string()).unwrap()),
+                        extern_name: extern_name(target)
+                            .ok()
+                            .map(|intern| intern.as_str().to_owned()),
+                        artifact: Some(match kind.crate_type() {
+                            "bin" => ArtifactKind::Bin,
+                            "staticlib" => ArtifactKind::Staticlib,
+                            "cdylib" => ArtifactKind::Cdylib,
+                            _ => unimplemented!(),
+                        }),
+                        compile_target: None,
+                        bin_name: target.is_bin().then(|| target.name().to_string()),
+                    })
+                }
+            }
+
+            let pkg_id = normalize_id(dep_id);
+
+            let dep = match (lib_target, dep_kinds.len()) {
+                (Some(target), _) => NodeDep {
+                    name: Some(extern_name(target)?.as_str().to_owned()),
+                    pkg: PkgId(pkg_id.to_spec().to_string()),
+                    pkg_id: Some(pkg_id),
+                    dep_kinds,
+                },
+                // No lib target exists but contains artifact deps.
+                (None, 1..) => NodeDep {
+                    name: None,
+                    pkg: PkgId(pkg_id.to_spec().to_string()),
+                    pkg_id: Some(pkg_id),
+                    dep_kinds,
+                },
+                // No lib or artifact dep exists.
+                // Usually this mean parent depending on non-lib bin crate.
+                (None, _) => continue,
+            };
+
+            dep_metadatas.push(dep)
+        }
+        dep_metadatas
+    };
+
+    let to_visit: Vec<cargo::core::PackageId> =
+        deps.iter().map(|dep| dep.pkg_id.unwrap()).collect();
+    let node = Node {
+        id: PkgId(normalize_id(pkg_id).to_spec().to_string()),
+        deps,
+    };
+    node_map.insert(pkg_id, node);
+    for dep_id in to_visit {
+        build_resolve_graph(node_map, dep_id, resolve, package_map)?;
+    }
+
+    Ok(())
+}
+
+// From cargo-0.91.0/src/cargo/core/compiler/artifact.rs
+fn match_artifacts_kind_with_targets<'a>(
+    artifact_dep: &'a cargo::core::Dependency,
+    targets: &'a [cargo::core::Target],
+    parent_package: &str,
+) -> anyhow::Result<
+    HashSet<(
+        &'a cargo::core::dependency::ArtifactKind,
+        &'a cargo::core::Target,
+    )>,
+> {
+    let mut out = HashSet::new();
+    let artifact_requirements = artifact_dep.artifact().expect("artifact present");
+    for artifact_kind in artifact_requirements.kinds() {
+        let mut extend = |kind, filter: &dyn Fn(&&cargo::core::Target) -> bool| {
+            let mut iter = targets.iter().filter(filter).peekable();
+            let found = iter.peek().is_some();
+            out.extend(iter::repeat(kind).zip(iter));
+            found
+        };
+        let found = match artifact_kind {
+            cargo::core::dependency::ArtifactKind::Cdylib => {
+                extend(artifact_kind, &|t| t.is_cdylib())
+            }
+            cargo::core::dependency::ArtifactKind::Staticlib => {
+                extend(artifact_kind, &|t| t.is_staticlib())
+            }
+            cargo::core::dependency::ArtifactKind::AllBinaries => {
+                extend(artifact_kind, &|t| t.is_bin())
+            }
+            cargo::core::dependency::ArtifactKind::SelectedBinary(bin_name) => {
+                extend(artifact_kind, &|t| {
+                    t.is_bin() && t.name() == bin_name.as_str()
+                })
+            }
+        };
+        if !found {
+            bail!(
+                "dependency `{}` in package `{}` requires a `{}` artifact to be present.",
+                artifact_dep.name_in_toml(),
+                parent_package,
+                artifact_kind
+            );
+        }
+    }
+    Ok(out)
 }
 
 // Run a cargo command
@@ -494,6 +803,8 @@ pub struct Node {
 pub struct NodeDep {
     /// Package id for dependency
     pub pkg: PkgId,
+    #[serde(skip)]
+    pkg_id: Option<cargo::core::PackageId>,
     /// Local manifest's name for the dependency. Deprecated -- if using `-Z
     /// bindeps`, use the `extern_name` from `NodeDepKind` instead of this.
     #[serde(deserialize_with = "deserialize_empty_string_as_none")]

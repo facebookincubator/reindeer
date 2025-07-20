@@ -11,6 +11,7 @@ license = "MIT"
 [dependencies]
 anyhow = "1.0.98"
 cached = { version = "0.55.1", features = ["async"] }
+cargo = "0.91"
 cargo_toml = "0.22.1"
 clap = { version = "4.5.38", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 dunce = "1.0.2"
@@ -19,6 +20,7 @@ fnv = "1.0"
 globset = { version = "0.4.13", features = ["serde1"] }
 ignore = "0.4"
 indexmap = { version = "2.9.0", features = ["arbitrary", "rayon", "serde"] }
+indoc = "2.0.2"
 itertools = "0.14.0"
 log = { version = "0.4.22", features = ["kv_unstable", "kv_unstable_std"] }
 measure_time = "0.9"
@@ -40,10 +42,10 @@ url = "2.5.4"
 walkdir = "2.3"
 
 [dev-dependencies]
-indoc = "2.0.2"
 tempfile = "3.15"
 
 [patch.crates-io]
+cargo = { git = "https://github.com/rust-lang/cargo", rev = "f5b3a6ba899c2eb9285dd3769aa6d84179ee7f8b" }
 displaydoc = { git = "https://github.com/yaahc/displaydoc", rev = "7dc6e324b1788a6b7fb9f3a1953c512923a3e9f0" }
 
 [workspace]
