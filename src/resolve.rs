@@ -43,6 +43,7 @@ use crate::cargo::PkgId;
 use crate::cargo::TargetKind;
 use crate::platform::PlatformExpr;
 
+#[derive(Debug)]
 pub struct DepIndex<'meta> {
     pkgid: &'meta PkgId,
     deps: HashMap<

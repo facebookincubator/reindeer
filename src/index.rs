@@ -174,11 +174,19 @@ impl<'meta> Index<'meta> {
                 });
         }
 
+        let mut dep_index = HashMap::new();
+        for pkg in &metadata.packages {
+            dep_index.insert(
+                &pkg.id,
+                DepIndex::new(&index.pkgid_to_pkg, &index.pkgid_to_node, &pkg.id),
+            );
+        }
+
         for (platform_name, platform_config) in &config.platform {
             let mut resolve = FeatureResolver {
                 pkgid_platform_features: &mut index.pkgid_platform_features,
                 pkgid_to_pkg: &index.pkgid_to_pkg,
-                pkgid_to_node: &index.pkgid_to_node,
+                dep_index: &dep_index,
                 public_package_names: &index.public_package_names,
                 config,
                 fixups,
@@ -360,7 +368,7 @@ struct FeatureResolver<'a, 'meta> {
     pkgid_platform_features:
         &'a mut HashMap<(&'meta PkgId, &'meta PlatformName), ResolvedFeatures<'meta>>,
     pkgid_to_pkg: &'a HashMap<&'meta PkgId, &'meta Manifest>,
-    pkgid_to_node: &'a HashMap<&'meta PkgId, &'meta Node>,
+    dep_index: &'a HashMap<&'meta PkgId, DepIndex<'meta>>,
     public_package_names: &'a BTreeSet<&'meta str>,
     config: &'meta Config,
     fixups: &'a FixupsCache<'meta>,
@@ -384,7 +392,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         resolve.enabled = true;
 
         // Make an index of Cargo's resolution of the dependencies.
-        let dep_index = DepIndex::new(self.pkgid_to_pkg, self.pkgid_to_node, pkgid);
+        let dep_index = &self.dep_index[pkgid];
 
         // Omit dependencies according to fixups.
         let pkg = self.pkgid_to_pkg[pkgid];
@@ -484,7 +492,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                         let enable_dep = !dep.ends_with('?');
                         let dep = dep.strip_suffix('?').unwrap_or(dep);
                         // Find which dependency this feature refers to.
-                        let dep_index = DepIndex::new(self.pkgid_to_pkg, self.pkgid_to_node, pkgid);
+                        let dep_index = &self.dep_index[pkgid];
                         for manifest_dep in &self.pkgid_to_pkg[pkgid].dependencies {
                             if dep == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
                                 && match manifest_dep.kind {
@@ -567,7 +575,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         }
 
         // Find the matching crate and enable it.
-        let dep_index = DepIndex::new(self.pkgid_to_pkg, self.pkgid_to_node, pkgid);
+        let dep_index = &self.dep_index[pkgid];
         for manifest_dep in &pkg.dependencies {
             if enable_dependency == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
                 && manifest_dep.optional
