@@ -76,7 +76,6 @@ pub struct Fixups<'meta> {
     config: &'meta Config,
     third_party_dir: &'meta Path,
     package: &'meta Manifest,
-    fixup_dir: PathBuf,
     fixup_config: Arc<FixupConfigFile>,
     manifest_dir: &'meta Path,
 }
@@ -86,7 +85,6 @@ impl<'meta> fmt::Debug for Fixups<'meta> {
         fmt.debug_struct("Fixups")
             .field("package", &self.package.to_string())
             .field("third_party_dir", &self.third_party_dir)
-            .field("fixup_dir", &self.fixup_dir)
             .field("manifest_dir", &self.manifest_dir)
             .field("fixup_config", &self.fixup_config)
             .finish()
@@ -111,17 +109,16 @@ impl<'meta> FixupsCache<'meta> {
 
     /// Get fixups.toml for a specific package.
     pub fn get(&self, package: &'meta Manifest, public: bool) -> anyhow::Result<Fixups<'meta>> {
-        let fixup_dir = self
-            .paths
-            .third_party_dir
-            .join("fixups")
-            .join(&package.name);
-
         let mut fixups_map = self.fixups.lock().unwrap_or_else(PoisonError::into_inner);
         let fixup_config = if let Some(arc) = fixups_map.get(package.name.as_str()) {
             Arc::clone(arc)
         } else {
-            let fixup_config = FixupConfigFile::load(&fixup_dir, package, public)?;
+            let fixup_dir = self
+                .paths
+                .third_party_dir
+                .join("fixups")
+                .join(&package.name);
+            let fixup_config = FixupConfigFile::load(fixup_dir, package, public)?;
             let arc = Arc::new(fixup_config);
             fixups_map.insert(&package.name, Arc::clone(&arc));
             arc
@@ -131,7 +128,6 @@ impl<'meta> FixupsCache<'meta> {
             third_party_dir: &self.paths.third_party_dir,
             manifest_dir: package.manifest_dir(),
             package,
-            fixup_dir,
             fixup_config,
             config: self.config,
         })
@@ -294,7 +290,7 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<Vec<Rule>> {
         let mut res = Vec::new();
 
-        let rel_fixup = relative_path(self.third_party_dir, &self.fixup_dir);
+        let rel_fixup = relative_path(self.third_party_dir, &self.fixup_config.fixup_dir);
 
         let buildscript_rule_name = match self.buildscript_rule_name() {
             None => {
@@ -418,7 +414,8 @@ impl<'meta> Fixups<'meta> {
                         NO_EXCLUDE,
                     );
                     for fixup_include_path in fixup_include_paths {
-                        for path in globs.walk(self.fixup_dir.join(fixup_include_path)) {
+                        for path in globs.walk(self.fixup_config.fixup_dir.join(fixup_include_path))
+                        {
                             headers.insert(SubtargetOrPath::Path(BuckPath(
                                 rel_fixup.join(fixup_include_path).join(path),
                             )));
@@ -1009,7 +1006,7 @@ impl<'meta> Fixups<'meta> {
         }
 
         for fixup in self.configs(platform_name) {
-            let mapped_files = fixup.overlay_and_mapped_files(&self.fixup_dir)?;
+            let mapped_files = fixup.overlay_and_mapped_files(&self.fixup_config.fixup_dir)?;
             ret.retain(|path| {
                 let path_in_crate = relative_path(&manifest_rel, path);
                 !mapped_files.contains(&path_in_crate) && !fixup.omit_srcs.is_match(&path_in_crate)
@@ -1096,9 +1093,9 @@ impl<'meta> Fixups<'meta> {
             }
 
             if let Some(overlay) = &config.overlay {
-                let overlay_dir = self.fixup_dir.join(overlay);
+                let overlay_dir = self.fixup_config.fixup_dir.join(overlay);
                 let relative_overlay_dir = relative_path(self.third_party_dir, &overlay_dir);
-                let overlay_files = config.overlay_files(&self.fixup_dir)?;
+                let overlay_files = config.overlay_files(&self.fixup_config.fixup_dir)?;
 
                 log::debug!(
                     "pkg {} target {} overlay_dir {} overlay_files {:?}",

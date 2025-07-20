@@ -43,6 +43,8 @@ use crate::platform::PlatformExpr;
 /// Top-level fixup config file (correspondins to a fixups.toml)
 #[derive(Debug, Default)]
 pub struct FixupConfigFile {
+    /// Directory that this config was deserialized from.
+    pub fixup_dir: PathBuf,
     /// Source text that this config was deserialized from.
     toml: String,
 
@@ -84,16 +86,24 @@ pub struct FixupConfigFile {
 }
 
 impl FixupConfigFile {
-    pub(super) fn load(fixup_dir: &Path, package: &Manifest, public: bool) -> anyhow::Result<Self> {
+    pub(super) fn load(
+        fixup_dir: PathBuf,
+        package: &Manifest,
+        public: bool,
+    ) -> anyhow::Result<Self> {
         let fixup_path = fixup_dir.join("fixups.toml");
 
         let Ok(content) = fs::read_to_string(&fixup_path) else {
             log::debug!("no fixups at {}", fixup_path.display());
-            return Ok(FixupConfigFile::default());
+            return Ok(FixupConfigFile {
+                fixup_dir,
+                ..FixupConfigFile::default()
+            });
         };
 
         log::debug!("read fixups from {}", fixup_path.display());
         let visitor = FixupConfigFileVisitor {
+            fixup_dir,
             toml: content.clone(),
         };
         let fixup_config = toml::Deserializer::parse(&content)
@@ -388,6 +398,7 @@ pub enum CustomVisibility {
 }
 
 struct FixupConfigFileVisitor {
+    fixup_dir: PathBuf,
     toml: String,
 }
 
@@ -508,6 +519,7 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
         let base = FixupConfig::deserialize(de)?;
 
         Ok(FixupConfigFile {
+            fixup_dir: self.fixup_dir,
             toml: self.toml,
             custom_visibility: fields.custom_visibility,
             omit_targets: fields.omit_targets.unwrap_or_else(BTreeSet::new),
