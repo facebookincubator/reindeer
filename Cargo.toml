@@ -33,6 +33,7 @@ semver = { version = "1.0.26", features = ["serde"] }
 serde = { version = "1.0.185", features = ["derive", "rc"] }
 serde_json = { version = "1.0.140", features = ["alloc", "float_roundtrip", "unbounded_depth"] }
 serde_starlark = "0.1.13"
+serde_with = { version = "3", features = ["hex", "json"] }
 strum = { version = "0.27.1", features = ["derive"] }
 syn = { version = "2.0.101", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 termcolor = "1.0"

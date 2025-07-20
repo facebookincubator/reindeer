@@ -26,6 +26,7 @@ use std::sync::mpsc;
 use anyhow::Context;
 use anyhow::bail;
 use cached::proc_macro::cached;
+use cargo::core::PackageId;
 use fnv::FnvHasher;
 use itertools::Itertools;
 use url::Url;
@@ -54,7 +55,6 @@ use crate::cargo::ArtifactKind;
 use crate::cargo::Edition;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
-use crate::cargo::PkgId;
 use crate::cargo::Source;
 use crate::cargo::TargetReq;
 use crate::cargo::cargo_get_lockfile_and_metadata;
@@ -134,7 +134,7 @@ struct RuleContext<'meta> {
     index: Index<'meta>,
     lockfile: &'meta Lockfile,
     fixups: FixupsCache<'meta>,
-    done: Mutex<HashSet<(&'meta PkgId, TargetReq<'meta>)>>,
+    done: Mutex<HashSet<(PackageId, TargetReq<'meta>)>>,
 }
 
 /// Generate rules for a set of dependencies
@@ -148,7 +148,7 @@ fn generate_dep_rules<'scope>(
 ) {
     let mut done = context.done.lock().unwrap();
     for (pkg, target_req) in pkg_deps {
-        if done.insert((&pkg.id, target_req)) {
+        if done.insert((pkg.id, target_req)) {
             let rule_tx = rule_tx.clone();
             scope.spawn(move |scope| {
                 generate_rules(context, scope, rule_tx, pkg, target_req);

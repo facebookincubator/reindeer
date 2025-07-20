@@ -34,12 +34,17 @@ use std::thread;
 
 use anyhow::Context;
 use anyhow::bail;
+use cargo::core::PackageId;
+use cargo::util::interning::InternedString;
 use indoc::indoc;
 use semver::VersionReq;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::de::Visitor;
+use serde_with::As;
+use serde_with::DeserializeAs;
 
 use crate::Args;
 use crate::Paths;
@@ -225,9 +230,7 @@ fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
         metadata.packages.push(manifest);
 
         if workspace.is_member_id(pkgid) {
-            metadata
-                .workspace_members
-                .push(PkgId(pkgid.to_spec().to_string()));
+            metadata.workspace_members.push(pkgid);
         }
     }
 
@@ -244,7 +247,7 @@ fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
     metadata.resolve.nodes.extend(node_map.into_values());
     metadata.resolve.root = workspace
         .current_opt()
-        .map(|pkg| PkgId(pkg.package_id().to_spec().to_string()));
+        .map(cargo::core::Package::package_id);
 
     Ok(metadata)
 }
@@ -285,14 +288,14 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
 
     fn download(
         &mut self,
-        pkg_id: cargo::core::PackageId,
+        pkg_id: PackageId,
     ) -> anyhow::Result<cargo::sources::source::MaybePackage> {
         self.delegate.borrow_mut().download(pkg_id)
     }
 
     fn finish_download(
         &mut self,
-        pkg_id: cargo::core::PackageId,
+        pkg_id: PackageId,
         contents: Vec<u8>,
     ) -> anyhow::Result<cargo::core::Package> {
         self.delegate.borrow_mut().finish_download(pkg_id, contents)
@@ -306,11 +309,11 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
         self.delegate.borrow().describe()
     }
 
-    fn add_to_yanked_whitelist(&mut self, pkgs: &[cargo::core::PackageId]) {
+    fn add_to_yanked_whitelist(&mut self, pkgs: &[PackageId]) {
         self.delegate.borrow_mut().add_to_yanked_whitelist(pkgs);
     }
 
-    fn is_yanked(&mut self, pkg: cargo::core::PackageId) -> Poll<anyhow::Result<bool>> {
+    fn is_yanked(&mut self, pkg: PackageId) -> Poll<anyhow::Result<bool>> {
         self.delegate.borrow_mut().is_yanked(pkg)
     }
 
@@ -318,24 +321,23 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
         self.delegate.borrow_mut().block_until_ready()
     }
 
-    fn verify(&self, pkg: cargo::core::PackageId) -> anyhow::Result<()> {
+    fn verify(&self, pkg: PackageId) -> anyhow::Result<()> {
         self.delegate.borrow().verify(pkg)
     }
 }
 
 // From cargo-0.91.0/src/cargo/ops/cargo_output_metadata.rs
 fn build_resolve_graph(
-    node_map: &mut BTreeMap<cargo::core::PackageId, Node>,
-    pkg_id: cargo::core::PackageId,
+    node_map: &mut BTreeMap<PackageId, Node>,
+    pkg_id: PackageId,
     resolve: &cargo::core::resolver::Resolve,
-    package_map: &BTreeMap<cargo::core::PackageId, &cargo::core::Package>,
+    package_map: &BTreeMap<PackageId, &cargo::core::Package>,
 ) -> anyhow::Result<()> {
     if node_map.contains_key(&pkg_id) {
         return Ok(());
     }
 
-    let normalize_id =
-        |id| -> cargo::core::PackageId { *package_map.get_key_value(&id).unwrap().0 };
+    let normalize_id = |id| -> PackageId { *package_map.get_key_value(&id).unwrap().0 };
 
     let deps = {
         let mut dep_metadatas = Vec::new();
@@ -428,15 +430,13 @@ fn build_resolve_graph(
             let dep = match (lib_target, dep_kinds.len()) {
                 (Some(target), _) => NodeDep {
                     name: Some(extern_name(target)?.as_str().to_owned()),
-                    pkg: PkgId(pkg_id.to_spec().to_string()),
-                    pkg_id: Some(pkg_id),
+                    pkg: pkg_id,
                     dep_kinds,
                 },
                 // No lib target exists but contains artifact deps.
                 (None, 1..) => NodeDep {
                     name: None,
-                    pkg: PkgId(pkg_id.to_spec().to_string()),
-                    pkg_id: Some(pkg_id),
+                    pkg: pkg_id,
                     dep_kinds,
                 },
                 // No lib or artifact dep exists.
@@ -449,10 +449,9 @@ fn build_resolve_graph(
         dep_metadatas
     };
 
-    let to_visit: Vec<cargo::core::PackageId> =
-        deps.iter().map(|dep| dep.pkg_id.unwrap()).collect();
+    let to_visit: Vec<PackageId> = deps.iter().map(|dep| dep.pkg).collect();
     let node = Node {
-        id: PkgId(normalize_id(pkg_id).to_spec().to_string()),
+        id: normalize_id(pkg_id),
         deps,
     };
     node_map.insert(pkg_id, node);
@@ -644,29 +643,13 @@ where
     Ok(Option::deserialize(deserializer)?.unwrap_or_default())
 }
 
-#[derive(Deserialize, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct PkgId(pub String);
-
-impl Display for PkgId {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(&self.0, fmt)
-    }
-}
-
-impl Debug for PkgId {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        // More compact than a derived Debug impl
-        let PkgId(id) = self;
-        write!(fmt, "PkgId({id:?})")
-    }
-}
-
 /// Top-level structure from `cargo metadata`
 #[derive(Debug, Deserialize)]
 pub struct Metadata {
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub packages: Vec<Manifest>,
-    pub workspace_members: Vec<PkgId>,
+    #[serde(with = "As::<Vec<PackageIdFromSpec>>")]
+    pub workspace_members: Vec<PackageId>,
     /// Resolved dependency graph
     pub resolve: Resolve,
 }
@@ -680,7 +663,8 @@ pub struct Manifest {
     /// Package version
     pub version: semver::Version,
     /// Canonical ID for package
-    pub id: PkgId,
+    #[serde(with = "As::<PackageIdFromSpec>")]
+    pub id: PackageId,
     /// Path to license
     pub license_file: Option<PathBuf>,
     /// Package description
@@ -902,7 +886,8 @@ impl ManifestTarget {
 #[derive(Debug, Deserialize)]
 pub struct Resolve {
     /// Root package of the workspace
-    pub root: Option<PkgId>,
+    #[serde(with = "As::<Option<PackageIdFromSpec>>")]
+    pub root: Option<PackageId>,
     pub nodes: Vec<Node>,
 }
 
@@ -910,7 +895,8 @@ pub struct Resolve {
 #[derive(Debug, Deserialize)]
 pub struct Node {
     /// Package
-    pub id: PkgId,
+    #[serde(with = "As::<PackageIdFromSpec>")]
+    pub id: PackageId,
     /// Dependencies with rename information
     pub deps: Vec<NodeDep>,
 }
@@ -919,9 +905,8 @@ pub struct Node {
 #[derive(Debug, Deserialize)]
 pub struct NodeDep {
     /// Package id for dependency
-    pub pkg: PkgId,
-    #[serde(skip)]
-    pkg_id: Option<cargo::core::PackageId>,
+    #[serde(with = "As::<PackageIdFromSpec>")]
+    pub pkg: PackageId,
     /// Local manifest's name for the dependency. Deprecated -- if using `-Z
     /// bindeps`, use the `extern_name` from `NodeDepKind` instead of this.
     #[serde(deserialize_with = "deserialize_empty_string_as_none")]
@@ -1132,6 +1117,46 @@ fn parse_source(source: &str) -> Option<Source> {
         }
     } else {
         None
+    }
+}
+
+struct PackageIdFromSpec;
+
+impl<'de> Visitor<'de> for PackageIdFromSpec {
+    type Value = PackageId;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("package id string")
+    }
+
+    fn visit_str<E>(self, string: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let spec = cargo::core::PackageIdSpec::parse(string).map_err(serde::de::Error::custom)?;
+
+        let name = InternedString::new(spec.name());
+
+        let Some(version) = spec.version() else {
+            return Err(E::custom(format!("missing version for pkgid: {spec}")));
+        };
+
+        let mut url = url::Url::parse(string)
+            .map_err(|e| E::custom(format!("bad package spec URL {string}: {e}")))?;
+        url.set_fragment(None);
+        let source_id = cargo::core::SourceId::from_url(url.as_str())
+            .map_err(|e| E::custom(format!("bad source URL for pkgid {spec}: {e}")))?;
+
+        Ok(PackageId::new(name, version, source_id))
+    }
+}
+
+impl<'de> DeserializeAs<'de, PackageId> for PackageIdFromSpec {
+    fn deserialize_as<D>(deserializer: D) -> Result<PackageId, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_str(PackageIdFromSpec)
     }
 }
 

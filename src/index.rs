@@ -14,6 +14,7 @@ use std::collections::HashSet;
 
 use anyhow::Context as _;
 use anyhow::bail;
+use cargo::core::PackageId;
 use semver::VersionReq;
 
 use crate::buck::Name;
@@ -26,7 +27,6 @@ use crate::cargo::Metadata;
 use crate::cargo::Node;
 use crate::cargo::NodeDep;
 use crate::cargo::NodeDepKind;
-use crate::cargo::PkgId;
 use crate::cargo::TargetKind;
 use crate::cargo::TargetReq;
 use crate::config::Config;
@@ -38,27 +38,27 @@ use crate::platform::PlatformName;
 /// Index for interesting things in Cargo metadata
 pub struct Index<'meta> {
     config: &'meta Config,
-    /// Map a PkgId to the Manifest (package) with its details
-    pkgid_to_pkg: HashMap<&'meta PkgId, &'meta Manifest>,
-    /// Map a PkgId to a Node (ie all the details of a resolve dependency)
-    pkgid_to_node: HashMap<&'meta PkgId, &'meta Node>,
+    /// Map a PackageId to the Manifest (package) with its details
+    pkgid_to_pkg: HashMap<PackageId, &'meta Manifest>,
+    /// Map a PackageId to a Node (ie all the details of a resolve dependency)
+    pkgid_to_node: HashMap<PackageId, &'meta Node>,
     /// Per-platform feature resolution.
-    pkgid_platform_features: HashMap<(&'meta PkgId, &'meta PlatformName), ResolvedFeatures<'meta>>,
+    pkgid_platform_features: HashMap<(PackageId, &'meta PlatformName), ResolvedFeatures<'meta>>,
     /// Represents the Cargo.toml itself, if not a virtual manifest.
     pub root_pkg: Option<&'meta Manifest>,
     /// All packages considered part of the workspace.
     pub workspace_members: Vec<&'meta Manifest>,
     /// Faster lookup for workspace members
-    workspace_packages: HashSet<&'meta PkgId>,
+    workspace_packages: HashSet<PackageId>,
     /// Set of package IDs from which at least one target is public mapped to an optional rename
-    public_packages: BTreeMap<&'meta PkgId, Option<&'meta str>>,
+    public_packages: BTreeMap<PackageId, Option<&'meta str>>,
     /// The (possibly renamed) names of all packages which have at least one
     /// public target.
     public_package_names: BTreeSet<&'meta str>,
     /// Set of public targets. These consist of:
     /// - root_pkg, if it is being made public (aka "real", and not just a pseudo package)
     /// - first-order dependencies of root_pkg, including artifact dependencies
-    public_targets: BTreeMap<(&'meta PkgId, TargetReq<'meta>), Option<&'meta str>>,
+    public_targets: BTreeMap<(PackageId, TargetReq<'meta>), Option<&'meta str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +80,7 @@ pub struct ResolvedFeatures<'meta> {
     pub features: BTreeSet<&'meta str>,
     /// If the crate is present or will become present, what dependencies it
     /// would have.
-    pub deps: HashSet<(&'meta str, &'meta NodeDepKind, &'meta PkgId)>,
+    pub deps: HashSet<(&'meta str, &'meta NodeDepKind, PackageId)>,
 }
 
 impl<'meta> Index<'meta> {
@@ -92,7 +92,7 @@ impl<'meta> Index<'meta> {
         metadata: &'meta Metadata,
         fixups: &FixupsCache<'meta>,
     ) -> anyhow::Result<Index<'meta>> {
-        let pkgid_to_pkg: HashMap<_, _> = metadata.packages.iter().map(|m| (&m.id, m)).collect();
+        let pkgid_to_pkg: HashMap<_, _> = metadata.packages.iter().map(|m| (m.id, m)).collect();
 
         let root_pkg = metadata.resolve.root.as_ref().map(|root_pkgid| {
             *pkgid_to_pkg
@@ -102,7 +102,7 @@ impl<'meta> Index<'meta> {
 
         let top_levels = if config.include_top_level {
             Some(
-                &root_pkg
+                root_pkg
                     .context("`include_top_level = true` is not supported on a virtual manifest")?
                     .id,
             )
@@ -119,10 +119,10 @@ impl<'meta> Index<'meta> {
         let mut index = Index {
             config,
             pkgid_to_pkg,
-            pkgid_to_node: metadata.resolve.nodes.iter().map(|n| (&n.id, n)).collect(),
+            pkgid_to_node: metadata.resolve.nodes.iter().map(|n| (n.id, n)).collect(),
             pkgid_platform_features: HashMap::new(),
             root_pkg,
-            workspace_packages: workspace_members.iter().map(|x| &x.id).collect(),
+            workspace_packages: workspace_members.iter().map(|x| x.id).collect(),
             workspace_members,
             public_packages: BTreeMap::new(),
             public_package_names: BTreeSet::new(),
@@ -157,25 +157,25 @@ impl<'meta> Index<'meta> {
                         .unwrap();
                     let target_req = dep_kind.target_req();
                     let opt_rename = dep_renamed.get(name).cloned();
-                    ((&pkg.id, target_req), opt_rename)
+                    ((pkg.id, target_req), opt_rename)
                 })
             })
-            .chain(top_levels.iter().flat_map(|pkgid| {
+            .chain(top_levels.iter().flat_map(|&pkgid| {
                 [
-                    ((*pkgid, TargetReq::Lib), None),
-                    ((*pkgid, TargetReq::EveryBin), None),
+                    ((pkgid, TargetReq::Lib), None),
+                    ((pkgid, TargetReq::EveryBin), None),
                 ]
             }))
             .collect::<BTreeMap<_, _>>();
 
-        for ((id, _), rename) in &index.public_targets {
+        for (&(id, _), rename) in &index.public_targets {
             index.public_packages.insert(id, rename.clone());
             index
                 .public_package_names
                 .insert(if let &Some(rename) = rename {
                     rename
                 } else {
-                    &index.pkgid_to_pkg[id].name
+                    &index.pkgid_to_pkg[&id].name
                 });
         }
 
@@ -208,13 +208,13 @@ impl<'meta> Index<'meta> {
             };
             // Feature selection for the current workspace.
             for pkg in &index.workspace_members {
-                resolve.enable_crate_for_platform(&pkg.id, platform_name)?;
+                resolve.enable_crate_for_platform(pkg.id, platform_name)?;
                 if let Some(features) = &platform_config.features {
                     for feature in features {
-                        resolve.enable_feature_for_platform(&pkg.id, platform_name, feature)?;
+                        resolve.enable_feature_for_platform(pkg.id, platform_name, feature)?;
                     }
                 } else if pkg.features.contains_key("default") {
-                    resolve.enable_feature_for_platform(&pkg.id, platform_name, "default")?;
+                    resolve.enable_feature_for_platform(pkg.id, platform_name, "default")?;
                 }
             }
         }
@@ -248,7 +248,7 @@ impl<'meta> Index<'meta> {
 
     /// Test if a specific target from a package is public
     pub fn is_public_target(&self, pkg: &Manifest, target_req: TargetReq) -> bool {
-        self.public_targets.contains_key(&(&pkg.id, target_req))
+        self.public_targets.contains_key(&(pkg.id, target_req))
     }
 
     /// Return the private package rule name.
@@ -272,7 +272,7 @@ impl<'meta> Index<'meta> {
         for platform_name in self.config.platform.keys() {
             if self
                 .pkgid_platform_features
-                .contains_key(&(&pkg.id, platform_name))
+                .contains_key(&(pkg.id, platform_name))
             {
                 compatible_platforms.insert(platform_name);
             }
@@ -287,7 +287,7 @@ impl<'meta> Index<'meta> {
         platform_name: &PlatformName,
     ) -> BTreeSet<&str> {
         let mut features = BTreeSet::new();
-        if let Some(resolve) = self.pkgid_platform_features.get(&(&pkg.id, platform_name)) {
+        if let Some(resolve) = self.pkgid_platform_features.get(&(pkg.id, platform_name)) {
             for &feature in &resolve.features {
                 if !feature.starts_with("dep:") {
                     features.insert(feature);
@@ -309,7 +309,7 @@ impl<'meta> Index<'meta> {
 
         let mut resolved_deps = HashMap::new();
 
-        if let Some(resolve) = self.pkgid_platform_features.get(&(&pkg.id, platform_name)) {
+        if let Some(resolve) = self.pkgid_platform_features.get(&(pkg.id, platform_name)) {
             for &(rename, dep_kind, dep_id) in &resolve.deps {
                 if match dep_kind.kind {
                     DepKind::Normal => {
@@ -322,7 +322,7 @@ impl<'meta> Index<'meta> {
                     DepKind::Dev => tgt.kind_bench() || tgt.kind_test() || tgt.kind_example(),
                     DepKind::Build => tgt.kind_custom_build(),
                 } {
-                    let dep = &self.pkgid_to_pkg[dep_id];
+                    let dep = &self.pkgid_to_pkg[&dep_id];
                     // Key by everything except `target`.
                     let NodeDepKind {
                         kind,
@@ -381,15 +381,10 @@ impl<'meta> Index<'meta> {
 #[derive(Debug)]
 struct FeatureResolver<'a, 'meta> {
     pkgid_platform_features:
-        &'a mut HashMap<(&'meta PkgId, &'meta PlatformName), ResolvedFeatures<'meta>>,
-    pkgid_to_pkg: &'a HashMap<&'meta PkgId, &'meta Manifest>,
+        &'a mut HashMap<(PackageId, &'meta PlatformName), ResolvedFeatures<'meta>>,
+    pkgid_to_pkg: &'a HashMap<PackageId, &'meta Manifest>,
     manifest_deps: &'a HashMap<
-        (
-            &'meta PkgId,
-            &'meta str,
-            DepKind,
-            &'meta Option<PlatformExpr>,
-        ),
+        (PackageId, &'meta str, DepKind, &'meta Option<PlatformExpr>),
         Vec<(&'meta NodeDep, &'meta NodeDepKind, &'meta Manifest)>,
     >,
     public_package_names: &'a BTreeSet<&'meta str>,
@@ -400,7 +395,7 @@ struct FeatureResolver<'a, 'meta> {
 impl<'a, 'meta> FeatureResolver<'a, 'meta> {
     fn enable_crate_for_platform(
         &mut self,
-        pkgid: &'meta PkgId,
+        pkgid: PackageId,
         platform_name: &'meta PlatformName,
     ) -> anyhow::Result<()> {
         let resolve = self
@@ -415,7 +410,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         resolve.enabled = true;
 
         // Omit dependencies according to fixups.
-        let pkg = self.pkgid_to_pkg[pkgid];
+        let pkg = self.pkgid_to_pkg[&pkgid];
         let public = self.public_package_names.contains(pkg.name.as_str());
         let fixups = self.fixups.get(pkg, public)?;
 
@@ -450,7 +445,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                                 .or(dep_kind.extern_name.as_deref())
                                 .unwrap(),
                             dep_kind,
-                            &node_dep.pkg,
+                            node_dep.pkg,
                         ));
                 }
                 for dep_platform_name in platforms_for_dependency(
@@ -459,21 +454,21 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                     platform_name,
                     &self.config.platform[platform_name],
                 ) {
-                    self.enable_crate_for_platform(&node_dep.pkg, dep_platform_name)?;
+                    self.enable_crate_for_platform(node_dep.pkg, dep_platform_name)?;
                     if manifest_dep.uses_default_features
                         && self.pkgid_to_pkg[&node_dep.pkg]
                             .features
                             .contains_key("default")
                     {
                         self.enable_feature_for_platform(
-                            &node_dep.pkg,
+                            node_dep.pkg,
                             dep_platform_name,
                             "default",
                         )?;
                     }
                     for required_feature in &manifest_dep.features {
                         self.enable_feature_for_platform(
-                            &node_dep.pkg,
+                            node_dep.pkg,
                             dep_platform_name,
                             required_feature,
                         )?;
@@ -486,7 +481,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
 
     fn enable_feature_for_platform(
         &mut self,
-        pkgid: &'meta PkgId,
+        pkgid: PackageId,
         platform_name: &'meta PlatformName,
         enable_feature: &'meta str,
     ) -> anyhow::Result<()> {
@@ -496,7 +491,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
             .or_insert_with(ResolvedFeatures::default);
 
         // Omit features according to fixups.
-        let pkg = self.pkgid_to_pkg[pkgid];
+        let pkg = self.pkgid_to_pkg[&pkgid];
         let public = self.public_package_names.contains(pkg.name.as_str());
         let fixups = self.fixups.get(pkg, public)?;
         if fixups.omit_feature(platform_name, enable_feature)? {
@@ -512,7 +507,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                         let enable_dep = !dep.ends_with('?');
                         let dep = dep.strip_suffix('?').unwrap_or(dep);
                         // Find which dependency this feature refers to.
-                        for manifest_dep in &self.pkgid_to_pkg[pkgid].dependencies {
+                        for manifest_dep in &self.pkgid_to_pkg[&pkgid].dependencies {
                             if dep == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
                                 && match manifest_dep.kind {
                                     DepKind::Normal | DepKind::Build => true,
@@ -547,14 +542,14 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                                                 .contains_key("default")
                                         {
                                             self.enable_feature_for_platform(
-                                                &node_dep.pkg,
+                                                node_dep.pkg,
                                                 dep_platform_name,
                                                 "default",
                                             )?;
                                         }
                                         for required_feature in &manifest_dep.features {
                                             self.enable_feature_for_platform(
-                                                &node_dep.pkg,
+                                                node_dep.pkg,
                                                 dep_platform_name,
                                                 required_feature,
                                             )?;
@@ -563,7 +558,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                                 }
                                 for dep_platform_name in dep_platforms {
                                     self.enable_feature_for_platform(
-                                        &node_dep.pkg,
+                                        node_dep.pkg,
                                         dep_platform_name,
                                         enable_feature,
                                     )?;
@@ -581,12 +576,12 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
 
     fn enable_dependency_for_platform(
         &mut self,
-        pkgid: &'meta PkgId,
+        pkgid: PackageId,
         platform_name: &'meta PlatformName,
         enable_dependency: &'meta str,
     ) -> anyhow::Result<()> {
         // Omit dependencies according to fixups.
-        let pkg = self.pkgid_to_pkg[pkgid];
+        let pkg = self.pkgid_to_pkg[&pkgid];
         let public = self.public_package_names.contains(pkg.name.as_str());
         let fixups = self.fixups.get(pkg, public)?;
         if fixups.omit_dep(platform_name, enable_dependency)? {
@@ -621,7 +616,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                                 .or(dep_kind.extern_name.as_deref())
                                 .unwrap(),
                             dep_kind,
-                            &node_dep.pkg,
+                            node_dep.pkg,
                         ));
                 }
                 for dep_platform_name in platforms_for_dependency(
@@ -630,21 +625,21 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                     platform_name,
                     &self.config.platform[platform_name],
                 ) {
-                    self.enable_crate_for_platform(&node_dep.pkg, dep_platform_name)?;
+                    self.enable_crate_for_platform(node_dep.pkg, dep_platform_name)?;
                     if manifest_dep.uses_default_features
                         && self.pkgid_to_pkg[&node_dep.pkg]
                             .features
                             .contains_key("default")
                     {
                         self.enable_feature_for_platform(
-                            &node_dep.pkg,
+                            node_dep.pkg,
                             dep_platform_name,
                             "default",
                         )?;
                     }
                     for required_feature in &manifest_dep.features {
                         self.enable_feature_for_platform(
-                            &node_dep.pkg,
+                            node_dep.pkg,
                             dep_platform_name,
                             required_feature,
                         )?;
@@ -678,7 +673,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
     /// NodeDep will provide all the other crates in this ManifestDep too.
     fn resolve_dep(
         &self,
-        pkgid: &'meta PkgId,
+        pkgid: PackageId,
         manifest_dep: &'meta ManifestDep,
     ) -> anyhow::Result<&'meta NodeDep> {
         let Some(candidates) = self.manifest_deps.get(&(
