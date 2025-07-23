@@ -14,7 +14,7 @@ cached = { version = "0.55.1", features = ["async"] }
 cargo = "0.91"
 cargo_toml = "0.22.1"
 clap = { version = "4.5.38", features = ["derive", "env", "string", "unicode", "wrap_help"] }
-dunce = "1.0.2"
+dunce = "1.0.5"
 env_logger = { version = "0.11.8", features = ["color"] }
 fnv = "1.0"
 foldhash = "0.1.5"
