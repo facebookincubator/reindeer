@@ -775,7 +775,7 @@ dependencies = [
 [[package]]
 name = "cxx"
 version = "1.0.160"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+https://github.com/facebookexperimental/cxx.git?rev=43f8f85eb1b9d99f10f7228ab679997c484ade69#43f8f85eb1b9d99f10f7228ab679997c484ade69"
 dependencies = [
  "cc",
  "cxxbridge-cmd",
@@ -788,7 +788,7 @@ dependencies = [
 [[package]]
 name = "cxx-build"
 version = "1.0.160"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+https://github.com/facebookexperimental/cxx.git?rev=43f8f85eb1b9d99f10f7228ab679997c484ade69#43f8f85eb1b9d99f10f7228ab679997c484ade69"
 dependencies = [
  "cc",
  "codespan-reporting",
@@ -802,7 +802,7 @@ dependencies = [
 [[package]]
 name = "cxxbridge-cmd"
 version = "1.0.160"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+https://github.com/facebookexperimental/cxx.git?rev=43f8f85eb1b9d99f10f7228ab679997c484ade69#43f8f85eb1b9d99f10f7228ab679997c484ade69"
 dependencies = [
  "clap",
  "codespan-reporting",
@@ -815,12 +815,12 @@ dependencies = [
 [[package]]
 name = "cxxbridge-flags"
 version = "1.0.160"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+https://github.com/facebookexperimental/cxx.git?rev=43f8f85eb1b9d99f10f7228ab679997c484ade69#43f8f85eb1b9d99f10f7228ab679997c484ade69"
 
 [[package]]
 name = "cxxbridge-macro"
 version = "1.0.160"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+https://github.com/facebookexperimental/cxx.git?rev=43f8f85eb1b9d99f10f7228ab679997c484ade69#43f8f85eb1b9d99f10f7228ab679997c484ade69"
 dependencies = [
  "indexmap 2.10.0",
  "proc-macro2",
