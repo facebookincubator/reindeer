@@ -10,7 +10,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0.98"
-cached = { version = "0.55.1", features = ["async"] }
+cached = { version = "0.55.1", features = ["async", "disk_store"] }
 cargo = "0.91"
 cargo_toml = "0.22.1"
 clap = { version = "4.5.41", features = ["derive", "env", "string", "unicode", "wrap_help"] }
