@@ -502,10 +502,7 @@ fn generate_target_rules<'scope>(
 
         // If we're configured to get precise sources and we're using 2018+ edition
         // source, then parse the crate to see what files are actually used.
-        if (matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local))
-            && fixups.precise_srcs()
-            && edition >= Edition::Rust2018
-        {
+        if fixups.precise_srcs() && edition >= Edition::Rust2018 {
             measure_time::trace_time!("srcfiles for {}", pkg);
             srcs = srcfiles(manifest_dir.to_owned(), tgt.src_path.clone());
         }
