@@ -71,6 +71,7 @@ use crate::index::Index;
 use crate::lockfile::Lockfile;
 use crate::lockfile::LockfilePackage;
 use crate::path::normalize_path;
+use crate::path::normalized_extend_path;
 use crate::path::relative_path;
 use crate::platform::PlatformName;
 use crate::srcfiles::crate_srcfiles;
@@ -425,9 +426,9 @@ fn generate_target_rules<'scope>(
 
     let manifest_dir = pkg.manifest_dir();
     let mut manifest_dir_subtarget = None;
-    let mapped_manifest_dir = if matches!(config.vendor, VendorConfig::Source(_))
-        || matches!(pkg.source, Source::Local)
-    {
+    let mapped_manifest_dir;
+    let mut crate_root;
+    if matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local) {
         let relative_manifest_dir = match manifest_dir
             .strip_prefix(&paths.third_party_dir)
 			.with_context(|| format!(
@@ -444,22 +445,27 @@ fn generate_target_rules<'scope>(
                 relative_manifest_dir.to_owned(),
             )));
         }
-        relative_manifest_dir.to_owned()
-    } else if let VendorConfig::LocalRegistry = config.vendor {
-        PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
-    } else if let Source::Git { repo, .. } = &pkg.source {
-        let short_name = short_name_for_git_repo(repo)?;
-        let repository_root = find_repository_root(manifest_dir)?;
-        let path_within_repo = relative_path(repository_root, manifest_dir);
-        manifest_dir_subtarget = Some(SubtargetOrPath::Subtarget(Subtarget {
-            target: Name(format!("{}.git", short_name)),
-            relative: BuckPath(path_within_repo.clone()),
-        }));
-        PathBuf::from(short_name).join(path_within_repo)
+        mapped_manifest_dir = relative_manifest_dir.to_owned();
+        crate_root = relative_manifest_dir.to_owned();
+        normalized_extend_path(&mut crate_root, relative_path(manifest_dir, &tgt.src_path));
     } else {
-        PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
-    };
-    let crate_root = mapped_manifest_dir.join(relative_path(manifest_dir, &tgt.src_path));
+        mapped_manifest_dir = if let VendorConfig::LocalRegistry = config.vendor {
+            PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
+        } else if let Source::Git { repo, .. } = &pkg.source {
+            let short_name = short_name_for_git_repo(repo)?;
+            let repository_root = find_repository_root(manifest_dir)?;
+            let path_within_repo = relative_path(repository_root, manifest_dir);
+            manifest_dir_subtarget = Some(SubtargetOrPath::Subtarget(Subtarget {
+                target: Name(format!("{}.git", short_name)),
+                relative: BuckPath(path_within_repo.clone()),
+            }));
+            PathBuf::from(short_name).join(path_within_repo)
+        } else {
+            PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
+        };
+        crate_root = mapped_manifest_dir.join(relative_path(manifest_dir, &tgt.src_path));
+    }
+
     let edition = tgt.edition.unwrap_or(pkg.edition);
 
     let mut licenses = BTreeSet::new();
