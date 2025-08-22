@@ -191,10 +191,10 @@ pub struct VendorSourceConfig {
     /// List of .gitignore files to use to filter checksum files, relative to
     /// this config file.
     #[serde(default)]
-    pub gitignore_checksum_exclude: HashSet<PathBuf>,
+    pub gitignore_checksum_exclude: Vec<PathBuf>,
     /// Set of globs to remove from Cargo's checksun files in vendored dirs
     #[serde(default)]
-    pub checksum_exclude: HashSet<String>,
+    pub checksum_exclude: Vec<String>,
 }
 
 impl Default for VendorConfig {
