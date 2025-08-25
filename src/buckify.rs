@@ -247,14 +247,14 @@ fn generate_nonvendored_sources_archive<'scope>(
         Source::Local => Ok(None),
         Source::CratesIo => match context.config.vendor {
             VendorConfig::Off => generate_http_archive(context, pkg, lockfile_package).map(Some),
-            VendorConfig::LocalRegistry => generate_extract_archive(pkg).map(Some),
+            VendorConfig::LocalRegistry => Ok(Some(generate_extract_archive(pkg))),
             VendorConfig::Source(_) => unreachable!(),
         },
         Source::Git {
             repo, commit_hash, ..
         } => match context.config.vendor {
             VendorConfig::Off => generate_git_fetch(repo, commit_hash).map(Some),
-            VendorConfig::LocalRegistry => generate_extract_archive(pkg).map(Some),
+            VendorConfig::LocalRegistry => Ok(Some(generate_extract_archive(pkg))),
             VendorConfig::Source(_) => unreachable!(),
         },
         Source::Unrecognized(_) => {
@@ -267,8 +267,8 @@ fn generate_nonvendored_sources_archive<'scope>(
     }
 }
 
-fn generate_extract_archive(pkg: &Manifest) -> anyhow::Result<Rule> {
-    Ok(Rule::ExtractArchive(ExtractArchive {
+fn generate_extract_archive(pkg: &Manifest) -> Rule {
+    Rule::ExtractArchive(ExtractArchive {
         name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
         src: BuckPath(PathBuf::from(format!(
             "vendor/{}-{}.crate",
@@ -278,7 +278,7 @@ fn generate_extract_archive(pkg: &Manifest) -> anyhow::Result<Rule> {
         sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
         visibility: Visibility::Private,
         sort_key: Name(format!("{}-{}", pkg.name, pkg.version)),
-    }))
+    })
 }
 
 fn generate_http_archive<'scope>(
@@ -554,7 +554,7 @@ fn generate_target_rules<'scope>(
         &mut base,
         &mut perplat,
         &compatible_platforms,
-        |platform| fixups.compute_features(platform, index),
+        |platform| Ok(fixups.compute_features(platform, index)),
         |rule, feature| rule.features.insert(feature.to_owned()),
     )?;
 
@@ -563,7 +563,7 @@ fn generate_target_rules<'scope>(
     let mut platform_deps = Vec::new();
     let mut dep_in_how_many_platforms = HashMap::default();
     for &platform_name in &compatible_platforms {
-        let deps = fixups.compute_deps(platform_name, index, tgt)?;
+        let deps = fixups.compute_deps(platform_name, index, tgt);
         for (_manifest, dep, rename, dep_kind) in &deps {
             if let TargetReq::Cdylib = dep_kind.target_req() {
                 let artifact = &dep_kind.artifact;
@@ -649,7 +649,7 @@ fn generate_target_rules<'scope>(
         &mut base,
         &mut perplat,
         &compatible_platforms,
-        |platform| fixups.compute_rustc_cfg(platform),
+        |platform| Ok(fixups.compute_rustc_cfg(platform)),
         |rule, cfg| rule.rustc_flags.common.push(format!("--cfg={cfg}")),
     )?;
 
@@ -657,7 +657,7 @@ fn generate_target_rules<'scope>(
         &mut base,
         &mut perplat,
         &compatible_platforms,
-        |platform| fixups.compute_rustc_flags(platform).map(Some),
+        |platform| Ok(Some(fixups.compute_rustc_flags(platform))),
         |rule, flags| rule.rustc_flags.common.extend(flags),
     )?;
 
@@ -665,7 +665,7 @@ fn generate_target_rules<'scope>(
         &mut base,
         &mut perplat,
         &compatible_platforms,
-        |platform| fixups.compute_rustc_flags_select(platform),
+        |platform| Ok(fixups.compute_rustc_flags_select(platform)),
         |rule, rustc_flags_select| rule.rustc_flags.selects.push(rustc_flags_select),
     )?;
 
@@ -674,7 +674,7 @@ fn generate_target_rules<'scope>(
         &mut perplat,
         &compatible_platforms,
         |platform| {
-            Ok(if fixups.has_buildscript_for_platform(platform)? {
+            Ok(if fixups.has_buildscript_for_platform(platform) {
                 Some(())
             } else {
                 None
@@ -708,7 +708,7 @@ fn generate_target_rules<'scope>(
         &mut bin_base,
         &mut bin_perplat,
         &compatible_platforms,
-        |platform| fixups.compute_link_style(platform),
+        |platform| Ok(fixups.compute_link_style(platform)),
         |rule, link_style| rule.link_style = Some(link_style),
     )?;
 
@@ -716,7 +716,7 @@ fn generate_target_rules<'scope>(
         &mut bin_base,
         &mut bin_perplat,
         &compatible_platforms,
-        |platform| fixups.compute_linker_flags(platform).map(Some),
+        |platform| Ok(Some(fixups.compute_linker_flags(platform))),
         |rule, linker_flags| rule.linker_flags.extend(linker_flags),
     )?;
 
@@ -729,7 +729,7 @@ fn generate_target_rules<'scope>(
         &mut lib_base,
         &mut lib_perplat,
         &compatible_platforms,
-        |platform| fixups.compute_preferred_linkage(platform),
+        |platform| Ok(fixups.compute_preferred_linkage(platform)),
         |rule, preferred_linkage| rule.preferred_linkage = Some(preferred_linkage),
     )?;
 

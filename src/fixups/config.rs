@@ -234,8 +234,8 @@ pub struct FixupConfig {
 impl FixupConfig {
     /// Return set of overlay files, relative to the overlay dir (and therefore
     /// relative to manifest dir).
-    pub fn overlay_files(&self, fixup_dir: &Path) -> anyhow::Result<HashSet<PathBuf>> {
-        let files = match &self.overlay {
+    pub fn overlay_files(&self, fixup_dir: &Path) -> HashSet<PathBuf> {
+        match &self.overlay {
             Some(overlay) => {
                 let overlay_dir = fixup_dir.join(overlay);
                 WalkDir::new(&overlay_dir)
@@ -246,17 +246,15 @@ impl FixupConfig {
                     .collect()
             }
             None => HashSet::default(),
-        };
-
-        Ok(files)
+        }
     }
 
     /// Returns set of files that are provided either by an overlay or by mapped
     /// srcs.
-    pub fn overlay_and_mapped_files(&self, fixup_dir: &Path) -> anyhow::Result<HashSet<PathBuf>> {
-        let mut files = self.overlay_files(fixup_dir)?;
+    pub fn overlay_and_mapped_files(&self, fixup_dir: &Path) -> HashSet<PathBuf> {
+        let mut files = self.overlay_files(fixup_dir);
         files.extend(self.extra_mapped_srcs.values().map(PathBuf::clone));
-        Ok(files)
+        files
     }
 }
 

@@ -430,7 +430,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                 && !fixups.omit_dep(
                     platform_name,
                     manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name),
-                )?
+                )
             {
                 let node_dep = self.resolve_dep(pkgid, manifest_dep)?;
                 for dep_kind in &node_dep.dep_kinds {
@@ -494,7 +494,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         let pkg = self.pkgid_to_pkg[&pkgid];
         let public = self.public_package_names.contains(pkg.name.as_str());
         let fixups = self.fixups.get(pkg, public)?;
-        if fixups.omit_feature(platform_name, enable_feature)? {
+        if fixups.omit_feature(platform_name, enable_feature) {
             return Ok(());
         }
 
@@ -584,7 +584,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         let pkg = self.pkgid_to_pkg[&pkgid];
         let public = self.public_package_names.contains(pkg.name.as_str());
         let fixups = self.fixups.get(pkg, public)?;
-        if fixups.omit_dep(platform_name, enable_dependency)? {
+        if fixups.omit_dep(platform_name, enable_dependency) {
             return Ok(());
         }
 

@@ -343,7 +343,7 @@ impl<'meta> Fixups<'meta> {
                 }
             }
 
-            if self.has_buildscript_for_platform(platform_name)? {
+            if self.has_buildscript_for_platform(platform_name) {
                 buildscript_platforms.insert(platform_name);
             }
         }
@@ -638,7 +638,7 @@ impl<'meta> Fixups<'meta> {
         &self,
         platform_name: &PlatformName,
         index: &'meta Index<'meta>,
-    ) -> anyhow::Result<BTreeSet<&str>> {
+    ) -> BTreeSet<&str> {
         // Get features according to Cargo.
         let mut features = index.resolved_features(self.package, platform_name);
 
@@ -649,27 +649,20 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        Ok(features)
+        features
     }
 
-    pub fn omit_feature(
-        &self,
-        platform_name: &PlatformName,
-        feature: &str,
-    ) -> anyhow::Result<bool> {
+    pub fn omit_feature(&self, platform_name: &PlatformName, feature: &str) -> bool {
         for fixup in self.configs(platform_name) {
             if fixup.omit_features.contains(feature) {
-                return Ok(true);
+                return true;
             }
         }
 
-        Ok(false)
+        false
     }
 
-    pub fn compute_rustc_cfg(
-        &self,
-        platform_name: &PlatformName,
-    ) -> anyhow::Result<BTreeSet<String>> {
+    pub fn compute_rustc_cfg(&self, platform_name: &PlatformName) -> BTreeSet<String> {
         let mut cfgs = BTreeSet::new();
 
         for config in self.configs(platform_name) {
@@ -678,30 +671,30 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        Ok(cfgs)
+        cfgs
     }
 
-    pub fn compute_rustc_flags(&self, platform_name: &PlatformName) -> anyhow::Result<Vec<String>> {
+    pub fn compute_rustc_flags(&self, platform_name: &PlatformName) -> Vec<String> {
         let mut rustc_flags = Vec::new();
 
         for config in self.configs(platform_name) {
             rustc_flags.extend_from_slice(&config.rustc_flags);
         }
 
-        Ok(rustc_flags)
+        rustc_flags
     }
 
     pub fn compute_rustc_flags_select(
         &self,
         platform_name: &PlatformName,
-    ) -> anyhow::Result<Vec<BTreeMap<String, Vec<String>>>> {
+    ) -> Vec<BTreeMap<String, Vec<String>>> {
         let mut rustc_flags_select = Vec::new();
 
         for config in self.configs(platform_name) {
             rustc_flags_select.extend_from_slice(&config.rustc_flags_select);
         }
 
-        Ok(rustc_flags_select)
+        rustc_flags_select
     }
 
     /// Generate the set of deps for the target. This could just return the unmodified
@@ -713,14 +706,12 @@ impl<'meta> Fixups<'meta> {
         platform_name: &PlatformName,
         index: &'meta Index<'meta>,
         target: &'meta ManifestTarget,
-    ) -> anyhow::Result<
-        Vec<(
-            Option<&'meta Manifest>,
-            RuleRef,
-            Option<&'meta str>,
-            &'meta NodeDepKind,
-        )>,
-    > {
+    ) -> Vec<(
+        Option<&'meta Manifest>,
+        RuleRef,
+        Option<&'meta str>,
+        &'meta NodeDepKind,
+    )> {
         let mut ret = vec![];
 
         // Get dependencies according to Cargo.
@@ -828,17 +819,17 @@ impl<'meta> Fixups<'meta> {
             ));
         }
 
-        Ok(ret)
+        ret
     }
 
-    pub fn omit_dep(&self, platform_name: &PlatformName, dep: &str) -> anyhow::Result<bool> {
+    pub fn omit_dep(&self, platform_name: &PlatformName, dep: &str) -> bool {
         for fixup in self.configs(platform_name) {
             if fixup.omit_deps.contains(dep) {
-                return Ok(true);
+                return true;
             }
         }
 
-        Ok(false)
+        false
     }
 
     /// Additional environment
@@ -1006,7 +997,7 @@ impl<'meta> Fixups<'meta> {
         }
 
         for fixup in self.configs(platform_name) {
-            let mapped_files = fixup.overlay_and_mapped_files(&self.fixup_config.fixup_dir)?;
+            let mapped_files = fixup.overlay_and_mapped_files(&self.fixup_config.fixup_dir);
             ret.retain(|path| {
                 let path_in_crate = relative_path(&manifest_rel, path);
                 !mapped_files.contains(&path_in_crate) && !fixup.omit_srcs.is_match(&path_in_crate)
@@ -1095,7 +1086,7 @@ impl<'meta> Fixups<'meta> {
             if let Some(overlay) = &config.overlay {
                 let overlay_dir = self.fixup_config.fixup_dir.join(overlay);
                 let relative_overlay_dir = relative_path(self.third_party_dir, &overlay_dir);
-                let overlay_files = config.overlay_files(&self.fixup_config.fixup_dir)?;
+                let overlay_files = config.overlay_files(&self.fixup_config.fixup_dir);
 
                 log::debug!(
                     "pkg {} target {} overlay_dir {} overlay_files {:?}",
@@ -1117,25 +1108,19 @@ impl<'meta> Fixups<'meta> {
         Ok(ret)
     }
 
-    pub fn has_buildscript_for_platform(
-        &self,
-        platform_name: &PlatformName,
-    ) -> anyhow::Result<bool> {
+    pub fn has_buildscript_for_platform(&self, platform_name: &PlatformName) -> bool {
         if self.buildscript_target().is_some() {
             for config in self.configs(platform_name) {
                 if config.buildscript.run.is_some() {
-                    return Ok(true);
+                    return true;
                 }
             }
         }
-        Ok(false)
+        false
     }
 
     /// Compute link_style (how dependencies should be linked)
-    pub fn compute_link_style(
-        &self,
-        platform_name: &PlatformName,
-    ) -> anyhow::Result<Option<String>> {
+    pub fn compute_link_style(&self, platform_name: &PlatformName) -> Option<String> {
         let mut link_style = None;
 
         for config in self.configs(platform_name) {
@@ -1144,14 +1129,11 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        Ok(link_style.cloned())
+        link_style.cloned()
     }
 
     /// Compute preferred_linkage (how dependents should link you)
-    pub fn compute_preferred_linkage(
-        &self,
-        platform_name: &PlatformName,
-    ) -> anyhow::Result<Option<String>> {
+    pub fn compute_preferred_linkage(&self, platform_name: &PlatformName) -> Option<String> {
         let mut preferred_linkage = None;
 
         for config in self.configs(platform_name) {
@@ -1160,20 +1142,17 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        Ok(preferred_linkage.cloned())
+        preferred_linkage.cloned()
     }
 
     /// Compute linker_flags (extra flags for the linker)
-    pub fn compute_linker_flags(
-        &self,
-        platform_name: &PlatformName,
-    ) -> anyhow::Result<Vec<String>> {
+    pub fn compute_linker_flags(&self, platform_name: &PlatformName) -> Vec<String> {
         let mut linker_flags = Vec::new();
 
         for config in self.configs(platform_name) {
             linker_flags.extend_from_slice(&config.linker_flags);
         }
 
-        Ok(linker_flags)
+        linker_flags
     }
 }
