@@ -469,6 +469,7 @@ impl<'meta> Fixups<'meta> {
             public,
             compatible_with,
             target_compatible_with,
+            preferred_linkage,
             ..
         } in prebuilt_cxx_library
         {
@@ -505,6 +506,7 @@ impl<'meta> Fixups<'meta> {
                         target_compatible_with: target_compatible_with.clone(),
                     },
                     static_lib: self.subtarget_or_path(&static_lib)?,
+                    preferred_linkage: preferred_linkage.clone(),
                 };
                 res.push(Rule::PrebuiltCxxLibrary(rule));
             }
