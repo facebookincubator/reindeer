@@ -456,7 +456,7 @@ impl<'meta> Fixups<'meta> {
                 header_namespace: header_namespace.clone(),
                 deps: deps.iter().cloned().map(RuleRef::new).collect(),
                 preferred_linkage: preferred_linkage.clone(),
-                undefined_symbols: undefined_symbols.clone(),
+                undefined_symbols: *undefined_symbols,
             };
 
             res.push(Rule::CxxLibrary(rule));

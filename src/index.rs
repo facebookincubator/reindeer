@@ -168,11 +168,11 @@ impl<'meta> Index<'meta> {
             }))
             .collect::<BTreeMap<_, _>>();
 
-        for (&(id, _), rename) in &index.public_targets {
-            index.public_packages.insert(id, rename.clone());
+        for (&(id, _), &rename) in &index.public_targets {
+            index.public_packages.insert(id, rename);
             index
                 .public_package_names
-                .insert(if let &Some(rename) = rename {
+                .insert(if let Some(rename) = rename {
                     rename
                 } else {
                     &index.pkgid_to_pkg[&id].name
