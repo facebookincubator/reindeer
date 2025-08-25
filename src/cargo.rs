@@ -959,7 +959,7 @@ impl NodeDepKind {
         bin_name: None,
     };
 
-    pub fn target_req(&self) -> TargetReq {
+    pub fn target_req(&self) -> TargetReq<'_> {
         match self.artifact {
             None => TargetReq::Lib,
             Some(ArtifactKind::Bin) => {

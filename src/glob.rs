@@ -71,7 +71,7 @@ pub struct TrackedGlob {
 impl TrackedGlob {
     /// Used for selecting the right outermost directory to walk when matching
     /// this glob.
-    pub fn components(&self) -> path::Components {
+    pub fn components(&self) -> path::Components<'_> {
         Path::new(self.matcher.glob().glob()).components()
     }
 

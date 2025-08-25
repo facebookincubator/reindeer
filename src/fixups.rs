@@ -133,7 +133,7 @@ impl<'meta> FixupsCache<'meta> {
         })
     }
 
-    pub fn lock(&self) -> MutexGuard<BTreeMap<&'meta str, Arc<FixupConfigFile>>> {
+    pub fn lock(&self) -> MutexGuard<'_, BTreeMap<&'meta str, Arc<FixupConfigFile>>> {
         self.fixups.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
