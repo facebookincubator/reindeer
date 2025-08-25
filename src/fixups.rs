@@ -148,6 +148,7 @@ impl<'meta> Fixups<'meta> {
             if fixup.platform.eval(
                 &self.config.platform[platform_name],
                 Some(&self.package.version),
+                &BTreeSet::new(),
             ) {
                 configs.push(fixup);
             }

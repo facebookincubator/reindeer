@@ -275,9 +275,14 @@ impl PlatformExpr {
         Err(anyhow::Error::new(err).context(format!("Bad platform expression `{input}`")))
     }
 
-    pub fn eval(&self, config: &PlatformConfig, version: Option<&Version>) -> bool {
+    pub fn eval(
+        &self,
+        config: &PlatformConfig,
+        version: Option<&Version>,
+        extra_cfg: &BTreeSet<String>,
+    ) -> bool {
         match self {
-            PlatformExpr::Bool { key } => config.cfg.contains_key(key),
+            PlatformExpr::Bool { key } => config.cfg.contains_key(key) || extra_cfg.contains(key),
             PlatformExpr::Value { key, value } => {
                 if key == "feature" {
                     // [target.'cfg(feature = "...")'.dependencies] never get applied by Cargo
@@ -291,19 +296,23 @@ impl PlatformExpr {
                 Some(version) => req.matches(version),
             },
             PlatformExpr::Target(target) => config.target.as_ref() == Some(target),
-            PlatformExpr::Not(pred) => !pred.eval(config, version),
-            PlatformExpr::Any(preds) => preds.iter().any(|pred| pred.eval(config, version)),
-            PlatformExpr::All(preds) => preds.iter().all(|pred| pred.eval(config, version)),
+            PlatformExpr::Not(pred) => !pred.eval(config, version, extra_cfg),
+            PlatformExpr::Any(preds) => preds
+                .iter()
+                .any(|pred| pred.eval(config, version, extra_cfg)),
+            PlatformExpr::All(preds) => preds
+                .iter()
+                .all(|pred| pred.eval(config, version, extra_cfg)),
             PlatformExpr::Unix => PlatformExpr::Value {
                 key: "target_family".to_owned(),
                 value: "unix".to_owned(),
             }
-            .eval(config, version),
+            .eval(config, version, extra_cfg),
             PlatformExpr::Windows => PlatformExpr::Value {
                 key: "target_family".to_owned(),
                 value: "windows".to_owned(),
             }
-            .eval(config, version),
+            .eval(config, version, extra_cfg),
         }
     }
 }

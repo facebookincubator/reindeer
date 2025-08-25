@@ -422,9 +422,11 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                     DepKind::Dev => false,
                 }
                 && match &manifest_dep.target {
-                    Some(platform_expr) => {
-                        platform_expr.eval(&self.config.platform[platform_name], None)
-                    }
+                    Some(platform_expr) => platform_expr.eval(
+                        &self.config.platform[platform_name],
+                        None,
+                        &fixups.compute_rustc_cfg(platform_name),
+                    ),
                     None => true,
                 }
                 && !fixups.omit_dep(
@@ -514,8 +516,11 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                                     DepKind::Dev => false,
                                 }
                                 && match &manifest_dep.target {
-                                    Some(platform_expr) => platform_expr
-                                        .eval(&self.config.platform[platform_name], None),
+                                    Some(platform_expr) => platform_expr.eval(
+                                        &self.config.platform[platform_name],
+                                        None,
+                                        &fixups.compute_rustc_cfg(platform_name),
+                                    ),
                                     None => true,
                                 }
                             {
@@ -597,9 +602,11 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                     DepKind::Dev => false,
                 }
                 && match &manifest_dep.target {
-                    Some(platform_expr) => {
-                        platform_expr.eval(&self.config.platform[platform_name], None)
-                    }
+                    Some(platform_expr) => platform_expr.eval(
+                        &self.config.platform[platform_name],
+                        None,
+                        &fixups.compute_rustc_cfg(platform_name),
+                    ),
                     None => true,
                 }
             {
