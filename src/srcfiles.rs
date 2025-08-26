@@ -414,7 +414,7 @@ mod tests {
     use super::*;
 
     macro_rules! scaffold {
-        ($( $path:expr_2021 => $content:tt),+ ,) => {
+        ($( $path:expr => $content:tt),+ ,) => {
             (|| -> Result<TempDir, io::Error> {
                 let dir = tempdir()?;
                 $(
