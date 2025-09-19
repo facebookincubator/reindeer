@@ -26,8 +26,8 @@ package is unofficial and community-maintained.
 
 ## Getting started
 
-There's a complete (but small) [example](example) to get started with. More
-complete documentation is in [docs](docs/MANUAL.md).
+There are several complete (but small) [examples](examples) to get started with.
+More complete documentation is in [docs](docs/MANUAL.md).
 
 ## Contributing
 
