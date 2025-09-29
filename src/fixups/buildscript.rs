@@ -135,6 +135,8 @@ pub struct PrebuiltCxxLibraryFixup {
     pub compatible_with: Vec<RuleRef>,
     #[serde(default)]
     pub target_compatible_with: Vec<RuleRef>,
+    #[serde(default)]
+    pub preferred_linkage: Option<String>,
 }
 
 #[derive(Debug)]
