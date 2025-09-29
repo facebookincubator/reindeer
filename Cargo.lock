@@ -773,7 +773,7 @@ dependencies = [
 [[package]]
 name = "cxx"
 version = "1.0.160"
-source = "git+https://github.com/facebookexperimental/cxx.git?rev=43f8f85eb1b9d99f10f7228ab679997c484ade69#43f8f85eb1b9d99f10f7228ab679997c484ade69"
+source = "git+https://github.com/facebookexperimental/cxx.git?rev=870ebbecad0f6be394d4f9fb9bd62b551662651a#870ebbecad0f6be394d4f9fb9bd62b551662651a"
 dependencies = [
  "cc",
  "cxxbridge-cmd",
@@ -786,7 +786,7 @@ dependencies = [
 [[package]]
 name = "cxx-build"
 version = "1.0.160"
-source = "git+https://github.com/facebookexperimental/cxx.git?rev=43f8f85eb1b9d99f10f7228ab679997c484ade69#43f8f85eb1b9d99f10f7228ab679997c484ade69"
+source = "git+https://github.com/facebookexperimental/cxx.git?rev=870ebbecad0f6be394d4f9fb9bd62b551662651a#870ebbecad0f6be394d4f9fb9bd62b551662651a"
 dependencies = [
  "cc",
  "codespan-reporting",
@@ -800,7 +800,7 @@ dependencies = [
 [[package]]
 name = "cxxbridge-cmd"
 version = "1.0.160"
-source = "git+https://github.com/facebookexperimental/cxx.git?rev=43f8f85eb1b9d99f10f7228ab679997c484ade69#43f8f85eb1b9d99f10f7228ab679997c484ade69"
+source = "git+https://github.com/facebookexperimental/cxx.git?rev=870ebbecad0f6be394d4f9fb9bd62b551662651a#870ebbecad0f6be394d4f9fb9bd62b551662651a"
 dependencies = [
  "clap",
  "codespan-reporting",
@@ -813,12 +813,12 @@ dependencies = [
 [[package]]
 name = "cxxbridge-flags"
 version = "1.0.160"
-source = "git+https://github.com/facebookexperimental/cxx.git?rev=43f8f85eb1b9d99f10f7228ab679997c484ade69#43f8f85eb1b9d99f10f7228ab679997c484ade69"
+source = "git+https://github.com/facebookexperimental/cxx.git?rev=870ebbecad0f6be394d4f9fb9bd62b551662651a#870ebbecad0f6be394d4f9fb9bd62b551662651a"
 
 [[package]]
 name = "cxxbridge-macro"
 version = "1.0.160"
-source = "git+https://github.com/facebookexperimental/cxx.git?rev=43f8f85eb1b9d99f10f7228ab679997c484ade69#43f8f85eb1b9d99f10f7228ab679997c484ade69"
+source = "git+https://github.com/facebookexperimental/cxx.git?rev=870ebbecad0f6be394d4f9fb9bd62b551662651a#870ebbecad0f6be394d4f9fb9bd62b551662651a"
 dependencies = [
  "indexmap 2.10.0",
  "proc-macro2",
