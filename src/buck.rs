@@ -697,7 +697,13 @@ impl Serialize for BuildscriptGenrule {
             version,
             local_manifest_dir,
             manifest_dir,
-            base: PlatformBuildscriptGenrule { features, env },
+            base:
+                PlatformBuildscriptGenrule {
+                    features,
+                    env,
+                    rustc_link_lib,
+                    rustc_link_search,
+                },
             platform,
         } = self;
         let mut map = ser.serialize_map(None)?;
@@ -717,6 +723,12 @@ impl Serialize for BuildscriptGenrule {
             map.serialize_entry("manifest_dir", manifest_dir)?;
         }
         serialize_platforms_dict(&mut map, platform)?;
+        if *rustc_link_lib {
+            map.serialize_entry("rustc_link_lib", &true)?;
+        }
+        if *rustc_link_search {
+            map.serialize_entry("rustc_link_search", &true)?;
+        }
         map.serialize_entry("version", version)?;
         map.end()
     }
@@ -726,17 +738,30 @@ impl Serialize for BuildscriptGenrule {
 pub struct PlatformBuildscriptGenrule {
     pub features: BTreeSet<String>,
     pub env: BTreeMap<String, StringOrPath>,
+    pub rustc_link_lib: bool,
+    pub rustc_link_search: bool,
 }
 
 impl Serialize for PlatformBuildscriptGenrule {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        let Self { features, env } = self;
+        let Self {
+            features,
+            env,
+            rustc_link_lib,
+            rustc_link_search,
+        } = self;
         let mut map = ser.serialize_map(None)?;
         if !env.is_empty() {
             map.serialize_entry("env", env)?;
         }
         if !features.is_empty() {
             map.serialize_entry("features", features)?;
+        }
+        if *rustc_link_lib {
+            map.serialize_entry("rustc_link_lib", &true)?;
+        }
+        if *rustc_link_search {
+            map.serialize_entry("rustc_link_search", &true)?;
         }
         map.end()
     }

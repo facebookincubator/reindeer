@@ -59,15 +59,17 @@ pub struct BuildscriptBuild {
 }
 
 /// Run the buildscript and extract rustc command line flags + generated sources.
-///
-/// Linker `-l`/`-L` flags are ignored so in practice the flags are just for `--cfg`.
 #[derive(Default, Debug, Clone, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct BuildscriptRun {
-    // Runtime environment for the build script. Not provided to build script
-    // compilation.
+    /// Runtime environment for the build script. Not provided to build script
+    /// compilation.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Whether to translate cargo::rustc-link-lib into `-l` flags for rustc.
+    pub rustc_link_lib: Option<bool>,
+    /// Whether to translate cargo::rustc-link-search into `-L` flags for rustc.
+    pub rustc_link_search: Option<bool>,
 }
 
 fn set_true() -> bool {

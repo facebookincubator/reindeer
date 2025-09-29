@@ -45,7 +45,6 @@ use crate::cargo::TargetKind;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
-use crate::fixups::buildscript::BuildscriptRun;
 use crate::fixups::buildscript::CxxLibraryFixup;
 use crate::fixups::buildscript::ExportedHeaders;
 use crate::fixups::buildscript::PrebuiltCxxLibraryFixup;
@@ -540,6 +539,8 @@ impl<'meta> Fixups<'meta> {
                 base: PlatformBuildscriptGenrule {
                     features: buildscript_build.common.base.features.clone(),
                     env: BTreeMap::new(),
+                    rustc_link_lib: false,
+                    rustc_link_search: false,
                 },
                 platform: BTreeMap::new(),
             };
@@ -553,6 +554,8 @@ impl<'meta> Fixups<'meta> {
                         PlatformBuildscriptGenrule {
                             features: buildscript_build_common.features.clone(),
                             env: BTreeMap::new(),
+                            rustc_link_lib: false,
+                            rustc_link_search: false,
                         },
                     );
                 }
@@ -611,8 +614,8 @@ impl<'meta> Fixups<'meta> {
                 |platform_name| {
                     let mut buildscript_run_env = BTreeMap::new();
                     for fixup in self.configs(platform_name) {
-                        if let Some(BuildscriptRun { env }) = &fixup.buildscript.run {
-                            buildscript_run_env.extend(env);
+                        if let Some(fixup_buildscript_run) = &fixup.buildscript.run {
+                            buildscript_run_env.extend(&fixup_buildscript_run.env);
                         }
                     }
                     Ok(buildscript_run_env)
@@ -621,6 +624,45 @@ impl<'meta> Fixups<'meta> {
                     rule.env
                         .insert(key.clone(), StringOrPath::String(value.clone()));
                 },
+            )?;
+
+            evaluate_for_platforms(
+                &mut buildscript_run.base,
+                &mut buildscript_run.platform,
+                &buildscript_platforms,
+                |platform_name| {
+                    let mut rustc_link_lib = false;
+                    for fixup in self.configs(platform_name) {
+                        if let Some(fixup_buildscript_run) = &fixup.buildscript.run {
+                            if let Some(fixup_rustc_link_lib) = fixup_buildscript_run.rustc_link_lib
+                            {
+                                rustc_link_lib = fixup_rustc_link_lib;
+                            }
+                        }
+                    }
+                    Ok([rustc_link_lib])
+                },
+                |rule, rustc_link_lib| rule.rustc_link_lib = rustc_link_lib,
+            )?;
+
+            evaluate_for_platforms(
+                &mut buildscript_run.base,
+                &mut buildscript_run.platform,
+                &buildscript_platforms,
+                |platform_name| {
+                    let mut rustc_link_search = false;
+                    for fixup in self.configs(platform_name) {
+                        if let Some(fixup_buildscript_run) = &fixup.buildscript.run {
+                            if let Some(fixup_rustc_link_search) =
+                                fixup_buildscript_run.rustc_link_search
+                            {
+                                rustc_link_search = fixup_rustc_link_search;
+                            }
+                        }
+                    }
+                    Ok([rustc_link_search])
+                },
+                |rule, rustc_link_search| rule.rustc_link_search = rustc_link_search,
             )?;
 
             // Emit the build script itself
