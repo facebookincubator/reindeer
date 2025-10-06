@@ -932,6 +932,7 @@ impl<'a> Serialize for PreprocessorFlags<'a> {
 pub struct PrebuiltCxxLibrary {
     pub common: Common,
     pub static_lib: SubtargetOrPath,
+    pub preferred_linkage: Option<String>,
 }
 
 impl Serialize for PrebuiltCxxLibrary {
@@ -946,6 +947,7 @@ impl Serialize for PrebuiltCxxLibrary {
                     target_compatible_with,
                 },
             static_lib,
+            preferred_linkage,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
@@ -960,6 +962,9 @@ impl Serialize for PrebuiltCxxLibrary {
             map.serialize_entry("target_compatible_with", target_compatible_with)?;
         }
         map.serialize_entry("visibility", visibility)?;
+        if let Some(preferred_linkage) = preferred_linkage {
+            map.serialize_entry("preferred_linkage", preferred_linkage)?;
+        }
         map.end()
     }
 }
