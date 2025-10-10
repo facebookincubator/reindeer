@@ -988,6 +988,7 @@ pub enum TargetReq<'a> {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[expect(dead_code)]
 pub enum CompileMode {
     Build,
     RunCustomBuild,
@@ -1033,6 +1034,7 @@ pub enum TargetKind {
 }
 
 #[derive(Debug, Deserialize)]
+#[expect(dead_code)]
 pub enum BuildKind {
     Host,
 }

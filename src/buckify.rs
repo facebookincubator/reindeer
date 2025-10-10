@@ -561,10 +561,14 @@ fn generate_target_rules<'scope>(
     // Compute set of dependencies any rule we generate here will need. They will only
     // be emitted if we actually emit some rules below.
     let mut platform_deps = Vec::new();
-    let mut dep_in_how_many_platforms = HashMap::default();
     for &platform_name in &compatible_platforms {
         let deps = fixups.compute_deps(platform_name, index, tgt);
-        for (_manifest, dep, rename, dep_kind) in &deps {
+        platform_deps.push((platform_name, deps));
+    }
+
+    let mut dep_in_how_many_platforms = HashMap::default();
+    for (_platform_name, deps) in &platform_deps {
+        for key @ (dep, _rename, dep_kind) in deps.keys() {
             if let TargetReq::Cdylib = dep_kind.target_req() {
                 let artifact = &dep_kind.artifact;
                 bail!("unsupported artifact kind {artifact:?} for dependency {dep:?}");
@@ -578,16 +582,13 @@ fn generate_target_rules<'scope>(
                 bail!("unsupported compile_target {compile_target:?} for dependency {dep:?}");
             }
 
-            let key = (dep.clone(), *rename, *dep_kind);
             *dep_in_how_many_platforms.entry(key).or_insert(0) += 1;
         }
-        platform_deps.push((platform_name, deps));
     }
 
     let mut dep_pkgs = Vec::new();
     for &(platform_name, ref deps) in &platform_deps {
-        for &(manifest, ref dep, rename, dep_kind) in deps {
-            let key = (dep.clone(), rename, dep_kind);
+        for (key @ &(ref dep, rename, dep_kind), &manifest) in deps {
             let recipient = if dep_in_how_many_platforms[&key] == compatible_platforms.len() {
                 &mut base
             } else {

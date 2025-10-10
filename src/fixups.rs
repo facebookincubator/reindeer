@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::collections::btree_map;
 use std::fmt;
 use std::path::Path;
@@ -749,13 +750,8 @@ impl<'meta> Fixups<'meta> {
         platform_name: &PlatformName,
         index: &'meta Index<'meta>,
         target: &'meta ManifestTarget,
-    ) -> Vec<(
-        Option<&'meta Manifest>,
-        RuleRef,
-        Option<&'meta str>,
-        &'meta NodeDepKind,
-    )> {
-        let mut ret = vec![];
+    ) -> HashMap<(RuleRef, Option<&'meta str>, &'meta NodeDepKind), Option<&'meta Manifest>> {
+        let mut ret = HashMap::new();
 
         // Get dependencies according to Cargo.
         let deps = index.resolved_deps_for_target(self.package, target, platform_name);
@@ -776,12 +772,10 @@ impl<'meta> Fixups<'meta> {
             omit_deps.extend(fixup_omit_deps.iter().map(String::as_str));
 
             for dep in fixup_extra_deps {
-                ret.push((
+                ret.insert(
+                    (RuleRef::new(dep.to_string()), None, &NodeDepKind::ORDINARY),
                     None,
-                    RuleRef::new(dep.to_string()),
-                    None,
-                    &NodeDepKind::ORDINARY,
-                ));
+                );
             }
 
             for CxxLibraryFixup {
@@ -794,16 +788,18 @@ impl<'meta> Fixups<'meta> {
                 if !add_dep || !self.target_match(target, targets) {
                     continue;
                 }
-                ret.push((
+                ret.insert(
+                    (
+                        RuleRef::new(format!(
+                            ":{}-{}",
+                            index.private_rule_name(self.package),
+                            name
+                        )),
+                        None,
+                        &NodeDepKind::ORDINARY,
+                    ),
                     None,
-                    RuleRef::new(format!(
-                        ":{}-{}",
-                        index.private_rule_name(self.package),
-                        name
-                    )),
-                    None,
-                    &NodeDepKind::ORDINARY,
-                ));
+                );
             }
 
             for PrebuiltCxxLibraryFixup {
@@ -819,17 +815,19 @@ impl<'meta> Fixups<'meta> {
                 }
                 let static_lib_globs = Globs::new(static_libs, NO_EXCLUDE);
                 for static_lib in static_lib_globs.walk(self.manifest_dir) {
-                    ret.push((
+                    ret.insert(
+                        (
+                            RuleRef::new(format!(
+                                ":{}-{}-{}",
+                                index.private_rule_name(self.package),
+                                name,
+                                static_lib.file_name().unwrap().to_string_lossy(),
+                            )),
+                            None,
+                            &NodeDepKind::ORDINARY,
+                        ),
                         None,
-                        RuleRef::new(format!(
-                            ":{}-{}-{}",
-                            index.private_rule_name(self.package),
-                            name,
-                            static_lib.file_name().unwrap().to_string_lossy(),
-                        )),
-                        None,
-                        &NodeDepKind::ORDINARY,
-                    ));
+                    );
                 }
             }
         }
@@ -850,16 +848,18 @@ impl<'meta> Fixups<'meta> {
                 target.kind()
             );
 
-            ret.push((
+            ret.insert(
+                (
+                    RuleRef::from(index.private_rule_name(package)),
+                    // Only use the rename if it isn't the same as the target anyway.
+                    match package.dependency_target() {
+                        Some(tgt) if tgt.name.replace('-', "_") == rename => None,
+                        Some(_) | None => Some(rename),
+                    },
+                    dep_kind,
+                ),
                 Some(package),
-                RuleRef::from(index.private_rule_name(package)),
-                // Only use the rename if it isn't the same as the target anyway.
-                match package.dependency_target() {
-                    Some(tgt) if tgt.name.replace('-', "_") == rename => None,
-                    Some(_) | None => Some(rename),
-                },
-                dep_kind,
-            ));
+            );
         }
 
         ret
