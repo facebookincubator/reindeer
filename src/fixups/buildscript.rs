@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
+use std::ops::Range;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -19,31 +20,23 @@ use serde::de::SeqAccess;
 use serde::de::Visitor;
 use serde::de::value::MapAccessDeserializer;
 use serde::de::value::SeqAccessDeserializer;
+use toml::Spanned;
 
 use crate::buck::RuleRef;
 use crate::cargo::TargetKind;
 use crate::glob::TrackedGlobSet;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct BuildscriptFixups {
     pub build: BuildscriptBuild,
     pub run: Option<BuildscriptRun>,
-    // False whenever this BuildscriptFixups has been deserialized from a
-    // `[buildscript.run]` section or `buildscript.run = true` key in a
-    // fixups.toml file. True whenever this BuildscriptFixups was initialized by
-    // omission of buildscript key in a fixups.toml, or there was not even a
-    // fixups.toml.
-    pub defaulted_to_empty: bool,
-}
-
-impl Default for BuildscriptFixups {
-    fn default() -> Self {
-        BuildscriptFixups {
-            build: BuildscriptBuild::default(),
-            run: None,
-            defaulted_to_empty: true,
-        }
-    }
+    // Byte range in the fixups.toml file, whenever this BuildscriptFixups has
+    // been deserialized from a `[buildscript.run]` section or `buildscript.run
+    // = true` key in a fixups.toml file.
+    //
+    // If this BuildscriptFixups was initialized by omission of buildscript key
+    // in a fixups.toml, or there was not even a fixups.toml, then None.
+    pub span: Option<Range<usize>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Default)]
@@ -254,7 +247,7 @@ impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
         Ok(BuildscriptFixups {
             build: build.unwrap_or_else(BuildscriptBuild::default),
             run,
-            defaulted_to_empty: false,
+            span: None,
         })
     }
 }
@@ -264,6 +257,22 @@ impl<'de> Deserialize<'de> for BuildscriptFixups {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_map(BuildscriptFixupsVisitor)
+        struct BuildscriptFixupsWithoutSpan(BuildscriptFixups);
+
+        impl<'de> Deserialize<'de> for BuildscriptFixupsWithoutSpan {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let fixups = deserializer.deserialize_map(BuildscriptFixupsVisitor)?;
+                Ok(BuildscriptFixupsWithoutSpan(fixups))
+            }
+        }
+
+        let fixups = Spanned::<BuildscriptFixupsWithoutSpan>::deserialize(deserializer)?;
+        Ok(BuildscriptFixups {
+            span: Some(fixups.span()),
+            ..fixups.into_inner().0
+        })
     }
 }

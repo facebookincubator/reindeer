@@ -307,7 +307,7 @@ impl<'meta> Fixups<'meta> {
         for platform_name in compatible_platforms {
             let mut has_explicit_buildscript_fixup = false;
             for fixup in self.configs(platform_name) {
-                if !fixup.buildscript.defaulted_to_empty {
+                if fixup.buildscript.span.is_some() {
                     has_explicit_buildscript_fixup = true;
                     break;
                 }
