@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 
 use serde::Deserialize;
 use serde::Deserializer;
@@ -37,6 +38,8 @@ pub struct BuildscriptFixups {
     // If this BuildscriptFixups was initialized by omission of buildscript key
     // in a fixups.toml, or there was not even a fixups.toml, then None.
     pub span: Option<Range<usize>>,
+    // Whether there exists any crate version that this fixup has been applied to.
+    pub used: AtomicBool,
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Default)]
@@ -248,6 +251,7 @@ impl<'de> Visitor<'de> for BuildscriptFixupsVisitor {
             build: build.unwrap_or_else(BuildscriptBuild::default),
             run,
             span: None,
+            used: AtomicBool::new(false),
         })
     }
 }

@@ -12,6 +12,8 @@ use std::fs;
 use std::iter;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use anyhow::Context as _;
 use foldhash::HashMap;
@@ -121,6 +123,19 @@ impl FixupConfigFile {
     }
 
     pub fn collect_unused(&self, pkg: &str, unused: &mut UnusedFixups) {
+        for fixup in iter::once(&self.base).chain(&self.platform_fixup) {
+            if let Some(span) = &fixup.buildscript.span {
+                if fixup.used.load(Ordering::Relaxed)
+                    && !fixup.buildscript.used.load(Ordering::Relaxed)
+                {
+                    unused.buildscripts.insert(
+                        (pkg.to_owned(), span.start),
+                        self.toml[..span.start].split('\n').count(),
+                    );
+                }
+            }
+        }
+
         let mut collect =
             |globset: &TrackedGlobSet| globset.collect_unused_globs(unused, pkg, &self.toml);
 
@@ -166,6 +181,9 @@ pub struct FixupConfig {
     /// Cfg expression determining what platforms this fixup applies to.
     #[serde(skip)]
     pub platform: PlatformExpr,
+    /// Whether there exists any crate version that this fixup has been applied to.
+    #[serde(skip)]
+    pub used: AtomicBool,
 
     /// Extra src globs, rooted in manifest dir for package
     #[serde(default)]

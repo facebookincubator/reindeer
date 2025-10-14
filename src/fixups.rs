@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::PoisonError;
+use std::sync::atomic::Ordering;
 
 use anyhow::bail;
 use foldhash::HashSet;
@@ -142,6 +143,7 @@ impl<'meta> Fixups<'meta> {
     fn configs(&self, platform_name: &PlatformName) -> Vec<&FixupConfig> {
         let mut configs = Vec::with_capacity(1 + self.fixup_config.platform_fixup.len());
 
+        self.fixup_config.base.used.store(true, Ordering::Relaxed);
         configs.push(&self.fixup_config.base);
 
         for fixup in &self.fixup_config.platform_fixup {
@@ -150,6 +152,7 @@ impl<'meta> Fixups<'meta> {
                 Some(&self.package.version),
                 &BTreeSet::new(),
             ) {
+                fixup.used.store(true, Ordering::Relaxed);
                 configs.push(fixup);
             }
         }
@@ -309,7 +312,7 @@ impl<'meta> Fixups<'meta> {
             for fixup in self.configs(platform_name) {
                 if fixup.buildscript.span.is_some() {
                     has_explicit_buildscript_fixup = true;
-                    break;
+                    fixup.buildscript.used.store(true, Ordering::Relaxed);
                 }
             }
             if !has_explicit_buildscript_fixup {

@@ -1058,13 +1058,15 @@ pub(crate) fn buckify(
     };
     let rules = do_buckify(&context)?;
 
-    if config.strict_globs {
-        let mut unused = UnusedFixups::new();
-        for (name, fixup) in &*context.fixups.lock() {
-            fixup.collect_unused(name, &mut unused);
-        }
-        unused.check()?;
+    // Report unused fixups
+    let mut unused = UnusedFixups::new();
+    for (name, fixup) in &*context.fixups.lock() {
+        fixup.collect_unused(name, &mut unused);
     }
+    if !config.strict_globs {
+        unused.globs.clear();
+    }
+    unused.check()?;
 
     // Emit build rules to stdout
     if stdout {
