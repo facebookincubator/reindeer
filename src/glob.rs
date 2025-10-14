@@ -5,10 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use std::collections::BTreeMap;
-use std::error::Error;
 use std::fmt;
-use std::fmt::Display;
 use std::ops::Range;
 use std::path;
 use std::path::Path;
@@ -16,7 +13,6 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
-use globset::Glob;
 use globset::GlobBuilder;
 use globset::GlobMatcher;
 use globset::GlobSet;
@@ -25,6 +21,8 @@ use serde::Deserializer;
 use serde::de::Visitor;
 use toml::Spanned;
 use walkdir::WalkDir;
+
+use crate::unused::UnusedFixups;
 
 pub struct SerializedGlob {
     matcher: GlobMatcher,
@@ -121,7 +119,7 @@ impl TrackedGlobSet {
         !matches.is_empty()
     }
 
-    pub fn collect_unused_globs(&self, unused: &mut UnusedGlobs, pkg: &str, toml: &str) {
+    pub fn collect_unused_globs(&self, unused: &mut UnusedFixups, pkg: &str, toml: &str) {
         for glob in &self.vec {
             if !glob.used.load(Ordering::Relaxed) {
                 unused.globs.insert(
@@ -239,44 +237,5 @@ impl<'a> From<&'a TrackedGlob> for GlobSetKind<'a> {
 impl<'a> From<&'a TrackedGlobSet> for GlobSetKind<'a> {
     fn from(globset: &'a TrackedGlobSet) -> Self {
         GlobSetKind::TrackedSet(globset)
-    }
-}
-
-#[derive(Debug)]
-pub struct UnusedGlobs {
-    // key = (pkg, byte offset) for nicely sorted output
-    // value = (line, glob)
-    globs: BTreeMap<(String, usize), (usize, Glob)>,
-}
-
-impl UnusedGlobs {
-    pub fn new() -> Self {
-        UnusedGlobs {
-            globs: BTreeMap::new(),
-        }
-    }
-
-    pub fn check(self) -> anyhow::Result<()> {
-        if self.globs.is_empty() {
-            Ok(())
-        } else {
-            Err(anyhow::Error::new(self))
-        }
-    }
-}
-
-impl Error for UnusedGlobs {}
-
-impl Display for UnusedGlobs {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("Unused globs:")?;
-        for ((pkg, _offset), (line, glob)) in &self.globs {
-            write!(
-                formatter,
-                "\nfixups/{pkg}/fixups.toml line {line}: {glob:?} matches no files",
-                glob = glob.glob(),
-            )?;
-        }
-        Ok(())
     }
 }

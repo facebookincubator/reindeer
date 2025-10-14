@@ -36,9 +36,9 @@ use crate::fixups::buildscript::CxxLibraryFixup;
 use crate::fixups::buildscript::ExportedHeaders;
 use crate::fixups::buildscript::PrebuiltCxxLibraryFixup;
 use crate::glob::TrackedGlobSet;
-use crate::glob::UnusedGlobs;
 use crate::path::relative_path;
 use crate::platform::PlatformExpr;
+use crate::unused::UnusedFixups;
 
 /// Top-level fixup config file (correspondins to a fixups.toml)
 #[derive(Debug, Default)]
@@ -120,7 +120,7 @@ impl FixupConfigFile {
         Ok(fixup_config)
     }
 
-    pub fn collect_unused_globs(&self, pkg: &str, unused: &mut UnusedGlobs) {
+    pub fn collect_unused(&self, pkg: &str, unused: &mut UnusedFixups) {
         let mut collect =
             |globset: &TrackedGlobSet| globset.collect_unused_globs(unused, pkg, &self.toml);
 

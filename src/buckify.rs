@@ -66,7 +66,6 @@ use crate::fixups::FixupsCache;
 use crate::glob::GlobSetKind;
 use crate::glob::Globs;
 use crate::glob::NO_EXCLUDE;
-use crate::glob::UnusedGlobs;
 use crate::index::Index;
 use crate::lockfile::Lockfile;
 use crate::lockfile::LockfilePackage;
@@ -77,6 +76,7 @@ use crate::platform::PlatformName;
 use crate::srcfiles::crate_srcfiles;
 use crate::subtarget::CollectSubtargets;
 use crate::subtarget::Subtarget;
+use crate::unused::UnusedFixups;
 
 pub fn evaluate_for_platforms<Rule, Collection, R>(
     common: &mut Rule,
@@ -1059,9 +1059,9 @@ pub(crate) fn buckify(
     let rules = do_buckify(&context)?;
 
     if config.strict_globs {
-        let mut unused = UnusedGlobs::new();
+        let mut unused = UnusedFixups::new();
         for (name, fixup) in &*context.fixups.lock() {
-            fixup.collect_unused_globs(name, &mut unused);
+            fixup.collect_unused(name, &mut unused);
         }
         unused.check()?;
     }

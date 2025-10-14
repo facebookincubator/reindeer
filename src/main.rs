@@ -46,6 +46,7 @@ mod platform;
 mod remap;
 mod srcfiles;
 mod subtarget;
+mod unused;
 mod vendor;
 
 #[derive(Debug, Parser)]
