@@ -16,7 +16,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
 use anyhow::Context as _;
-use foldhash::HashMap;
 use foldhash::HashSet;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -211,7 +210,7 @@ pub struct FixupConfig {
     /// This only has an effect for top-level crates. Exposed crates
     /// by default get `visibility = ["PUBLIC"]`. Sometimes you want to
     /// discourage use of some crate by limiting its visibility.
-    pub visibility: Option<CustomVisibility>,
+    pub visibility: Option<Vec<String>>,
 
     /// Omit a target
     pub omit_targets: Option<BTreeSet<String>>,
@@ -456,13 +455,6 @@ impl<'de> Deserialize<'de> for CargoEnvs {
     {
         deserializer.deserialize_any(CargoEnvsVisitor)
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum CustomVisibility {
-    NoVersion(Vec<String>),
-    WithVersion(HashMap<semver::VersionReq, Vec<String>>),
 }
 
 struct FixupConfigFileVisitor {

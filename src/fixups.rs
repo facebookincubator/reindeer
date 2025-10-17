@@ -53,7 +53,6 @@ use crate::fixups::buildscript::PrebuiltCxxLibraryFixup;
 use crate::fixups::config::CargoEnv;
 use crate::fixups::config::CargoEnvPurpose;
 pub use crate::fixups::config::CargoEnvs;
-use crate::fixups::config::CustomVisibility;
 pub use crate::fixups::config::ExportSources;
 use crate::fixups::config::FixupConfig;
 use crate::fixups::config::FixupConfigFile;
@@ -231,19 +230,8 @@ impl<'meta> Fixups<'meta> {
         let mut visibility = Visibility::Public;
 
         for config in self.platform_independent_configs() {
-            match &config.visibility {
-                None => {}
-                Some(CustomVisibility::NoVersion(custom_visibility)) => {
-                    visibility = Visibility::Custom(custom_visibility.to_vec());
-                }
-                Some(CustomVisibility::WithVersion(versioned)) => {
-                    for (req, custom_visibility) in versioned {
-                        if req.matches(&self.package.version) {
-                            visibility = Visibility::Custom(custom_visibility.to_vec());
-                            break;
-                        }
-                    }
-                }
+            if let Some(custom_visibility) = &config.visibility {
+                visibility = Visibility::Custom(custom_visibility.clone());
             }
         }
 
