@@ -31,6 +31,7 @@ use strum::IntoEnumIterator as _;
 use walkdir::WalkDir;
 
 use crate::buck::RuleRef;
+use crate::buck::Visibility;
 use crate::cargo::Manifest;
 use crate::fixups::buildscript::BuildscriptFixups;
 use crate::fixups::buildscript::CxxLibraryFixup;
@@ -195,7 +196,7 @@ pub struct ExportSources {
     #[serde(default)]
     pub exclude: TrackedGlobSet,
     /// Visibility for the rule
-    pub visibility: Vec<String>,
+    pub visibility: Visibility,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -212,7 +213,7 @@ pub struct FixupConfig {
     /// This only has an effect for top-level crates. Exposed crates
     /// by default get `visibility = ["PUBLIC"]`. Sometimes you want to
     /// discourage use of some crate by limiting its visibility.
-    pub visibility: Option<Vec<String>>,
+    pub visibility: Option<Visibility>,
 
     /// Omit a target
     pub omit_targets: Option<BTreeSet<String>>,

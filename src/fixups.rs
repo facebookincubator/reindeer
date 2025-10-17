@@ -226,12 +226,12 @@ impl<'meta> Fixups<'meta> {
         }
     }
 
-    pub fn public_visibility(&self) -> Visibility {
-        let mut visibility = Visibility::Public;
+    pub fn visibility(&self) -> &Visibility {
+        let mut visibility = &Visibility::Public;
 
         for config in self.platform_independent_configs() {
             if let Some(custom_visibility) = &config.visibility {
-                visibility = Visibility::Custom(custom_visibility.clone());
+                visibility = custom_visibility;
             }
         }
 
@@ -439,7 +439,7 @@ impl<'meta> Fixups<'meta> {
                     name: Name(format!("{}-{}", index.public_rule_name(self.package), name)),
                     actual: actual.clone(),
                     platforms: None,
-                    visibility: self.public_visibility(),
+                    visibility: self.visibility().clone(),
                 });
                 res.push(rule);
             }
@@ -550,7 +550,7 @@ impl<'meta> Fixups<'meta> {
                         )),
                         actual: actual.clone(),
                         platforms: None,
-                        visibility: self.public_visibility(),
+                        visibility: self.visibility().clone(),
                     });
                     res.push(rule);
                 }

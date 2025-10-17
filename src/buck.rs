@@ -20,6 +20,7 @@ use std::path::PathBuf;
 
 use semver::Version;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
@@ -168,6 +169,22 @@ impl Serialize for Visibility {
             Visibility::Private => (&[] as &[&str]).serialize(ser),
             Visibility::Custom(custom_visiblity) => custom_visiblity.serialize(ser),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for Visibility {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let visibility = Vec::<String>::deserialize(deserializer)?;
+        Ok(if visibility.is_empty() {
+            Visibility::Private
+        } else if visibility.len() == 1 && visibility[0] == "PUBLIC" {
+            Visibility::Public
+        } else {
+            Visibility::Custom(visibility)
+        })
     }
 }
 

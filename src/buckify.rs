@@ -773,7 +773,7 @@ fn generate_target_rules<'scope>(
                 name: index.public_rule_name(pkg),
                 actual: index.private_rule_name(pkg),
                 platforms,
-                visibility: fixups.public_visibility(),
+                visibility: fixups.visibility().clone(),
             }));
         }
 
@@ -786,7 +786,7 @@ fn generate_target_rules<'scope>(
                         index.private_rule_name(pkg)
                     },
                     visibility: if index.is_root_package(pkg) {
-                        fixups.public_visibility()
+                        fixups.visibility().clone()
                     } else {
                         Visibility::Private
                     },
@@ -841,7 +841,7 @@ fn generate_target_rules<'scope>(
                 name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
                 actual: actual.clone(),
                 platforms,
-                visibility: fixups.public_visibility(),
+                visibility: fixups.visibility().clone(),
             }));
         }
 
@@ -925,7 +925,7 @@ fn generate_target_rules<'scope>(
         let rule = Filegroup {
             name: Name(format!("{}-{}", index.private_rule_name(pkg), name)),
             srcs,
-            visibility: Visibility::Custom(visibility.to_vec()),
+            visibility: visibility.clone(),
         };
         rules.push(Rule::Filegroup(rule));
     }
