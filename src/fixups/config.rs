@@ -161,22 +161,24 @@ impl FixupConfigFile {
             |globset: &TrackedGlobSet| globset.collect_unused_globs(unused, pkg, &self.toml);
 
         for fixup in iter::once(&self.base).chain(&self.platform_fixup) {
-            if let Some(export_sources) = &fixup.export_sources {
-                collect(&export_sources.srcs);
-                collect(&export_sources.exclude)
-            }
-            collect(&fixup.extra_srcs);
-            collect(&fixup.omit_srcs);
-            for cxx_library in &fixup.cxx_library {
-                collect(&cxx_library.srcs);
-                collect(&cxx_library.headers);
-                if let ExportedHeaders::Set(exported_headers) = &cxx_library.exported_headers {
-                    collect(exported_headers);
+            if fixup.used.load(Ordering::Relaxed) {
+                if let Some(export_sources) = &fixup.export_sources {
+                    collect(&export_sources.srcs);
+                    collect(&export_sources.exclude)
                 }
-                collect(&cxx_library.exclude);
-            }
-            for prebuilt_cxx_library in &fixup.prebuilt_cxx_library {
-                collect(&prebuilt_cxx_library.static_libs);
+                collect(&fixup.extra_srcs);
+                collect(&fixup.omit_srcs);
+                for cxx_library in &fixup.cxx_library {
+                    collect(&cxx_library.srcs);
+                    collect(&cxx_library.headers);
+                    if let ExportedHeaders::Set(exported_headers) = &cxx_library.exported_headers {
+                        collect(exported_headers);
+                    }
+                    collect(&cxx_library.exclude);
+                }
+                for prebuilt_cxx_library in &fixup.prebuilt_cxx_library {
+                    collect(&prebuilt_cxx_library.static_libs);
+                }
             }
         }
     }

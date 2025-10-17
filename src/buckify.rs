@@ -1063,9 +1063,6 @@ pub(crate) fn buckify(
     for (name, fixup) in &*context.fixups.lock() {
         fixup.collect_unused(name, &mut unused);
     }
-    if !config.strict_globs {
-        unused.globs.clear();
-    }
     unused.check()?;
 
     // Emit build rules to stdout

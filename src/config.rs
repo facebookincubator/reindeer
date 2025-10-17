@@ -86,10 +86,6 @@ pub struct Config {
     #[serde(default)]
     pub include_workspace_members: bool,
 
-    /// Use strict glob matching
-    #[serde(default)]
-    pub strict_globs: bool,
-
     /// List of Cargo environment variables (like CARGO_PKG_AUTHORS) to provide
     /// to crates by default, when not otherwise specified by a crate-specific
     /// fixup. Default: none.
