@@ -160,6 +160,22 @@ impl<'meta> Fixups<'meta> {
         configs
     }
 
+    fn platform_independent_configs(&self) -> Vec<&FixupConfig> {
+        let mut configs = Vec::with_capacity(1 + self.fixup_config.platform_fixup.len());
+
+        self.fixup_config.base.used.store(true, Ordering::Relaxed);
+        configs.push(&self.fixup_config.base);
+
+        for fixup in &self.fixup_config.platform_fixup {
+            if let Some(true) = fixup.platform.eval_only_version(&self.package.version) {
+                fixup.used.store(true, Ordering::Relaxed);
+                configs.push(fixup);
+            }
+        }
+
+        configs
+    }
+
     // Return true if the script applies to this target.
     // There's a few cases:
     // - if the script doesn't specify a target, then it applies to the main "lib" target of the package
@@ -212,44 +228,95 @@ impl<'meta> Fixups<'meta> {
     }
 
     pub fn public_visibility(&self) -> Visibility {
-        match self.fixup_config.custom_visibility.as_ref() {
-            Some(visibility) => match visibility {
-                CustomVisibility::NoVersion(global) => Visibility::Custom(global.to_vec()),
-                CustomVisibility::WithVersion(versioned) => versioned
-                    .iter()
-                    .filter(|(k, _)| k.matches(&self.package.version))
-                    .map(|(_, v)| Visibility::Custom(v.to_vec()))
-                    .next()
-                    .unwrap_or(Visibility::Public),
-            },
-            None => Visibility::Public,
+        let mut visibility = Visibility::Public;
+
+        for config in self.platform_independent_configs() {
+            match &config.visibility {
+                None => {}
+                Some(CustomVisibility::NoVersion(custom_visibility)) => {
+                    visibility = Visibility::Custom(custom_visibility.to_vec());
+                }
+                Some(CustomVisibility::WithVersion(versioned)) => {
+                    for (req, custom_visibility) in versioned {
+                        if req.matches(&self.package.version) {
+                            visibility = Visibility::Custom(custom_visibility.to_vec());
+                            break;
+                        }
+                    }
+                }
+            }
         }
+
+        visibility
     }
 
     pub fn python_ext(&self) -> Option<&str> {
-        self.fixup_config.python_ext.as_deref()
+        let mut python_ext = None;
+
+        for config in self.platform_independent_configs() {
+            if config.python_ext.is_some() {
+                python_ext = config.python_ext.as_deref();
+            }
+        }
+
+        python_ext
     }
 
     pub fn omit_target(&self, target: &ManifestTarget) -> bool {
-        self.fixup_config.omit_targets.contains(&target.name)
+        for config in self.platform_independent_configs() {
+            if let Some(omit_targets) = &config.omit_targets {
+                if omit_targets.contains(&target.name) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
-    pub fn export_sources(&self) -> Option<&ExportSources> {
-        self.fixup_config.export_sources.as_ref()
+    pub fn export_sources(&self) -> Vec<&ExportSources> {
+        let mut export_sources = Vec::new();
+
+        for config in self.platform_independent_configs() {
+            export_sources.extend(&config.export_sources);
+        }
+
+        export_sources
     }
 
     pub fn compatible_with(&self) -> &Vec<RuleRef> {
-        &self.fixup_config.compatible_with
+        let mut compatible_with = None;
+
+        for config in self.platform_independent_configs() {
+            if config.compatible_with.is_some() {
+                compatible_with = config.compatible_with.as_ref();
+            }
+        }
+
+        compatible_with.unwrap_or(const { &Vec::new() })
     }
 
     pub fn target_compatible_with(&self) -> &Vec<RuleRef> {
-        &self.fixup_config.target_compatible_with
+        let mut target_compatible_with = None;
+
+        for config in self.platform_independent_configs() {
+            if config.target_compatible_with.is_some() {
+                target_compatible_with = config.target_compatible_with.as_ref();
+            }
+        }
+
+        target_compatible_with.unwrap_or(const { &Vec::new() })
     }
 
     pub fn precise_srcs(&self) -> bool {
-        self.fixup_config
-            .precise_srcs
-            .unwrap_or(self.config.precise_srcs)
+        let mut precise_srcs = None;
+
+        for config in self.platform_independent_configs() {
+            if config.precise_srcs.is_some() {
+                precise_srcs = config.precise_srcs;
+            }
+        }
+
+        precise_srcs.unwrap_or(self.config.precise_srcs)
     }
 
     fn buildscript_target(&self) -> Option<&ManifestTarget> {

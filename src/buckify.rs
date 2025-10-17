@@ -875,12 +875,12 @@ fn generate_target_rules<'scope>(
         vec![]
     };
 
-    if let Some(ExportSources {
+    for ExportSources {
         name,
         srcs,
         exclude,
         visibility,
-    }) = fixups.export_sources()
+    } in fixups.export_sources()
     {
         // For non-disk sources (i.e. non-vendor mode git_fetch and
         // http_archive), `srcs` and `exclude` are ignored because

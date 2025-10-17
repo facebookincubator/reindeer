@@ -10,6 +10,7 @@ use std::error;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::ops::Not as _;
 
 use foldhash::HashMap;
 use foldhash::HashSet;
@@ -275,6 +276,23 @@ impl PlatformExpr {
         Err(anyhow::Error::new(err).context(format!("Bad platform expression `{input}`")))
     }
 
+    /// Used for restricting fixups that are allowed to be version-specific but
+    /// not platform-specific.
+    pub fn uses_cfg_other_than_version(&self) -> bool {
+        match self {
+            PlatformExpr::Any(inner) | PlatformExpr::All(inner) => {
+                inner.iter().any(Self::uses_cfg_other_than_version)
+            }
+            PlatformExpr::Not(inner) => inner.uses_cfg_other_than_version(),
+            PlatformExpr::Value { .. }
+            | PlatformExpr::Bool { .. }
+            | PlatformExpr::Target(_)
+            | PlatformExpr::Unix
+            | PlatformExpr::Windows => true,
+            PlatformExpr::Version(_) => false,
+        }
+    }
+
     pub fn eval(
         &self,
         config: &PlatformConfig,
@@ -313,6 +331,34 @@ impl PlatformExpr {
                 value: "windows".to_owned(),
             }
             .eval(config, version, extra_cfg),
+        }
+    }
+
+    pub fn eval_only_version(&self, version: &Version) -> Option<bool> {
+        match self {
+            PlatformExpr::Version(req) => Some(req.matches(version)),
+            PlatformExpr::Any(inner) => {
+                for pred in inner {
+                    if pred.eval_only_version(version)? {
+                        return Some(true);
+                    }
+                }
+                Some(false)
+            }
+            PlatformExpr::All(inner) => {
+                for pred in inner {
+                    if !pred.eval_only_version(version)? {
+                        return Some(false);
+                    }
+                }
+                Some(true)
+            }
+            PlatformExpr::Not(inner) => inner.eval_only_version(version).map(bool::not),
+            PlatformExpr::Value { .. }
+            | PlatformExpr::Bool { .. }
+            | PlatformExpr::Target(_)
+            | PlatformExpr::Unix
+            | PlatformExpr::Windows => None,
         }
     }
 }

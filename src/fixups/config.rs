@@ -50,36 +50,6 @@ pub struct FixupConfigFile {
     /// Source text that this config was deserialized from.
     toml: String,
 
-    /// Limit an exposed crate's `alias`'s `visibility` to this.
-    /// This only has an effect for top-level crates. Exposed crates
-    /// by default get `visibility = ["PUBLIC"]`. Sometimes you want to
-    /// discourage use of some crate by limiting its visibility.
-    pub custom_visibility: Option<CustomVisibility>,
-
-    /// Omit a target
-    pub omit_targets: BTreeSet<String>,
-
-    /// Skip precise srcs detection and fallback to `**/*.rs`.
-    /// Overrides the global config `precise_srcs` for this crate.
-    /// This is useful for pathologically large crates where
-    /// src detection dominates buckification (e.g. the `windows` crate).
-    pub precise_srcs: Option<bool>,
-
-    /// If the crate is generating a cdylib which is intended to be
-    /// a Python extension module, set this to give the module name.
-    /// This is passed as a `python_ext` parameter on the `rust_library`
-    /// rule so it can be mapped to the right underlying rule.
-    pub python_ext: Option<String>,
-
-    /// Make the crate sources available through a `filegroup`.
-    /// This is useful for manually handling build scripts.
-    pub export_sources: Option<ExportSources>,
-
-    /// Platform compatibility. The same value will apply to the library and all
-    /// binary targets contained in the same package.
-    pub compatible_with: Vec<RuleRef>,
-    pub target_compatible_with: Vec<RuleRef>,
-
     /// Common config
     pub base: FixupConfig,
 
@@ -112,11 +82,63 @@ impl FixupConfigFile {
             .and_then(|de| de.deserialize_map(visitor))
             .with_context(|| format!("Failed to parse {}", fixup_path.display()))?;
 
-        if fixup_config.custom_visibility.is_some() && !public {
-            return Err(
-                anyhow::Error::msg("only public packages can have a fixup `visibility`.")
-                    .context(format!("package {package} is private.")),
-            );
+        for fixup in iter::once(&fixup_config.base).chain(&fixup_config.platform_fixup) {
+            if fixup.visibility.is_some() && !public {
+                return Err(anyhow::Error::msg(
+                    "only public packages can have a fixup `visibility`.",
+                )
+                .context(format!("package {package} is private.")));
+            }
+
+            match fixup {
+                FixupConfig {
+                    // serde(skip)
+                    platform: _,
+                    used: _,
+                    // Fields that NOT allowed to be platform-specific:
+                    visibility: None,
+                    omit_targets: None,
+                    precise_srcs: None,
+                    python_ext: None,
+                    export_sources: None,
+                    compatible_with: None,
+                    target_compatible_with: None,
+                    // Fields that are allowed to be platform-specific:
+                    extra_srcs: _,
+                    omit_srcs: _,
+                    rustc_flags: _,
+                    rustc_flags_select: _,
+                    cfgs: _,
+                    features: _,
+                    omit_features: _,
+                    extra_deps: _,
+                    omit_deps: _,
+                    cargo_env: _,
+                    overlay: _,
+                    link_style: _,
+                    preferred_linkage: _,
+                    linker_flags: _,
+                    env: _,
+                    buildscript: _,
+                    cxx_library: _,
+                    prebuilt_cxx_library: _,
+                    extra_mapped_srcs: _,
+                } => {}
+                _ => {
+                    if fixup.platform.uses_cfg_other_than_version() {
+                        return Err(anyhow::Error::msg(
+                            "the following fixups are not allowed to be platform-specific: \
+                            visibility, \
+                            omit_targets, \
+                            precise_srcs, \
+                            python_ext, \
+                            export_sources, \
+                            compatible_with, \
+                            target_compatible_with",
+                        ));
+                    }
+                }
+            }
         }
 
         Ok(fixup_config)
@@ -139,11 +161,11 @@ impl FixupConfigFile {
         let mut collect =
             |globset: &TrackedGlobSet| globset.collect_unused_globs(unused, pkg, &self.toml);
 
-        if let Some(export_sources) = &self.export_sources {
-            collect(&export_sources.srcs);
-            collect(&export_sources.exclude)
-        }
         for fixup in iter::once(&self.base).chain(&self.platform_fixup) {
+            if let Some(export_sources) = &fixup.export_sources {
+                collect(&export_sources.srcs);
+                collect(&export_sources.exclude)
+            }
             collect(&fixup.extra_srcs);
             collect(&fixup.omit_srcs);
             for cxx_library in &fixup.cxx_library {
@@ -184,6 +206,36 @@ pub struct FixupConfig {
     /// Whether there exists any crate version that this fixup has been applied to.
     #[serde(skip)]
     pub used: AtomicBool,
+
+    /// Limit an exposed crate's `alias`'s `visibility` to this.
+    /// This only has an effect for top-level crates. Exposed crates
+    /// by default get `visibility = ["PUBLIC"]`. Sometimes you want to
+    /// discourage use of some crate by limiting its visibility.
+    pub visibility: Option<CustomVisibility>,
+
+    /// Omit a target
+    pub omit_targets: Option<BTreeSet<String>>,
+
+    /// Skip precise srcs detection and fallback to `**/*.rs`.
+    /// Overrides the global config `precise_srcs` for this crate.
+    /// This is useful for pathologically large crates where
+    /// src detection dominates buckification (e.g. the `windows` crate).
+    pub precise_srcs: Option<bool>,
+
+    /// If the crate is generating a cdylib which is intended to be
+    /// a Python extension module, set this to give the module name.
+    /// This is passed as a `python_ext` parameter on the `rust_library`
+    /// rule so it can be mapped to the right underlying rule.
+    pub python_ext: Option<String>,
+
+    /// Make the crate sources available through a `filegroup`.
+    /// This is useful for manually handling build scripts.
+    pub export_sources: Option<ExportSources>,
+
+    /// Platform compatibility. The same value will apply to the library and all
+    /// binary targets contained in the same package.
+    pub compatible_with: Option<Vec<RuleRef>>,
+    pub target_compatible_with: Option<Vec<RuleRef>>,
 
     /// Extra src globs, rooted in manifest dir for package
     #[serde(default)]
@@ -431,13 +483,6 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
     {
         struct FixupsMap<M> {
             map: M,
-            custom_visibility: Option<CustomVisibility>,
-            omit_targets: Option<BTreeSet<String>>,
-            precise_srcs: Option<bool>,
-            python_ext: Option<String>,
-            export_sources: Option<ExportSources>,
-            compatible_with: Option<Vec<RuleRef>>,
-            target_compatible_with: Option<Vec<RuleRef>>,
             platform_fixup: Vec<FixupConfig>,
         }
 
@@ -452,60 +497,13 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
                 K: DeserializeSeed<'de>,
             {
                 while let Some(field) = self.map.next_key::<String>()? {
-                    match field.as_str() {
-                        "visibility" => {
-                            if self.custom_visibility.is_some() {
-                                return Err(M::Error::duplicate_field("visibility"));
-                            }
-                            self.custom_visibility = Some(self.map.next_value()?);
-                        }
-                        "omit_targets" => {
-                            if self.omit_targets.is_some() {
-                                return Err(M::Error::duplicate_field("omit_targets"));
-                            }
-                            self.omit_targets = Some(self.map.next_value()?);
-                        }
-                        "precise_srcs" => {
-                            if self.precise_srcs.is_some() {
-                                return Err(M::Error::duplicate_field("precise_srcs"));
-                            }
-                            self.precise_srcs = Some(self.map.next_value()?);
-                        }
-                        "python_ext" => {
-                            if self.python_ext.is_some() {
-                                return Err(M::Error::duplicate_field("python_ext"));
-                            }
-                            self.python_ext = Some(self.map.next_value()?);
-                        }
-                        "export_sources" => {
-                            if self.export_sources.is_some() {
-                                return Err(M::Error::duplicate_field("export_sources"));
-                            }
-                            self.export_sources = Some(self.map.next_value()?);
-                        }
-                        "compatible_with" => {
-                            if self.compatible_with.is_some() {
-                                return Err(M::Error::duplicate_field("compatible_with"));
-                            }
-                            self.compatible_with = Some(self.map.next_value()?);
-                        }
-                        "target_compatible_with" => {
-                            if self.target_compatible_with.is_some() {
-                                return Err(M::Error::duplicate_field("target_compatible_with"));
-                            }
-                            self.target_compatible_with = Some(self.map.next_value()?);
-                        }
-                        _ => {
-                            if field.starts_with("cfg(") {
-                                self.platform_fixup.push(FixupConfig {
-                                    platform: PlatformExpr::parse(&field)
-                                        .map_err(M::Error::custom)?,
-                                    ..self.map.next_value()?
-                                });
-                            } else {
-                                return seed.deserialize(StringDeserializer::new(field)).map(Some);
-                            }
-                        }
+                    if field.starts_with("cfg(") {
+                        self.platform_fixup.push(FixupConfig {
+                            platform: PlatformExpr::parse(&field).map_err(M::Error::custom)?,
+                            ..self.map.next_value()?
+                        });
+                    } else {
+                        return seed.deserialize(StringDeserializer::new(field)).map(Some);
                     }
                 }
                 Ok(None)
@@ -521,13 +519,6 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
 
         let mut fields = FixupsMap {
             map,
-            custom_visibility: None,
-            omit_targets: None,
-            precise_srcs: None,
-            python_ext: None,
-            export_sources: None,
-            compatible_with: None,
-            target_compatible_with: None,
             platform_fixup: Vec::new(),
         };
 
@@ -537,13 +528,6 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
         Ok(FixupConfigFile {
             fixup_dir: self.fixup_dir,
             toml: self.toml,
-            custom_visibility: fields.custom_visibility,
-            omit_targets: fields.omit_targets.unwrap_or_else(BTreeSet::new),
-            precise_srcs: fields.precise_srcs,
-            python_ext: fields.python_ext,
-            export_sources: fields.export_sources,
-            compatible_with: fields.compatible_with.unwrap_or_else(Vec::new),
-            target_compatible_with: fields.target_compatible_with.unwrap_or_else(Vec::new),
             base,
             platform_fixup: fields.platform_fixup,
         })
