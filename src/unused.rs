@@ -20,6 +20,9 @@ pub struct UnusedFixups {
     // key = (pkg, byte offset)
     // value = (line, glob)
     pub globs: BTreeMap<(String, usize), (usize, Glob)>,
+    // key = (pkg, byte offset)
+    // value = line
+    pub visibilities: BTreeMap<(String, usize), usize>,
 }
 
 impl UnusedFixups {
@@ -27,11 +30,17 @@ impl UnusedFixups {
         UnusedFixups {
             buildscripts: BTreeMap::new(),
             globs: BTreeMap::new(),
+            visibilities: BTreeMap::new(),
         }
     }
 
     pub fn check(self) -> anyhow::Result<()> {
-        if self.buildscripts.is_empty() && self.globs.is_empty() {
+        let UnusedFixups {
+            buildscripts,
+            globs,
+            visibilities,
+        } = &self;
+        if buildscripts.is_empty() && globs.is_empty() && visibilities.is_empty() {
             Ok(())
         } else {
             Err(anyhow::Error::new(self))
@@ -43,6 +52,8 @@ impl Error for UnusedFixups {}
 
 impl Display for UnusedFixups {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        let mut needs_blank_line_between_sections = false;
+
         if !self.buildscripts.is_empty() {
             formatter.write_str("Unused buildscript fixups:")?;
             for ((pkg, _offset), line) in &self.buildscripts {
@@ -51,19 +62,33 @@ impl Display for UnusedFixups {
                     "\nfixups/{pkg}/fixups.toml line {line}: unused buildscript fixup for a package that has no build script",
                 )?;
             }
-        }
-
-        if !self.buildscripts.is_empty() && !self.globs.is_empty() {
-            formatter.write_str("\n\n")?;
+            needs_blank_line_between_sections = true;
         }
 
         if !self.globs.is_empty() {
+            if needs_blank_line_between_sections {
+                formatter.write_str("\n\n")?;
+            }
             formatter.write_str("Unused globs:")?;
             for ((pkg, _offset), (line, glob)) in &self.globs {
                 write!(
                     formatter,
                     "\nfixups/{pkg}/fixups.toml line {line}: {glob:?} matches no files",
                     glob = glob.glob(),
+                )?;
+            }
+            needs_blank_line_between_sections = true;
+        }
+
+        if !self.visibilities.is_empty() {
+            if needs_blank_line_between_sections {
+                formatter.write_str("\n\n")?;
+            }
+            formatter.write_str("Unused visibilities:")?;
+            for ((pkg, _offset), line) in &self.visibilities {
+                write!(
+                    formatter,
+                    "\nfixups/{pkg}/fixups.toml line {line}: only public packages can have a visibility fixup",
                 )?;
             }
         }

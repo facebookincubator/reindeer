@@ -17,6 +17,7 @@ use std::sync::atomic::Ordering;
 
 use anyhow::Context as _;
 use foldhash::HashSet;
+use semver::Version;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::de::DeserializeSeed;
@@ -28,11 +29,11 @@ use serde::de::value::MapAccessDeserializer;
 use serde::de::value::SeqAccessDeserializer;
 use serde::de::value::StringDeserializer;
 use strum::IntoEnumIterator as _;
+use toml::Spanned;
 use walkdir::WalkDir;
 
 use crate::buck::RuleRef;
 use crate::buck::Visibility;
-use crate::cargo::Manifest;
 use crate::fixups::buildscript::BuildscriptFixups;
 use crate::fixups::buildscript::CxxLibraryFixup;
 use crate::fixups::buildscript::ExportedHeaders;
@@ -58,11 +59,7 @@ pub struct FixupConfigFile {
 }
 
 impl FixupConfigFile {
-    pub(super) fn load(
-        fixup_dir: PathBuf,
-        package: &Manifest,
-        public: bool,
-    ) -> anyhow::Result<Self> {
+    pub(super) fn load(fixup_dir: PathBuf) -> anyhow::Result<Self> {
         let fixup_path = fixup_dir.join("fixups.toml");
 
         let Ok(content) = fs::read_to_string(&fixup_path) else {
@@ -83,13 +80,6 @@ impl FixupConfigFile {
             .with_context(|| format!("Failed to parse {}", fixup_path.display()))?;
 
         for fixup in iter::once(&fixup_config.base).chain(&fixup_config.platform_fixup) {
-            if fixup.visibility.is_some() && !public {
-                return Err(anyhow::Error::msg(
-                    "only public packages can have a fixup `visibility`.",
-                )
-                .context(format!("package {package} is private.")));
-            }
-
             match fixup {
                 FixupConfig {
                     // serde(skip)
@@ -144,13 +134,31 @@ impl FixupConfigFile {
         Ok(fixup_config)
     }
 
-    pub fn collect_unused(&self, pkg: &str, unused: &mut UnusedFixups) {
+    pub fn collect_unused(
+        &self,
+        pkg: &str,
+        public_versions: &HashSet<&Version>,
+        unused: &mut UnusedFixups,
+    ) {
         for fixup in iter::once(&self.base).chain(&self.platform_fixup) {
             if let Some(span) = &fixup.buildscript.span {
                 if fixup.used.load(Ordering::Relaxed)
                     && !fixup.buildscript.used.load(Ordering::Relaxed)
                 {
                     unused.buildscripts.insert(
+                        (pkg.to_owned(), span.start),
+                        self.toml[..span.start].split('\n').count(),
+                    );
+                }
+            }
+
+            if let Some(visibility) = &fixup.visibility {
+                let applies_to_any_public_version = public_versions.iter().any(|&version| {
+                    matches!(fixup.platform.eval_only_version(version), Some(true))
+                });
+                if !applies_to_any_public_version {
+                    let span = visibility.span();
+                    unused.visibilities.insert(
                         (pkg.to_owned(), span.start),
                         self.toml[..span.start].split('\n').count(),
                     );
@@ -213,7 +221,7 @@ pub struct FixupConfig {
     /// This only has an effect for top-level crates. Exposed crates
     /// by default get `visibility = ["PUBLIC"]`. Sometimes you want to
     /// discourage use of some crate by limiting its visibility.
-    pub visibility: Option<Visibility>,
+    pub visibility: Option<Spanned<Visibility>>,
 
     /// Omit a target
     pub omit_targets: Option<BTreeSet<String>>,

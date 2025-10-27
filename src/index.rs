@@ -51,10 +51,7 @@ pub struct Index<'meta> {
     /// Faster lookup for workspace members
     workspace_packages: HashSet<PackageId>,
     /// Set of package IDs from which at least one target is public mapped to an optional rename
-    public_packages: BTreeMap<PackageId, Option<&'meta str>>,
-    /// The (possibly renamed) names of all packages which have at least one
-    /// public target.
-    public_package_names: BTreeSet<&'meta str>,
+    pub public_packages: BTreeMap<PackageId, Option<&'meta str>>,
     /// Set of public targets. These consist of:
     /// - root_pkg, if it is being made public (aka "real", and not just a pseudo package)
     /// - first-order dependencies of root_pkg, including artifact dependencies
@@ -125,7 +122,6 @@ impl<'meta> Index<'meta> {
             workspace_packages: workspace_members.iter().map(|x| x.id).collect(),
             workspace_members,
             public_packages: BTreeMap::new(),
-            public_package_names: BTreeSet::new(),
             public_targets: BTreeMap::new(),
         };
 
@@ -170,13 +166,6 @@ impl<'meta> Index<'meta> {
 
         for (&(id, _), &rename) in &index.public_targets {
             index.public_packages.insert(id, rename);
-            index
-                .public_package_names
-                .insert(if let Some(rename) = rename {
-                    rename
-                } else {
-                    &index.pkgid_to_pkg[&id].name
-                });
         }
 
         let mut manifest_deps = HashMap::default();
@@ -202,7 +191,6 @@ impl<'meta> Index<'meta> {
                 pkgid_platform_features: &mut index.pkgid_platform_features,
                 pkgid_to_pkg: &index.pkgid_to_pkg,
                 manifest_deps: &manifest_deps,
-                public_package_names: &index.public_package_names,
                 config,
                 fixups,
             };
@@ -238,12 +226,6 @@ impl<'meta> Index<'meta> {
     /// Test if this is a workspace member
     pub fn is_workspace_package(&self, pkg: &Manifest) -> bool {
         self.workspace_packages.contains(&pkg.id)
-    }
-
-    /// Test if there is any target from any package with the given (possibly
-    /// renamed) crate name which is public.
-    pub fn is_public_package_name(&self, name: &str) -> bool {
-        self.public_package_names.contains(&name)
     }
 
     /// Test if a specific target from a package is public
@@ -387,7 +369,6 @@ struct FeatureResolver<'a, 'meta> {
         (PackageId, &'meta str, DepKind, &'meta Option<PlatformExpr>),
         Vec<(&'meta NodeDep, &'meta NodeDepKind, &'meta Manifest)>,
     >,
-    public_package_names: &'a BTreeSet<&'meta str>,
     config: &'meta Config,
     fixups: &'a FixupsCache<'meta>,
 }
@@ -411,8 +392,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
 
         // Omit dependencies according to fixups.
         let pkg = self.pkgid_to_pkg[&pkgid];
-        let public = self.public_package_names.contains(pkg.name.as_str());
-        let fixups = self.fixups.get(pkg, public)?;
+        let fixups = self.fixups.get(pkg)?;
 
         // Go through the manifest dependencies and enable all that are non-optional.
         for manifest_dep in &pkg.dependencies {
@@ -494,8 +474,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
 
         // Omit features according to fixups.
         let pkg = self.pkgid_to_pkg[&pkgid];
-        let public = self.public_package_names.contains(pkg.name.as_str());
-        let fixups = self.fixups.get(pkg, public)?;
+        let fixups = self.fixups.get(pkg)?;
         if fixups.omit_feature(platform_name, enable_feature) {
             return Ok(());
         }
@@ -587,8 +566,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
     ) -> anyhow::Result<()> {
         // Omit dependencies according to fixups.
         let pkg = self.pkgid_to_pkg[&pkgid];
-        let public = self.public_package_names.contains(pkg.name.as_str());
-        let fixups = self.fixups.get(pkg, public)?;
+        let fixups = self.fixups.get(pkg)?;
         if fixups.omit_dep(platform_name, enable_dependency) {
             return Ok(());
         }

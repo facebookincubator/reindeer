@@ -415,9 +415,7 @@ fn generate_target_rules<'scope>(
 
     log::debug!("Generating rules for package {} target {}", pkg, tgt.name);
 
-    let public = index.is_public_package_name(&pkg.name);
-    let fixups = context.fixups.get(pkg, public)?;
-
+    let fixups = context.fixups.get(pkg)?;
     if fixups.omit_target(tgt) {
         return Ok((vec![], vec![]));
     }
@@ -1059,9 +1057,18 @@ pub(crate) fn buckify(
     let rules = do_buckify(&context)?;
 
     // Report unused fixups
+    let mut public_packages = HashMap::default();
+    for pkgid in context.index.public_packages.keys() {
+        public_packages
+            .entry(pkgid.name().as_str())
+            .or_insert_with(HashSet::default)
+            .insert(pkgid.version());
+    }
     let mut unused = UnusedFixups::new();
+    let no_public_versions = HashSet::default();
     for (name, fixup) in &*context.fixups.lock() {
-        fixup.collect_unused(name, &mut unused);
+        let public_versions = public_packages.get(name).unwrap_or(&no_public_versions);
+        fixup.collect_unused(name, public_versions, &mut unused);
     }
     unused.check()?;
 

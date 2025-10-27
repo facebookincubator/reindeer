@@ -108,7 +108,7 @@ impl<'meta> FixupsCache<'meta> {
     }
 
     /// Get fixups.toml for a specific package.
-    pub fn get(&self, package: &'meta Manifest, public: bool) -> anyhow::Result<Fixups<'meta>> {
+    pub fn get(&self, package: &'meta Manifest) -> anyhow::Result<Fixups<'meta>> {
         let mut fixups_map = self.fixups.lock().unwrap_or_else(PoisonError::into_inner);
         let fixup_config = if let Some(arc) = fixups_map.get(package.name.as_str()) {
             Arc::clone(arc)
@@ -118,7 +118,7 @@ impl<'meta> FixupsCache<'meta> {
                 .third_party_dir
                 .join("fixups")
                 .join(&package.name);
-            let fixup_config = FixupConfigFile::load(fixup_dir, package, public)?;
+            let fixup_config = FixupConfigFile::load(fixup_dir)?;
             let arc = Arc::new(fixup_config);
             fixups_map.insert(&package.name, Arc::clone(&arc));
             arc
@@ -231,7 +231,7 @@ impl<'meta> Fixups<'meta> {
 
         for config in self.platform_independent_configs() {
             if let Some(custom_visibility) = &config.visibility {
-                visibility = custom_visibility;
+                visibility = custom_visibility.get_ref();
             }
         }
 
