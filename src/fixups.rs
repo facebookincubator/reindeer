@@ -149,7 +149,7 @@ impl<'meta> Fixups<'meta> {
             if fixup.platform.eval(
                 &self.config.platform[platform_name],
                 Some(&self.package.version),
-                &BTreeSet::new(),
+                &HashMap::default(),
             ) {
                 fixup.used.store(true, Ordering::Relaxed);
                 configs.push(fixup);

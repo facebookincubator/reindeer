@@ -438,18 +438,7 @@ pub fn read_config(reindeer_toml: &Path, args: &Args) -> anyhow::Result<Config> 
         let mut supplemental_target_cfg = HashMap::default();
         for line in output.lines() {
             if line.starts_with("target_") {
-                if let Some((k, v)) = line.split_once('=') {
-                    if let Ok(toml::Value::String(v)) = v.parse() {
-                        supplemental_target_cfg
-                            .entry(k.to_owned())
-                            .or_insert_with(HashSet::default)
-                            .insert(v);
-                    }
-                } else {
-                    supplemental_target_cfg
-                        .entry(line.to_owned())
-                        .or_insert_with(HashSet::default);
-                }
+                parse_cfg_kv(&mut supplemental_target_cfg, line);
             }
         }
 
@@ -481,4 +470,16 @@ fn try_read_config(path: &Path) -> anyhow::Result<Config> {
     log::debug!("Read config {:#?}", config);
 
     Ok(config)
+}
+
+pub(crate) fn parse_cfg_kv(cfgs: &mut HashMap<String, HashSet<String>>, line: &str) {
+    if let Some((k, v)) = line.split_once('=') {
+        if let Ok(toml::Value::String(v)) = v.parse() {
+            cfgs.entry(k.to_owned())
+                .or_insert_with(HashSet::default)
+                .insert(v);
+        }
+    } else {
+        cfgs.entry(line.to_owned()).or_insert_with(HashSet::default);
+    }
 }

@@ -297,16 +297,19 @@ impl PlatformExpr {
         &self,
         config: &PlatformConfig,
         version: Option<&Version>,
-        extra_cfg: &BTreeSet<String>,
+        extra_cfg: &HashMap<String, HashSet<String>>,
     ) -> bool {
         match self {
-            PlatformExpr::Bool { key } => config.cfg.contains_key(key) || extra_cfg.contains(key),
+            PlatformExpr::Bool { key } => {
+                config.cfg.contains_key(key) || extra_cfg.contains_key(key)
+            }
             PlatformExpr::Value { key, value } => {
                 if key == "feature" {
                     // [target.'cfg(feature = "...")'.dependencies] never get applied by Cargo
                     false
                 } else {
                     config.cfg.get(key).is_some_and(|set| set.contains(value))
+                        || extra_cfg.get(key).is_some_and(|set| set.contains(value))
                 }
             }
             PlatformExpr::Version(req) => match version {

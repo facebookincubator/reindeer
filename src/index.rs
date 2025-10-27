@@ -30,6 +30,8 @@ use crate::cargo::NodeDepKind;
 use crate::cargo::TargetKind;
 use crate::cargo::TargetReq;
 use crate::config::Config;
+use crate::config::parse_cfg_kv;
+use crate::fixups::Fixups;
 use crate::fixups::FixupsCache;
 use crate::platform::PlatformConfig;
 use crate::platform::PlatformExpr;
@@ -401,14 +403,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                     DepKind::Normal | DepKind::Build => true,
                     DepKind::Dev => false,
                 }
-                && match &manifest_dep.target {
-                    Some(platform_expr) => platform_expr.eval(
-                        &self.config.platform[platform_name],
-                        None,
-                        &fixups.compute_rustc_cfg(platform_name),
-                    ),
-                    None => true,
-                }
+                && self.evaluate_target_cfg(&manifest_dep.target, platform_name, &fixups)
                 && !fixups.omit_dep(
                     platform_name,
                     manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name),
@@ -494,14 +489,11 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                                     DepKind::Normal | DepKind::Build => true,
                                     DepKind::Dev => false,
                                 }
-                                && match &manifest_dep.target {
-                                    Some(platform_expr) => platform_expr.eval(
-                                        &self.config.platform[platform_name],
-                                        None,
-                                        &fixups.compute_rustc_cfg(platform_name),
-                                    ),
-                                    None => true,
-                                }
+                                && self.evaluate_target_cfg(
+                                    &manifest_dep.target,
+                                    platform_name,
+                                    &fixups,
+                                )
                             {
                                 let node_dep = self.resolve_dep(pkgid, manifest_dep)?;
                                 let dep_platforms = platforms_for_dependency(
@@ -579,14 +571,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                     DepKind::Normal | DepKind::Build => true,
                     DepKind::Dev => false,
                 }
-                && match &manifest_dep.target {
-                    Some(platform_expr) => platform_expr.eval(
-                        &self.config.platform[platform_name],
-                        None,
-                        &fixups.compute_rustc_cfg(platform_name),
-                    ),
-                    None => true,
-                }
+                && self.evaluate_target_cfg(&manifest_dep.target, platform_name, &fixups)
             {
                 let node_dep = self.resolve_dep(pkgid, manifest_dep)?;
                 for dep_kind in &node_dep.dep_kinds {
@@ -796,6 +781,24 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         };
 
         Ok(unique_match)
+    }
+
+    fn evaluate_target_cfg(
+        &self,
+        target: &Option<PlatformExpr>,
+        platform_name: &'meta PlatformName,
+        fixup: &Fixups,
+    ) -> bool {
+        let Some(platform_expr) = target else {
+            return true;
+        };
+
+        let mut extra_cfgs = HashMap::default();
+        for cfg in fixup.compute_rustc_cfg(platform_name) {
+            parse_cfg_kv(&mut extra_cfgs, &cfg);
+        }
+
+        platform_expr.eval(&self.config.platform[platform_name], None, &extra_cfgs)
     }
 }
 
