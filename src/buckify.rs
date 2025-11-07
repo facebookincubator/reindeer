@@ -523,7 +523,7 @@ fn generate_target_rules<'scope>(
             &mut base,
             &mut perplat,
             &compatible_platforms,
-            |platform| fixups.compute_srcs(platform, &srcs),
+            |platform| fixups.compute_srcs(tgt, platform, &srcs),
             |rule, src| rule.srcs.insert(BuckPath(src)),
         )?;
     } else if let VendorConfig::LocalRegistry = config.vendor {

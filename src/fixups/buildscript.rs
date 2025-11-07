@@ -42,12 +42,16 @@ pub struct BuildscriptFixups {
     pub used: AtomicBool,
 }
 
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Default)]
+#[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct BuildscriptBuild {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     pub link_style: Option<String>,
+    #[serde(default)]
+    pub extra_srcs: TrackedGlobSet,
+    #[serde(default)]
+    pub extra_mapped_srcs: BTreeMap<String, PathBuf>,
     #[serde(default)]
     pub extra_deps: BTreeSet<String>,
     #[serde(default)]

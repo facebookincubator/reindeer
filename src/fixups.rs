@@ -1075,6 +1075,7 @@ impl<'meta> Fixups<'meta> {
     /// `srcs` is the normal source glob rooted at the package's manifest dir.
     pub fn compute_srcs(
         &self,
+        target: &ManifestTarget,
         platform_name: &PlatformName,
         naive_srcs: &[PathBuf],
     ) -> anyhow::Result<BTreeSet<PathBuf>> {
@@ -1093,8 +1094,15 @@ impl<'meta> Fixups<'meta> {
             ret.insert(src);
         }
 
+        let buildscript = target.crate_bin() && target.kind_custom_build();
+
         for fixup in self.configs(platform_name) {
-            ret.extend(self.compute_extra_srcs(&fixup.extra_srcs)?);
+            let extra_srcs = if buildscript {
+                &fixup.buildscript.build.extra_srcs
+            } else {
+                &fixup.extra_srcs
+            };
+            ret.extend(self.compute_extra_srcs(extra_srcs)?);
         }
 
         for fixup in self.configs(platform_name) {
@@ -1170,8 +1178,16 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<BTreeMap<SubtargetOrPath, BuckPath>> {
         let mut ret = BTreeMap::new();
 
+        let buildscript = target.crate_bin() && target.kind_custom_build();
+
         for config in self.configs(platform_name) {
-            for (k, v) in &config.extra_mapped_srcs {
+            let extra_mapped_srcs = if buildscript {
+                &config.buildscript.build.extra_mapped_srcs
+            } else {
+                &config.extra_mapped_srcs
+            };
+
+            for (k, v) in extra_mapped_srcs {
                 ret.insert(
                     // If the mapped source is target-like, take it as-is since
                     // we have nothing to resolve or find.

@@ -177,6 +177,9 @@ impl FixupConfigFile {
                 }
                 collect(&fixup.extra_srcs);
                 collect(&fixup.omit_srcs);
+                if fixup.buildscript.used.load(Ordering::Relaxed) {
+                    collect(&fixup.buildscript.build.extra_srcs);
+                }
                 for cxx_library in &fixup.cxx_library {
                     collect(&cxx_library.srcs);
                     collect(&cxx_library.headers);
