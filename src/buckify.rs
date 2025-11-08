@@ -457,7 +457,12 @@ fn generate_target_rules<'scope>(
                 target: Name(format!("{}.git", short_name)),
                 relative: BuckPath(path_within_repo.clone()),
             }));
-            PathBuf::from(short_name).join(path_within_repo)
+            let mut res = PathBuf::from(short_name);
+            if path_within_repo.components().next().is_some() {
+                // only do this if we have an actual path to avoid the trailing slash
+                res.push(path_within_repo)
+            }
+            res
         } else {
             PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
         };
