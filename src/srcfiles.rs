@@ -329,6 +329,18 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
         }
     }
 
+    fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+        // Look for #[test].
+        for attr in &node.attrs {
+            if let syn::Meta::Path(path) = &attr.meta
+                && path.is_ident("test")
+            {
+                return;
+            }
+        }
+        visit::visit_item_fn(self, node);
+    }
+
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
         // https://doc.rust-lang.org/reference/items/modules.html
 
