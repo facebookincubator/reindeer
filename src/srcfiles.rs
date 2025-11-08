@@ -21,6 +21,7 @@ use std::path::PathBuf;
 
 use foldhash::HashSet;
 use proc_macro2 as _; // To autocargo with our features (namely `span-locations`)
+use syn::visit;
 use syn::visit::Visit;
 
 use crate::path::normalized_extend_path;
@@ -223,7 +224,111 @@ fn parent_dir(path: &Path) -> &Path {
     path.parent().unwrap_or(Path::new(".."))
 }
 
+fn cfg_test(attrs: &[syn::Attribute]) -> bool {
+    // Look for #[cfg(test)].
+    for attr in attrs {
+        let mut is_cfg_test = None;
+        if let syn::Meta::List(meta) = &attr.meta
+            && meta.path.is_ident("cfg")
+            && meta
+                .parse_nested_meta(|nested| {
+                    *is_cfg_test.get_or_insert(true) &= nested.path.is_ident("test");
+                    Ok(())
+                })
+                .is_ok()
+            && is_cfg_test == Some(true)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 impl<'ast> Visit<'ast> for SourceFinder<'_> {
+    fn visit_item(&mut self, node: &'ast syn::Item) {
+        let attrs = match node {
+            syn::Item::Const(node) => &*node.attrs,
+            syn::Item::Enum(node) => &*node.attrs,
+            syn::Item::ExternCrate(node) => &*node.attrs,
+            syn::Item::Fn(node) => &*node.attrs,
+            syn::Item::ForeignMod(node) => &*node.attrs,
+            syn::Item::Impl(node) => &*node.attrs,
+            syn::Item::Macro(node) => &*node.attrs,
+            syn::Item::Mod(node) => &*node.attrs,
+            syn::Item::Static(node) => &*node.attrs,
+            syn::Item::Struct(node) => &*node.attrs,
+            syn::Item::Trait(node) => &*node.attrs,
+            syn::Item::TraitAlias(node) => &*node.attrs,
+            syn::Item::Type(node) => &*node.attrs,
+            syn::Item::Union(node) => &*node.attrs,
+            syn::Item::Use(node) => &*node.attrs,
+            syn::Item::Verbatim(_) | _ => &[],
+        };
+        if !cfg_test(attrs) {
+            visit::visit_item(self, node);
+        }
+    }
+
+    fn visit_expr(&mut self, node: &'ast syn::Expr) {
+        let attrs = match node {
+            syn::Expr::Array(node) => &*node.attrs,
+            syn::Expr::Assign(node) => &*node.attrs,
+            syn::Expr::Async(node) => &*node.attrs,
+            syn::Expr::Await(node) => &*node.attrs,
+            syn::Expr::Binary(node) => &*node.attrs,
+            syn::Expr::Block(node) => &*node.attrs,
+            syn::Expr::Break(node) => &*node.attrs,
+            syn::Expr::Call(node) => &*node.attrs,
+            syn::Expr::Cast(node) => &*node.attrs,
+            syn::Expr::Closure(node) => &*node.attrs,
+            syn::Expr::Const(node) => &*node.attrs,
+            syn::Expr::Continue(node) => &*node.attrs,
+            syn::Expr::Field(node) => &*node.attrs,
+            syn::Expr::ForLoop(node) => &*node.attrs,
+            syn::Expr::Group(node) => &*node.attrs,
+            syn::Expr::If(node) => &*node.attrs,
+            syn::Expr::Index(node) => &*node.attrs,
+            syn::Expr::Infer(node) => &*node.attrs,
+            syn::Expr::Let(node) => &*node.attrs,
+            syn::Expr::Lit(node) => &*node.attrs,
+            syn::Expr::Loop(node) => &*node.attrs,
+            syn::Expr::Macro(node) => &*node.attrs,
+            syn::Expr::Match(node) => &*node.attrs,
+            syn::Expr::MethodCall(node) => &*node.attrs,
+            syn::Expr::Paren(node) => &*node.attrs,
+            syn::Expr::Path(node) => &*node.attrs,
+            syn::Expr::Range(node) => &*node.attrs,
+            syn::Expr::RawAddr(node) => &*node.attrs,
+            syn::Expr::Reference(node) => &*node.attrs,
+            syn::Expr::Repeat(node) => &*node.attrs,
+            syn::Expr::Return(node) => &*node.attrs,
+            syn::Expr::Struct(node) => &*node.attrs,
+            syn::Expr::Try(node) => &*node.attrs,
+            syn::Expr::TryBlock(node) => &*node.attrs,
+            syn::Expr::Tuple(node) => &*node.attrs,
+            syn::Expr::Unary(node) => &*node.attrs,
+            syn::Expr::Unsafe(node) => &*node.attrs,
+            syn::Expr::While(node) => &*node.attrs,
+            syn::Expr::Yield(node) => &*node.attrs,
+            syn::Expr::Verbatim(_) | _ => &[],
+        };
+        if !cfg_test(attrs) {
+            visit::visit_expr(self, node);
+        }
+    }
+
+    fn visit_stmt_macro(&mut self, node: &'ast syn::StmtMacro) {
+        if !cfg_test(&node.attrs) {
+            visit::visit_stmt_macro(self, node);
+        }
+    }
+
+    fn visit_local(&mut self, node: &'ast syn::Local) {
+        if !cfg_test(&node.attrs) {
+            visit::visit_local(self, node);
+        }
+    }
+
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
         // https://doc.rust-lang.org/reference/items/modules.html
 
