@@ -16,6 +16,7 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::fs;
 use std::io;
+use std::io::Read as _;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -153,15 +154,52 @@ impl SourceFinder<'_> {
         }
     }
 
-    fn collect_relative_path(&mut self, path: &syn::LitStr) -> Result<(), ErrorKind> {
+    fn collect_relative_path(
+        &mut self,
+        path: &syn::LitStr,
+        include: bool,
+    ) -> Result<(), ErrorKind> {
         let source_path = {
             let mut p = parent_dir(self.current).to_owned();
             normalized_extend_path(&mut p, path.value());
             p
         };
+        if self.sources.files.contains(&source_path) {
+            return Ok(());
+        }
         match fs::File::open(&source_path) {
-            Ok(_) => {
-                self.sources.files.insert(source_path);
+            Ok(mut file) => {
+                self.sources.files.insert(source_path.clone());
+                if !include {
+                    return Ok(());
+                }
+                let mut content = String::new();
+                match file.read_to_string(&mut content) {
+                    Ok(_) => {
+                        let mut source_finder = SourceFinder {
+                            current: &source_path,
+                            sources: self.sources,
+                            mod_ancestors: self.mod_ancestors.clone(),
+                            mod_rs: ModRs::Yes,
+                        };
+                        if let Ok(ast) = syn::parse_file(&content) {
+                            source_finder.visit_file(&ast);
+                        } else if let Ok(ast) = syn::parse_str::<syn::Expr>(&content) {
+                            source_finder.visit_expr(&ast);
+                        } else {
+                            // Ignore.
+                        }
+                    }
+                    Err(err) => {
+                        self.sources.errors.push(Error::new(
+                            self.current,
+                            ErrorKind::FileError {
+                                source_path,
+                                source: err,
+                            },
+                        ));
+                    }
+                }
                 Ok(())
             }
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
@@ -241,7 +279,7 @@ impl SourceFinder<'_> {
                         || nested.path.is_ident("gdb_script_file")
                     {
                         let lit: syn::LitStr = nested.value()?.parse()?;
-                        if let Err(err) = self.collect_relative_path(&lit) {
+                        if let Err(err) = self.collect_relative_path(&lit, false) {
                             self.push_error(err);
                         }
                     }
@@ -526,7 +564,8 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
             "include_str" | "include_bytes" | "include" => {
                 match node.parse_body::<syn::LitStr>() {
                     Ok(path) => {
-                        if let Err(err) = self.collect_relative_path(&path) {
+                        let include = macro_ident == "include";
+                        if let Err(err) = self.collect_relative_path(&path, include) {
                             self.push_error(err);
                         }
                     }
@@ -558,7 +597,7 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
             && expr.mac.path.segments.last().unwrap().ident == "include_str"
             && let Ok(lit) = expr.mac.parse_body::<syn::LitStr>()
         {
-            if let Err(_err) = self.collect_relative_path(&lit) {
+            if let Err(_err) = self.collect_relative_path(&lit, false) {
                 // Ignore error. Crates sometimes have:
                 //
                 //     #[doc = include_str!("../../README.md")]
@@ -733,8 +772,11 @@ mod tests {
                     #[path = "dp.rs"]
                     mod D_p;
                 }
+
                 #[path = "../cp.rs"]
                 mod C_p;
+
+                include!("include/include.rs");
             }
 
             "src/A_ci/bp.rs" => {
@@ -742,6 +784,10 @@ mod tests {
                     #[path = "dp.rs"]
                     mod D_p;
                 }
+            }
+
+            "src/api/include/include.rs" => {
+                mod C_cn;
             }
 
             "src/A_cn/B_cn.rs" => {}
@@ -755,6 +801,7 @@ mod tests {
             "src/A_ci/B_ci/C_cn.rs" => {}
             "src/A_ci/C_ci/dp.rs" => {}
             "src/api/C_ci/dp.rs" => {}
+            "src/api/include/C_cn.rs" => {}
             "src/bpi/C_cn.rs" => {}
             "src/cp.rs" => {}
             "str1.txt" => {}
@@ -781,6 +828,8 @@ mod tests {
                 "src/A_ci/bp.rs",
                 "src/api/bp.rs",
                 "src/api/C_ci/dp.rs",
+                "src/api/include/C_cn.rs",
+                "src/api/include/include.rs",
                 "src/bpi/C_cn.rs",
                 "src/cp.rs",
                 "src/str2.txt",
