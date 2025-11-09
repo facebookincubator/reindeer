@@ -483,12 +483,9 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
             "include_str" | "include_bytes" | "include" => {
                 match node.parse_body::<syn::LitStr>() {
                     Ok(path) => self.collect_relative_path(&path),
-                    Err(err) => {
-                        self.push_error(ErrorKind::ParserError {
-                            line: err.span().start().line,
-                            source_path: self.current.to_owned(),
-                            source: err,
-                        });
+                    Err(_err) => {
+                        // Ignore error. This happens for nonstring-literal include:
+                        // `include!(concat!(env!("OUT_DIR"), "/generated.rs"));`
                     }
                 };
             }
@@ -611,6 +608,8 @@ mod tests {
                 const _: &str = include_str!("../str1.txt");
                 const _: &str = include_str!("str2.txt");
                 const _: &[u8] = include_bytes!("subdir/bytes1.txt");
+
+                include!(concat!(env!("OUT_DIR"), "/generated.rs"));
             }
 
             "src/aaa.rs" => {
