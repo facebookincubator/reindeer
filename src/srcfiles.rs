@@ -446,9 +446,14 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
             // mod foo { ... }
             //
             for path_attr in path_attrs {
+                let original_mod_rs = self.mod_rs;
+                if self.mod_ancestors.is_empty() {
+                    self.mod_rs = ModRs::Yes;
+                }
                 self.mod_ancestors.push(path_attr);
                 visit::visit_item_mod(self, node);
                 self.mod_ancestors.pop();
+                self.mod_rs = original_mod_rs;
             }
         } else {
             //
@@ -491,11 +496,12 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
             //
             for path_attr in path_attrs {
                 let source_path = {
-                    let mut p = if self.mod_ancestors.is_empty() {
-                        parent_dir(self.current).to_owned()
-                    } else {
-                        self.mod_parent_dir()
-                    };
+                    let original_mod_rs = self.mod_rs;
+                    if self.mod_ancestors.is_empty() {
+                        self.mod_rs = ModRs::Yes;
+                    }
+                    let mut p = self.mod_parent_dir();
+                    self.mod_rs = original_mod_rs;
                     p.extend(self.mod_ancestors.iter());
                     normalized_extend_path(&mut p, path_attr);
                     p
@@ -714,8 +720,6 @@ mod tests {
 
                 #[path = "bpi"]
                 mod B_pi {
-                    // FIXME: this incorrectly uses `src/A_cn/bpi/C_cn.rs`.
-                    // Should be `src/bpi/C_cn.rs`.
                     mod C_cn;
                 }
             }
@@ -745,13 +749,13 @@ mod tests {
             "src/A_cn/B_ci/C_cn.rs" => {}
             "src/A_cn/B_ci/C_cd/mod.rs" => {}
             "src/A_cn/B_ci/C_ci/D_cn.rs" => {}
-            "src/A_cn/bpi/C_cn.rs" => {}
             "src/A_cd/mod.rs" => {}
             "src/A_ci/B_cn.rs" => {}
             "src/A_ci/B_cd/mod.rs" => {}
             "src/A_ci/B_ci/C_cn.rs" => {}
             "src/A_ci/C_ci/dp.rs" => {}
             "src/api/C_ci/dp.rs" => {}
+            "src/bpi/C_cn.rs" => {}
             "src/cp.rs" => {}
             "str1.txt" => {}
             "src/str2.txt" => {}
@@ -769,7 +773,6 @@ mod tests {
                 "src/A_cn/B_ci/C_cn.rs",
                 "src/A_cn/B_ci/C_cd/mod.rs",
                 "src/A_cn/B_ci/C_ci/D_cn.rs",
-                "src/A_cn/bpi/C_cn.rs",
                 "src/A_cd/mod.rs",
                 "src/A_ci/B_cn.rs",
                 "src/A_ci/B_cd/mod.rs",
@@ -778,6 +781,7 @@ mod tests {
                 "src/A_ci/bp.rs",
                 "src/api/bp.rs",
                 "src/api/C_ci/dp.rs",
+                "src/bpi/C_cn.rs",
                 "src/cp.rs",
                 "src/str2.txt",
                 "src/str3.txt",
