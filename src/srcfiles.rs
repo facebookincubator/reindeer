@@ -262,9 +262,22 @@ fn cfg_test(attrs: &[syn::Attribute]) -> bool {
         if let syn::Meta::List(meta) = &attr.meta
             && meta.path.is_ident("cfg")
             && meta
-                .parse_nested_meta(|nested| {
-                    *is_cfg_test.get_or_insert(true) &=
-                        nested.path.is_ident("test") || nested.path.is_ident("bench");
+                .parse_nested_meta(|cfg| {
+                    if cfg.path.is_ident("test") || cfg.path.is_ident("bench") {
+                        is_cfg_test.get_or_insert(true);
+                    } else if cfg.path.is_ident("all") {
+                        // Look for #[cfg(all(test, ...))].
+                        let _ = cfg.parse_nested_meta(|all| {
+                            if all.path.is_ident("test") || all.path.is_ident("bench") {
+                                is_cfg_test.get_or_insert(true);
+                            } else {
+                                ignore_nested_meta(all.input)?;
+                            }
+                            Ok(())
+                        });
+                    } else {
+                        is_cfg_test = Some(false);
+                    }
                     Ok(())
                 })
                 .is_ok()
