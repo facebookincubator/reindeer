@@ -551,33 +551,50 @@ impl syn::parse::Parse for CfgIf {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::path::Path;
 
-    use tempfile::TempDir;
-    use tempfile::tempdir;
+    use super::Error;
+    use super::crate_srcfiles;
 
-    use super::*;
+    macro_rules! cargo_manifest_dir {
+        ($(
+            $path:expr => { $($content:tt)* }
+        )+) => {{
+            let dir = tempfile::tempdir().unwrap();
+            $(
+                let file = dir.path().join($path);
+                fs::create_dir_all(file.parent().unwrap()).unwrap();
+                fs::write(file, stringify!($($content)*)).unwrap();
+            )+
+            dir
+        }};
+    }
 
-    macro_rules! scaffold {
-        ($( $path:expr => $content:tt),+ ,) => {
-            (|| -> Result<TempDir, io::Error> {
-                let dir = tempdir()?;
-                $(
-                    let file = dir.path().join($path);
-                    fs::create_dir_all(file.parent().unwrap())?;
-                    let content = scaffold! { @stringify $content };
-                    fs::write(file, content)?;
-                )+
-                Ok(dir)
-            })()
-        };
+    #[track_caller]
+    fn assert_srcfiles(dir: &Path, expected: &[&str]) {
+        let res = crate_srcfiles(dir.join("src").join("lib.rs"));
 
-        (@stringify { $($t:tt)* }) => { stringify!($($t)*) };
+        assert_eq!(
+            res.files
+                .iter()
+                .map(|path| path.strip_prefix(dir).unwrap())
+                .collect::<BTreeSet<_>>(),
+            expected.iter().map(Path::new).collect::<BTreeSet<_>>(),
+        );
+
+        if !res.errors.is_empty() {
+            panic!(
+                "crate_srcfiles errors: {:#?}",
+                res.errors.iter().map(Error::to_string).collect::<Vec<_>>(),
+            );
+        }
     }
 
     #[test]
     fn test_mod_without_path_attr() {
-        let dir = scaffold! {
+        let dir = cargo_manifest_dir! {
             "src/lib.rs" => {
                 mod aaa;
                 mod bbb;
@@ -594,7 +611,7 @@ mod tests {
                 const _: &str = include_str!("../str1.txt");
                 const _: &str = include_str!("str2.txt");
                 const _: &[u8] = include_bytes!("subdir/bytes1.txt");
-            },
+            }
 
             "src/aaa.rs" => {
                 mod mmm;
@@ -606,31 +623,25 @@ mod tests {
                         mod sss;
                     }
                 }
-            },
-            "src/bbb/mod.rs" => {},
-            "src/ccc/ddd.rs" => {},
-            "src/ccc/eee/mod.rs" => {},
-            "src/ccc/fff/ggg.rs" => {},
-            "src/aaa/mmm.rs" => {},
-            "src/aaa/nnn/mod.rs" => {},
-            "src/aaa/ooo/ppp.rs" => {},
-            "src/aaa/ooo/qqq/mod.rs" => {},
-            "src/aaa/ooo/rrr/sss.rs" => {},
-            "str1.txt" => {},
-            "src/str2.txt" => {},
-            "src/str3.txt" => {},
-            "src/subdir/bytes1.txt" => {},
-        }
-        .unwrap();
+            }
+            "src/bbb/mod.rs" => {}
+            "src/ccc/ddd.rs" => {}
+            "src/ccc/eee/mod.rs" => {}
+            "src/ccc/fff/ggg.rs" => {}
+            "src/aaa/mmm.rs" => {}
+            "src/aaa/nnn/mod.rs" => {}
+            "src/aaa/ooo/ppp.rs" => {}
+            "src/aaa/ooo/qqq/mod.rs" => {}
+            "src/aaa/ooo/rrr/sss.rs" => {}
+            "str1.txt" => {}
+            "src/str2.txt" => {}
+            "src/str3.txt" => {}
+            "src/subdir/bytes1.txt" => {}
+        };
 
-        let res = crate_srcfiles(dir.path().join("src/lib.rs"));
-
-        assert_eq!(
-            res.files
-                .iter()
-                .map(|x| x.strip_prefix(&dir).unwrap())
-                .collect::<HashSet<_>>(),
-            [
+        assert_srcfiles(
+            dir.path(),
+            &[
                 "src/lib.rs",
                 "src/aaa.rs",
                 "src/bbb/mod.rs",
@@ -646,24 +657,13 @@ mod tests {
                 "src/str3.txt",
                 "src/subdir/bytes1.txt",
                 "str1.txt",
-            ]
-            .into_iter()
-            .map(Path::new)
-            .collect::<HashSet<_>>(),
-        );
-
-        assert_eq!(
-            res.errors
-                .into_iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>(),
-            Vec::<String>::new(),
+            ],
         );
     }
 
     #[test]
     fn test_mod_with_path_attr() {
-        let dir = scaffold! {
+        let dir = cargo_manifest_dir! {
             "src/lib.rs" => {
                 #[path = "a"]
                 mod aaa {
@@ -675,7 +675,7 @@ mod tests {
                     #[path = "d.rs"]
                     mod ddd;
                 }
-            },
+            }
             "src/a/b.rs" => {
                 // Because `b.rs` was loaded via `path`, it's considered a
                 // "mod-rs" file. So `n.rs` is loaded relative to `src/a/mmm/`.
@@ -687,51 +687,34 @@ mod tests {
                 }
                 #[path = "../ppp.rs"]
                 mod ppp;
-            },
-            "src/a/mmm/n.rs" => {},
+            }
+            "src/a/mmm/n.rs" => {}
             "src/ccc/d.rs" => {
                 mod yyy {
                     #[path = "z.rs"]
                     mod zzz;
                 }
-            },
-            "src/ccc/yyy/z.rs" => {},
-            "src/ppp.rs" => {},
-        }
-        .unwrap();
+            }
+            "src/ccc/yyy/z.rs" => {}
+            "src/ppp.rs" => {}
+        };
 
-        let res = crate_srcfiles(dir.path().join("src/lib.rs"));
-
-        assert_eq!(
-            res.files
-                .iter()
-                .map(|x| x.strip_prefix(&dir).unwrap())
-                .collect::<HashSet<_>>(),
-            [
+        assert_srcfiles(
+            dir.path(),
+            &[
                 "src/lib.rs",
                 "src/a/b.rs",
                 "src/a/mmm/n.rs",
                 "src/ccc/d.rs",
                 "src/ccc/yyy/z.rs",
                 "src/ppp.rs",
-            ]
-            .into_iter()
-            .map(Path::new)
-            .collect::<HashSet<_>>(),
-        );
-
-        assert_eq!(
-            res.errors
-                .into_iter()
-                .map(|x| x.to_string())
-                .collect::<HashSet<_>>(),
-            HashSet::<String>::default(),
+            ],
         );
     }
 
     #[test]
     fn test_cfg_if() {
-        let dir = scaffold! {
+        let dir = cargo_manifest_dir! {
             "src/lib.rs" => {
                 cfg_if::cfg_if! {
                     if #[cfg(target_os = "linux")] {
@@ -742,119 +725,65 @@ mod tests {
                         mod unknown;
                     }
                 }
-            },
-            "src/linux.rs" => {},
-            "src/windows.rs" => {},
-            "src/unknown.rs" => {},
-        }
-        .unwrap();
+            }
+            "src/linux.rs" => {}
+            "src/windows.rs" => {}
+            "src/unknown.rs" => {}
+        };
 
-        let res = crate_srcfiles(dir.path().join("src/lib.rs"));
-
-        assert_eq!(
-            res.files
-                .iter()
-                .map(|x| x.strip_prefix(&dir).unwrap())
-                .collect::<HashSet<_>>(),
-            [
+        assert_srcfiles(
+            dir.path(),
+            &[
                 "src/lib.rs",
                 "src/linux.rs",
                 "src/windows.rs",
                 "src/unknown.rs",
-            ]
-            .into_iter()
-            .map(Path::new)
-            .collect::<HashSet<_>>(),
-        );
-
-        assert_eq!(
-            res.errors
-                .into_iter()
-                .map(|x| x.to_string())
-                .collect::<HashSet<_>>(),
-            HashSet::<String>::default(),
+            ],
         );
     }
 
     #[test]
     fn test_doc_include() {
-        let dir = scaffold! {
+        let dir = cargo_manifest_dir! {
             "src/lib.rs" => {
                 #[doc = include_str!("../README.md")]
                 const _: () = ();
-            },
-            "README.md" => {},
-        }
-        .unwrap();
+            }
+            "README.md" => {}
+        };
 
-        let res = crate_srcfiles(dir.path().join("src/lib.rs"));
-
-        assert_eq!(
-            res.files
-                .iter()
-                .map(|x| x.strip_prefix(&dir).unwrap())
-                .collect::<HashSet<_>>(),
-            ["src/lib.rs", "README.md"]
-                .into_iter()
-                .map(Path::new)
-                .collect::<HashSet<_>>(),
-        );
-
-        assert_eq!(
-            res.errors
-                .into_iter()
-                .map(|x| x.to_string())
-                .collect::<HashSet<_>>(),
-            HashSet::<String>::default(),
-        );
+        assert_srcfiles(dir.path(), &["src/lib.rs", "README.md"]);
     }
 
     #[test]
     fn test_debugger_visualizer() {
-        let dir = scaffold! {
+        let dir = cargo_manifest_dir! {
             "src/lib.rs" => {
                 #[cfg(windows)]
                 mod windows;
                 #[cfg(unix)]
                 #[debugger_visualizer(gdb_script_file = "unix.py")]
                 mod unix;
-            },
+            }
             "src/windows.rs" => {
                 #![debugger_visualizer(natvis_file = "windows.natvis")]
-            },
-            "src/unix.rs" => {},
-            "src/windows.natvis" => {},
-            "src/unix.py" => {},
-            "src/unused.natvis" => {},
-            "src/unused.py" => {},
-        }
-        .unwrap();
+            }
+            "src/unix.rs" => {}
+            "src/windows.natvis" => {}
+            "src/unix.py" => {}
+            "src/unused.natvis" => {}
+            "src/unused.py" => {}
+        };
 
-        let res = crate_srcfiles(dir.path().join("src/lib.rs"));
-
-        assert_eq!(
-            res.files
-                .iter()
-                .map(|x| x.strip_prefix(&dir).unwrap())
-                .collect::<HashSet<_>>(),
-            [
+        assert_srcfiles(
+            dir.path(),
+            &[
                 "src/lib.rs",
                 "src/unix.py",
                 "src/unix.rs",
                 "src/windows.natvis",
                 "src/windows.rs",
-            ]
-            .into_iter()
-            .map(Path::new)
-            .collect::<HashSet<_>>(),
-        );
-
-        assert_eq!(
-            res.errors
-                .into_iter()
-                .map(|x| x.to_string())
-                .collect::<HashSet<_>>(),
-            HashSet::<String>::default(),
+            ],
         );
     }
 }
