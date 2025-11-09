@@ -151,6 +151,28 @@ impl SourceFinder<'_> {
         }
     }
 
+    fn collect_relative_path(&mut self, path: &syn::LitStr) {
+        let source_path = {
+            let mut p = parent_dir(self.current).to_owned();
+            normalized_extend_path(&mut p, path.value());
+            p
+        };
+        match fs::File::open(&source_path) {
+            Ok(_) => {
+                self.sources.files.insert(source_path);
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                self.push_error(ErrorKind::IncludeNotFound { source_path });
+            }
+            Err(err) => {
+                self.push_error(ErrorKind::FileError {
+                    source_path,
+                    source: err,
+                });
+            }
+        }
+    }
+
     fn push_error(&mut self, kind: ErrorKind) {
         self.sources.errors.push(Error {
             path: self.current.to_owned(),
@@ -205,6 +227,26 @@ impl SourceFinder<'_> {
             }
         }
     }
+
+    fn parse_debugger_visualizer(&mut self, attrs: &[syn::Attribute]) {
+        // Look for #![debugger_visualizer(natvis_file = "...")].
+        // https://doc.rust-lang.org/1.91.0/reference/attributes/debugger.html#the-debugger_visualizer-attribute
+        for attr in attrs {
+            if let syn::Meta::List(meta) = &attr.meta
+                && meta.path.is_ident("debugger_visualizer")
+            {
+                let _ = meta.parse_nested_meta(|nested| {
+                    if nested.path.is_ident("natvis_file")
+                        || nested.path.is_ident("gdb_script_file")
+                    {
+                        let lit: syn::LitStr = nested.value()?.parse()?;
+                        self.collect_relative_path(&lit);
+                    }
+                    Ok(())
+                });
+            }
+        }
+    }
 }
 
 fn parse_possible_path(attr: &syn::Attribute) -> Option<String> {
@@ -245,6 +287,11 @@ fn cfg_test(attrs: &[syn::Attribute]) -> bool {
 }
 
 impl<'ast> Visit<'ast> for SourceFinder<'_> {
+    fn visit_file(&mut self, node: &'ast syn::File) {
+        self.parse_debugger_visualizer(&node.attrs);
+        visit::visit_file(self, node);
+    }
+
     fn visit_item(&mut self, node: &'ast syn::Item) {
         let attrs = match node {
             syn::Item::Const(node) => &*node.attrs,
@@ -342,8 +389,9 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
     }
 
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
-        // https://doc.rust-lang.org/reference/items/modules.html
+        self.parse_debugger_visualizer(&node.attrs);
 
+        // https://doc.rust-lang.org/reference/items/modules.html
         // rustc only looks at the first `path` attribute.
         // https://github.com/rust-lang/rust/blob/1.69.0/compiler/rustc_expand/src/module.rs
         let first_path_value = node.attrs.iter().find_map(parse_possible_path);
@@ -434,27 +482,7 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
         match macro_ident.as_str() {
             "include_str" | "include_bytes" | "include" => {
                 match node.parse_body::<syn::LitStr>() {
-                    Ok(path) => {
-                        let source_path = {
-                            let mut p = parent_dir(self.current).to_owned();
-                            normalized_extend_path(&mut p, path.value());
-                            p
-                        };
-                        match fs::File::open(&source_path) {
-                            Ok(_) => {
-                                self.sources.files.insert(source_path);
-                            }
-                            Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                                self.push_error(ErrorKind::IncludeNotFound { source_path });
-                            }
-                            Err(err) => {
-                                self.push_error(ErrorKind::FileError {
-                                    source_path,
-                                    source: err,
-                                });
-                            }
-                        }
-                    }
+                    Ok(path) => self.collect_relative_path(&path),
                     Err(err) => {
                         self.push_error(ErrorKind::ParserError {
                             line: err.span().start().line,
@@ -770,6 +798,55 @@ mod tests {
                 .into_iter()
                 .map(Path::new)
                 .collect::<HashSet<_>>(),
+        );
+
+        assert_eq!(
+            res.errors
+                .into_iter()
+                .map(|x| x.to_string())
+                .collect::<HashSet<_>>(),
+            HashSet::<String>::default(),
+        );
+    }
+
+    #[test]
+    fn test_debugger_visualizer() {
+        let dir = scaffold! {
+            "src/lib.rs" => {
+                #[cfg(windows)]
+                mod windows;
+                #[cfg(unix)]
+                #[debugger_visualizer(gdb_script_file = "unix.py")]
+                mod unix;
+            },
+            "src/windows.rs" => {
+                #![debugger_visualizer(natvis_file = "windows.natvis")]
+            },
+            "src/unix.rs" => {},
+            "src/windows.natvis" => {},
+            "src/unix.py" => {},
+            "src/unused.natvis" => {},
+            "src/unused.py" => {},
+        }
+        .unwrap();
+
+        let res = crate_srcfiles(dir.path().join("src/lib.rs"));
+
+        assert_eq!(
+            res.files
+                .iter()
+                .map(|x| x.strip_prefix(&dir).unwrap())
+                .collect::<HashSet<_>>(),
+            [
+                "src/lib.rs",
+                "src/unix.py",
+                "src/unix.rs",
+                "src/windows.natvis",
+                "src/windows.rs",
+            ]
+            .into_iter()
+            .map(Path::new)
+            .collect::<HashSet<_>>(),
         );
 
         assert_eq!(
