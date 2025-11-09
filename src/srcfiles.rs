@@ -663,19 +663,35 @@ mod tests {
     }
 
     #[test]
-    fn test_mod_without_path_attr() {
+    fn test_mod() {
         let dir = cargo_manifest_dir! {
+            // Naming:
+            // p = module declaration has path attribute ("Path")
+            // c = no path attribute ("Conventional" location)
+            // d = module located in subdirectory with mod.rs ("Directory")
+            // n = no subdirectory ("Neighbor")
+            // i = in-line module with braced contents in the same file ("Inline")
+            // ABCD = depth
             "src/lib.rs" => {
-                mod aaa;
-                mod bbb;
-                mod ccc {
-                    mod ddd;
-                    mod eee;
-                    mod fff {
-                        mod ggg;
+                mod A_cn;
+                mod A_cd;
+                mod A_ci {
+                    mod B_cn;
+                    mod B_cd;
+                    mod B_ci {
+                        mod C_cn;
                     }
 
+                    #[path = "bp.rs"]
+                    mod B_p;
+
                     const _: &str = include_str!("str3.txt");
+                }
+
+                #[path = "api"]
+                mod A_pi {
+                    #[path = "bp.rs"]
+                    mod B_p;
                 }
 
                 const _: &str = include_str!("../str1.txt");
@@ -685,26 +701,58 @@ mod tests {
                 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
             }
 
-            "src/aaa.rs" => {
-                mod mmm;
-                mod nnn;
-                mod ooo {
-                    mod r#ppp;
-                    mod r#qqq;
-                    mod r#rrr {
-                        mod sss;
+            "src/A_cn.rs" => {
+                mod B_cn;
+                mod B_cd;
+                mod B_ci {
+                    mod r#C_cn;
+                    mod r#C_cd;
+                    mod r#C_ci {
+                        mod D_cn;
                     }
                 }
+
+                #[path = "bpi"]
+                mod B_pi {
+                    // FIXME: this incorrectly uses `src/A_cn/bpi/C_cn.rs`.
+                    // Should be `src/bpi/C_cn.rs`.
+                    mod C_cn;
+                }
             }
-            "src/bbb/mod.rs" => {}
-            "src/ccc/ddd.rs" => {}
-            "src/ccc/eee/mod.rs" => {}
-            "src/ccc/fff/ggg.rs" => {}
-            "src/aaa/mmm.rs" => {}
-            "src/aaa/nnn/mod.rs" => {}
-            "src/aaa/ooo/ppp.rs" => {}
-            "src/aaa/ooo/qqq/mod.rs" => {}
-            "src/aaa/ooo/rrr/sss.rs" => {}
+
+            "src/api/bp.rs" => {
+                // Because bp.rs was loaded via `path`, it's considered a
+                // "mod-rs" file. So dp.rs is loaded relative to `src/api/C_ci/`.
+                // If this had not been a "mod-rs" file, dp.rs would be loaded
+                // from `src/api/bp/C_ci/`.
+                mod C_ci {
+                    #[path = "dp.rs"]
+                    mod D_p;
+                }
+                #[path = "../cp.rs"]
+                mod C_p;
+            }
+
+            "src/A_ci/bp.rs" => {
+                mod C_ci {
+                    #[path = "dp.rs"]
+                    mod D_p;
+                }
+            }
+
+            "src/A_cn/B_cn.rs" => {}
+            "src/A_cn/B_cd/mod.rs" => {}
+            "src/A_cn/B_ci/C_cn.rs" => {}
+            "src/A_cn/B_ci/C_cd/mod.rs" => {}
+            "src/A_cn/B_ci/C_ci/D_cn.rs" => {}
+            "src/A_cn/bpi/C_cn.rs" => {}
+            "src/A_cd/mod.rs" => {}
+            "src/A_ci/B_cn.rs" => {}
+            "src/A_ci/B_cd/mod.rs" => {}
+            "src/A_ci/B_ci/C_cn.rs" => {}
+            "src/A_ci/C_ci/dp.rs" => {}
+            "src/api/C_ci/dp.rs" => {}
+            "src/cp.rs" => {}
             "str1.txt" => {}
             "src/str2.txt" => {}
             "src/str3.txt" => {}
@@ -715,71 +763,26 @@ mod tests {
             dir.path(),
             &[
                 "src/lib.rs",
-                "src/aaa.rs",
-                "src/bbb/mod.rs",
-                "src/ccc/ddd.rs",
-                "src/ccc/eee/mod.rs",
-                "src/ccc/fff/ggg.rs",
-                "src/aaa/mmm.rs",
-                "src/aaa/nnn/mod.rs",
-                "src/aaa/ooo/ppp.rs",
-                "src/aaa/ooo/qqq/mod.rs",
-                "src/aaa/ooo/rrr/sss.rs",
+                "src/A_cn.rs",
+                "src/A_cn/B_cn.rs",
+                "src/A_cn/B_cd/mod.rs",
+                "src/A_cn/B_ci/C_cn.rs",
+                "src/A_cn/B_ci/C_cd/mod.rs",
+                "src/A_cn/B_ci/C_ci/D_cn.rs",
+                "src/A_cn/bpi/C_cn.rs",
+                "src/A_cd/mod.rs",
+                "src/A_ci/B_cn.rs",
+                "src/A_ci/B_cd/mod.rs",
+                "src/A_ci/B_ci/C_cn.rs",
+                "src/A_ci/C_ci/dp.rs",
+                "src/A_ci/bp.rs",
+                "src/api/bp.rs",
+                "src/api/C_ci/dp.rs",
+                "src/cp.rs",
                 "src/str2.txt",
                 "src/str3.txt",
                 "src/subdir/bytes1.txt",
                 "str1.txt",
-            ],
-        );
-    }
-
-    #[test]
-    fn test_mod_with_path_attr() {
-        let dir = cargo_manifest_dir! {
-            "src/lib.rs" => {
-                #[path = "a"]
-                mod aaa {
-                    #[path = "b.rs"]
-                    mod bbb;
-                }
-
-                mod ccc {
-                    #[path = "d.rs"]
-                    mod ddd;
-                }
-            }
-            "src/a/b.rs" => {
-                // Because `b.rs` was loaded via `path`, it's considered a
-                // "mod-rs" file. So `n.rs` is loaded relative to `src/a/mmm/`.
-                // If this had not been a "mod-rs" file, `n.rs` would be loaded
-                // from `src/a/b/mmm/`.
-                mod mmm {
-                    #[path = "n.rs"]
-                    mod nnn;
-                }
-                #[path = "../ppp.rs"]
-                mod ppp;
-            }
-            "src/a/mmm/n.rs" => {}
-            "src/ccc/d.rs" => {
-                mod yyy {
-                    #[path = "z.rs"]
-                    mod zzz;
-                }
-            }
-            "src/ccc/yyy/z.rs" => {}
-            "src/ppp.rs" => {}
-        };
-
-        assert_srcfiles(
-            dir.path(),
-            &[
-                "src/lib.rs",
-                "src/a/b.rs",
-                "src/a/mmm/n.rs",
-                "src/ccc/d.rs",
-                "src/ccc/yyy/z.rs",
-                "src/ppp.rs",
             ],
         );
     }
