@@ -268,14 +268,15 @@ fn parent_dir(path: &Path) -> &Path {
 }
 
 fn cfg_test(attrs: &[syn::Attribute]) -> bool {
-    // Look for #[cfg(test)].
+    // Look for #[cfg(test)] and #[cfg(bench)].
     for attr in attrs {
         let mut is_cfg_test = None;
         if let syn::Meta::List(meta) = &attr.meta
             && meta.path.is_ident("cfg")
             && meta
                 .parse_nested_meta(|nested| {
-                    *is_cfg_test.get_or_insert(true) &= nested.path.is_ident("test");
+                    *is_cfg_test.get_or_insert(true) &=
+                        nested.path.is_ident("test") || nested.path.is_ident("bench");
                     Ok(())
                 })
                 .is_ok()
@@ -378,10 +379,10 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
     }
 
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-        // Look for #[test].
+        // Look for #[test] and #[bench].
         for attr in &node.attrs {
             if let syn::Meta::Path(path) = &attr.meta
-                && path.is_ident("test")
+                && (path.is_ident("test") || path.is_ident("bench"))
             {
                 return;
             }
