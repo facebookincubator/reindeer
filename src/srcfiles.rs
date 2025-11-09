@@ -21,6 +21,7 @@ use std::path::PathBuf;
 
 use foldhash::HashSet;
 use proc_macro2 as _; // To autocargo with our features (namely `span-locations`)
+use syn::ext::IdentExt as _;
 use syn::visit;
 use syn::visit::Visit;
 
@@ -404,7 +405,7 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
                 let default_path = {
                     let mut p = self.mod_parent_dir();
                     p.extend(self.mod_ancestors.iter());
-                    p.push(format!("{}.rs", node.ident));
+                    p.push(format!("{}.rs", node.ident.unraw()));
                     p
                 };
 
@@ -412,7 +413,7 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
                     let secondary_path = {
                         let mut p = self.mod_parent_dir();
                         p.extend(self.mod_ancestors.iter());
-                        p.push(node.ident.to_string());
+                        p.push(node.ident.unraw().to_string());
                         p.push("mod.rs");
                         p
                     };
@@ -458,7 +459,7 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
             // mod foo { ... }
             //
             (None, Some(_)) => {
-                self.mod_ancestors.push(node.ident.to_string());
+                self.mod_ancestors.push(node.ident.unraw().to_string());
                 syn::visit::visit_item_mod(self, node);
                 self.mod_ancestors.pop();
             }
@@ -616,9 +617,9 @@ mod tests {
                 mod mmm;
                 mod nnn;
                 mod ooo {
-                    mod ppp;
-                    mod qqq;
-                    mod rrr {
+                    mod r#ppp;
+                    mod r#qqq;
+                    mod r#rrr {
                         mod sss;
                     }
                 }
