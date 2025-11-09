@@ -20,7 +20,8 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use foldhash::HashSet;
-use proc_macro2 as _; // To autocargo with our features (namely `span-locations`)
+use proc_macro2::TokenStream;
+use syn::Token;
 use syn::ext::IdentExt as _;
 use syn::visit;
 use syn::visit::Visit;
@@ -250,19 +251,6 @@ impl SourceFinder<'_> {
     }
 }
 
-fn parse_possible_path(attr: &syn::Attribute) -> Option<String> {
-    if attr.path().is_ident("path") {
-        if let syn::Meta::NameValue(meta) = &attr.meta {
-            if let syn::Expr::Lit(expr) = &meta.value {
-                if let syn::Lit::Str(lit_str) = &expr.lit {
-                    return Some(lit_str.value());
-                }
-            }
-        }
-    }
-    None
-}
-
 fn parent_dir(path: &Path) -> &Path {
     path.parent().unwrap_or(Path::new(".."))
 }
@@ -393,16 +381,66 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
         self.parse_debugger_visualizer(&node.attrs);
 
-        // https://doc.rust-lang.org/reference/items/modules.html
-        // rustc only looks at the first `path` attribute.
-        // https://github.com/rust-lang/rust/blob/1.69.0/compiler/rustc_expand/src/module.rs
-        let first_path_value = node.attrs.iter().find_map(parse_possible_path);
+        let mut path_attrs = Vec::new();
+        let mut has_unconditional_path_attr = false; // #[path = ...]
+        let mut has_conditional_path_attr = false; // #[cfg_attr(..., path = ...)]
+        for attr in &node.attrs {
+            if let syn::Meta::NameValue(meta) = &attr.meta
+                && meta.path.is_ident("path")
+                && let syn::Expr::Lit(expr) = &meta.value
+                && let syn::Lit::Str(lit_str) = &expr.lit
+            {
+                path_attrs.push(lit_str.value());
+                has_unconditional_path_attr = true;
+            } else if let syn::Meta::List(meta) = &attr.meta
+                && meta.path.is_ident("cfg_attr")
+            {
+                let mut first = true;
+                let _ = meta.parse_nested_meta(|nested| {
+                    if first {
+                        // Ignore first element, which is the cfg expression.
+                        ignore_nested_meta(nested.input)?;
+                        first = false;
+                    } else {
+                        // Parse rest, which are attributes.
+                        if nested.path.is_ident("path") {
+                            let _: Token![=] = nested.input.parse()?;
+                            let lit_str: syn::LitStr = nested.input.parse()?;
+                            path_attrs.push(lit_str.value());
+                            has_conditional_path_attr = true;
+                        } else {
+                            ignore_nested_meta(nested.input)?;
+                        }
+                    }
+                    Ok(())
+                });
+            }
+        }
 
-        match (first_path_value, &node.content) {
+        if node.content.is_some() {
+            //
+            // mod foo { ... }
+            //
+            if path_attrs.is_empty() {
+                self.mod_ancestors.push(node.ident.unraw().to_string());
+                visit::visit_item_mod(self, node);
+                self.mod_ancestors.pop();
+            }
+
+            //
+            // #[path = "..."]
+            // mod foo { ... }
+            //
+            for path_attr in path_attrs {
+                self.mod_ancestors.push(path_attr);
+                visit::visit_item_mod(self, node);
+                self.mod_ancestors.pop();
+            }
+        } else {
             //
             // mod foo;
             //
-            (None, None) => {
+            if !has_unconditional_path_attr {
                 let default_path = {
                     let mut p = self.mod_parent_dir();
                     p.extend(self.mod_ancestors.iter());
@@ -420,10 +458,15 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
                     };
 
                     if !self.parse_and_visit_source_file(&secondary_path, ModRs::Auto) {
-                        self.push_error(ErrorKind::ModuleNotFound {
-                            default_path,
-                            secondary_path: Some(secondary_path),
-                        });
+                        if has_conditional_path_attr {
+                            // Suppress the error. We cannot know whether at
+                            // least one conditional path attr always applies.
+                        } else {
+                            self.push_error(ErrorKind::ModuleNotFound {
+                                default_path,
+                                secondary_path: Some(secondary_path),
+                            });
+                        }
                     }
                 }
             }
@@ -432,7 +475,7 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
             // #[path = "..."]
             // mod foo;
             //
-            (Some(first_path_value), None) => {
+            for path_attr in path_attrs {
                 let source_path = {
                     let mut p = if self.mod_ancestors.is_empty() {
                         parent_dir(self.current).to_owned()
@@ -440,39 +483,17 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
                         self.mod_parent_dir()
                     };
                     p.extend(self.mod_ancestors.iter());
-                    normalized_extend_path(&mut p, first_path_value);
+                    normalized_extend_path(&mut p, path_attr);
                     p
                 };
 
-                // Files loaded via `#[path = ...]` are treated as "mod-rs"
-                // files. Makes sense if you think about it: If it wasn't
-                // treated as a "mod-rs" file, then what about be the module
-                // dir for a file named `.weird.name.txt`.
+                // Files loaded via `#[path = ...]` are treated as "mod-rs" files.
                 if !self.parse_and_visit_source_file(&source_path, ModRs::Yes) {
                     self.push_error(ErrorKind::ModuleNotFound {
                         default_path: source_path,
                         secondary_path: None,
                     });
                 }
-            }
-
-            //
-            // mod foo { ... }
-            //
-            (None, Some(_)) => {
-                self.mod_ancestors.push(node.ident.unraw().to_string());
-                syn::visit::visit_item_mod(self, node);
-                self.mod_ancestors.pop();
-            }
-
-            //
-            // #[path = "..."]
-            // mod foo { ... }
-            //
-            (Some(first_path_value), Some(_)) => {
-                self.mod_ancestors.push(first_path_value);
-                syn::visit::visit_item_mod(self, node);
-                self.mod_ancestors.pop();
             }
         };
     }
@@ -522,10 +543,10 @@ struct CfgIf {
 
 impl syn::parse::Parse for CfgIf {
     fn parse(input: syn::parse::ParseStream) -> Result<Self, syn::Error> {
-        let _: syn::Token![if] = input.parse()?;
+        let _: Token![if] = input.parse()?;
 
         // Exactly one attribute.
-        let _: syn::Token![#] = input.parse()?;
+        let _: Token![#] = input.parse()?;
         let meta;
         syn::bracketed!(meta in input);
         let _: syn::Meta = meta.parse()?;
@@ -533,7 +554,7 @@ impl syn::parse::Parse for CfgIf {
         Ok(CfgIf {
             then_branch: input.parse()?,
             else_branch: {
-                if input.parse::<Option<syn::Token![else]>>()?.is_some() {
+                if input.parse::<Option<Token![else]>>()?.is_some() {
                     Some(Box::new(
                         input
                             .parse::<syn::Block>()
@@ -546,6 +567,17 @@ impl syn::parse::Parse for CfgIf {
             },
         })
     }
+}
+
+fn ignore_nested_meta(input: syn::parse::ParseStream) -> syn::Result<()> {
+    if input.parse::<Option<Token![=]>>()?.is_some() {
+        let _: syn::Lit = input.parse()?;
+    } else if input.peek(syn::token::Paren) {
+        let content;
+        syn::parenthesized!(content in input);
+        let _: TokenStream = content.parse()?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
