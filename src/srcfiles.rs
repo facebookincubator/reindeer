@@ -153,7 +153,7 @@ impl SourceFinder<'_> {
         }
     }
 
-    fn collect_relative_path(&mut self, path: &syn::LitStr) {
+    fn collect_relative_path(&mut self, path: &syn::LitStr) -> Result<(), ErrorKind> {
         let source_path = {
             let mut p = parent_dir(self.current).to_owned();
             normalized_extend_path(&mut p, path.value());
@@ -162,16 +162,15 @@ impl SourceFinder<'_> {
         match fs::File::open(&source_path) {
             Ok(_) => {
                 self.sources.files.insert(source_path);
+                Ok(())
             }
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                self.push_error(ErrorKind::IncludeNotFound { source_path });
+                Err(ErrorKind::IncludeNotFound { source_path })
             }
-            Err(err) => {
-                self.push_error(ErrorKind::FileError {
-                    source_path,
-                    source: err,
-                });
-            }
+            Err(err) => Err(ErrorKind::FileError {
+                source_path,
+                source: err,
+            }),
         }
     }
 
@@ -242,7 +241,9 @@ impl SourceFinder<'_> {
                         || nested.path.is_ident("gdb_script_file")
                     {
                         let lit: syn::LitStr = nested.value()?.parse()?;
-                        self.collect_relative_path(&lit);
+                        if let Err(err) = self.collect_relative_path(&lit) {
+                            self.push_error(err);
+                        }
                     }
                     Ok(())
                 });
@@ -518,7 +519,11 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
         match macro_ident.as_str() {
             "include_str" | "include_bytes" | "include" => {
                 match node.parse_body::<syn::LitStr>() {
-                    Ok(path) => self.collect_relative_path(&path),
+                    Ok(path) => {
+                        if let Err(err) = self.collect_relative_path(&path) {
+                            self.push_error(err);
+                        }
+                    }
                     Err(_err) => {
                         // Ignore error. This happens for nonstring-literal include:
                         // `include!(concat!(env!("OUT_DIR"), "/generated.rs"));`
@@ -539,6 +544,27 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
             },
             _ => {}
         };
+    }
+
+    fn visit_meta_name_value(&mut self, node: &'ast syn::MetaNameValue) {
+        if node.path.is_ident("doc")
+            && let syn::Expr::Macro(expr) = &node.value
+            && expr.mac.path.segments.last().unwrap().ident == "include_str"
+            && let Ok(lit) = expr.mac.parse_body::<syn::LitStr>()
+        {
+            if let Err(_err) = self.collect_relative_path(&lit) {
+                // Ignore error. Crates sometimes have:
+                //
+                //     #[doc = include_str!("../../README.md")]
+                //     #[cfg(doctest)]
+                //     pub struct ReadmeDoctests;
+                //
+                // Within a doc attribute, the included file is practically
+                // always a Markdown file not a Rust file, so reporting an error
+                // here and switching sources to a fallback of "**/*.rs" would
+                // not be any more useful.
+            }
+        }
     }
 }
 
