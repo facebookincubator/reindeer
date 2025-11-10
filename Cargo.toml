@@ -36,7 +36,7 @@ serde_json = { version = "1.0.140", features = ["alloc", "float_roundtrip", "raw
 serde_starlark = "0.1.13"
 serde_with = { version = "3", features = ["hex", "json"] }
 strum = { version = "0.27.1", features = ["derive"] }
-syn = { version = "2.0.101", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+syn = { version = "2.0.110", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 termcolor = "1.0"
 toml = { version = "0.9.8", features = ["preserve_order"] }
 unicode-ident = "1.0.12"
