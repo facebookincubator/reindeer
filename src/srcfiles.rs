@@ -29,6 +29,11 @@ use syn::visit::Visit;
 
 use crate::path::normalized_extend_path;
 
+mod kw {
+    syn::custom_keyword!(concat);
+    syn::custom_keyword!(env);
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct Error {
@@ -88,9 +93,7 @@ impl StdError for Error {
     }
 }
 
-pub fn crate_srcfiles(path: impl AsRef<Path>) -> Sources {
-    let path = path.as_ref();
-
+pub fn crate_srcfiles(manifest_dir: &Path, crate_root: &Path) -> Sources {
     let mut sources = Sources {
         files: HashSet::default(),
         errors: vec![],
@@ -99,12 +102,13 @@ pub fn crate_srcfiles(path: impl AsRef<Path>) -> Sources {
     let mod_rs = ModRs::Yes; // Entry files are presumed to be "mod-rs" files.
 
     SourceFinder {
-        current: path,
+        manifest_dir,
+        current: crate_root,
         sources: &mut sources,
         mod_ancestors: vec![],
         mod_rs,
     }
-    .parse_and_visit_source_file(path, mod_rs);
+    .parse_and_visit_source_file(crate_root, mod_rs);
 
     sources
 }
@@ -123,6 +127,7 @@ enum ModRs {
 
 #[derive(Debug)]
 struct SourceFinder<'s> {
+    manifest_dir: &'s Path,
     current: &'s Path,
     sources: &'s mut Sources,
     mod_ancestors: Vec<String>,
@@ -156,13 +161,20 @@ impl SourceFinder<'_> {
 
     fn collect_relative_path(
         &mut self,
-        path: &syn::LitStr,
+        path: &IncludePath,
         include: bool,
     ) -> Result<(), ErrorKind> {
-        let source_path = {
-            let mut p = parent_dir(self.current).to_owned();
-            normalized_extend_path(&mut p, path.value());
-            p
+        let source_path = match path {
+            IncludePath::RelativeToCurrent(path) => {
+                let mut p = parent_dir(self.current).to_owned();
+                normalized_extend_path(&mut p, path.value());
+                p
+            }
+            IncludePath::RelativeToManifestDir(path) => {
+                let mut p = self.manifest_dir.to_owned();
+                normalized_extend_path(&mut p, path.value().trim_start_matches('/'));
+                p
+            }
         };
         if self.sources.files.contains(&source_path) {
             return Ok(());
@@ -177,6 +189,7 @@ impl SourceFinder<'_> {
                 match file.read_to_string(&mut content) {
                     Ok(_) => {
                         let mut source_finder = SourceFinder {
+                            manifest_dir: self.manifest_dir,
                             current: &source_path,
                             sources: self.sources,
                             mod_ancestors: self.mod_ancestors.clone(),
@@ -233,6 +246,7 @@ impl SourceFinder<'_> {
                 match syn::parse_file(&content) {
                     Ok(ast) => {
                         SourceFinder {
+                            manifest_dir: self.manifest_dir,
                             current: source_path,
                             sources: self.sources,
                             mod_ancestors: vec![],
@@ -279,7 +293,8 @@ impl SourceFinder<'_> {
                         || nested.path.is_ident("gdb_script_file")
                     {
                         let lit: syn::LitStr = nested.value()?.parse()?;
-                        if let Err(err) = self.collect_relative_path(&lit, false) {
+                        let include_path = IncludePath::RelativeToCurrent(lit);
+                        if let Err(err) = self.collect_relative_path(&include_path, false) {
                             self.push_error(err);
                         }
                     }
@@ -562,7 +577,7 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
         // TODO: Consider parsing the `include` for more modules.
         match macro_ident.as_str() {
             "include_str" | "include_bytes" | "include" => {
-                match node.parse_body::<syn::LitStr>() {
+                match node.parse_body::<IncludePath>() {
                     Ok(path) => {
                         let include = macro_ident == "include";
                         if let Err(err) = self.collect_relative_path(&path, include) {
@@ -595,9 +610,9 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
         if node.path.is_ident("doc")
             && let syn::Expr::Macro(expr) = &node.value
             && expr.mac.path.segments.last().unwrap().ident == "include_str"
-            && let Ok(lit) = expr.mac.parse_body::<syn::LitStr>()
+            && let Ok(include_path) = expr.mac.parse_body::<IncludePath>()
         {
-            if let Err(_err) = self.collect_relative_path(&lit, false) {
+            if let Err(_err) = self.collect_relative_path(&include_path, false) {
                 // Ignore error. Crates sometimes have:
                 //
                 //     #[doc = include_str!("../../README.md")]
@@ -609,6 +624,52 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
                 // here and switching sources to a fallback of "**/*.rs" would
                 // not be any more useful.
             }
+        }
+    }
+}
+
+enum IncludePath {
+    RelativeToCurrent(syn::LitStr),
+    RelativeToManifestDir(syn::LitStr),
+}
+
+impl syn::parse::Parse for IncludePath {
+    fn parse(input: syn::parse::ParseStream) -> Result<Self, syn::Error> {
+        if input.peek(syn::LitStr) {
+            let relative_path: syn::LitStr = input.parse()?;
+            let _: Option<Token![,]> = input.parse()?;
+            Ok(IncludePath::RelativeToCurrent(relative_path))
+        } else if input.peek(kw::concat) {
+            // `concat!(env!("CARGO_MANIFEST_DIR"), "/...")`
+            let _: kw::concat = input.parse()?;
+            let _: Token![!] = input.parse()?;
+            let concat;
+            syn::parenthesized!(concat in input);
+            let _: kw::env = concat.parse()?;
+            let _: Token![!] = concat.parse()?;
+            let env;
+            syn::parenthesized!(env in concat);
+            let env_var: syn::LitStr = env.parse()?;
+            if env_var.value() != "CARGO_MANIFEST_DIR" {
+                return Err(syn::Error::new(
+                    env_var.span(),
+                    "unsupported environment variable",
+                ));
+            }
+            let _: Option<Token![,]> = env.parse()?;
+            let _: Token![,] = concat.parse()?;
+            let relative_path: syn::LitStr = concat.parse()?;
+            if !relative_path.value().starts_with('/') {
+                return Err(syn::Error::new(
+                    relative_path.span(),
+                    "expected path to start with path separator",
+                ));
+            }
+            let _: Option<Token![,]> = concat.parse()?;
+            let _: Option<Token![,]> = input.parse()?;
+            Ok(IncludePath::RelativeToManifestDir(relative_path))
+        } else {
+            Err(input.error("unsupported include path expression"))
         }
     }
 }
@@ -688,13 +749,14 @@ mod tests {
     }
 
     #[track_caller]
-    fn assert_srcfiles(dir: &Path, expected: &[&str]) {
-        let res = crate_srcfiles(dir.join("src").join("lib.rs"));
+    fn assert_srcfiles(manifest_dir: &Path, expected: &[&str]) {
+        let crate_root = manifest_dir.join("src").join("lib.rs");
+        let res = crate_srcfiles(manifest_dir, &crate_root);
 
         assert_eq!(
             res.files
                 .iter()
-                .map(|path| path.strip_prefix(dir).unwrap())
+                .map(|path| path.strip_prefix(manifest_dir).unwrap())
                 .collect::<BTreeSet<_>>(),
             expected.iter().map(Path::new).collect::<BTreeSet<_>>(),
         );
@@ -761,6 +823,8 @@ mod tests {
                 mod B_pi {
                     mod C_cn;
                 }
+
+                const _: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/str4.txt"));
             }
 
             "src/api/bp.rs" => {
@@ -807,6 +871,7 @@ mod tests {
             "str1.txt" => {}
             "src/str2.txt" => {}
             "src/str3.txt" => {}
+            "src/str4.txt" => {}
             "src/subdir/bytes1.txt" => {}
         };
 
@@ -834,6 +899,7 @@ mod tests {
                 "src/cp.rs",
                 "src/str2.txt",
                 "src/str3.txt",
+                "src/str4.txt",
                 "src/subdir/bytes1.txt",
                 "str1.txt",
             ],

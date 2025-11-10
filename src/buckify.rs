@@ -382,8 +382,8 @@ fn find_repository_root(manifest_dir: &Path) -> anyhow::Result<&Path> {
 }
 
 #[cached]
-fn srcfiles(manifest_dir: PathBuf, path: PathBuf) -> Vec<PathBuf> {
-    let sources = crate_srcfiles(path);
+fn srcfiles(manifest_dir: PathBuf, crate_root: PathBuf) -> Vec<PathBuf> {
+    let sources = crate_srcfiles(&manifest_dir, &crate_root);
     if sources.errors.is_empty() {
         let srcs = sources
             .files
