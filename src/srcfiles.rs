@@ -590,6 +590,20 @@ impl<'ast> Visit<'ast> for SourceFinder<'_> {
                     }
                 };
             }
+            "cfg_select" => match node.parse_body_with(parse_cfg_select) {
+                Ok(cfg_select) => {
+                    for stmt in &cfg_select {
+                        self.visit_stmt(stmt);
+                    }
+                }
+                Err(err) => {
+                    self.push_error(ErrorKind::ParserError {
+                        line: err.span().start().line,
+                        source_path: self.current.to_owned(),
+                        source: err,
+                    });
+                }
+            },
             "cfg_if" => match node.parse_body::<CfgIf>() {
                 Ok(cfg_if) => {
                     self.visit_cfg_if(&cfg_if);
@@ -672,6 +686,32 @@ impl syn::parse::Parse for IncludePath {
             Err(input.error("unsupported include path expression"))
         }
     }
+}
+
+fn parse_cfg_select(input: syn::parse::ParseStream) -> Result<Vec<syn::Stmt>, syn::Error> {
+    let mut statements = Vec::new();
+    while !input.is_empty() {
+        if input.peek(Token![_]) {
+            let _: Token![_] = input.parse()?;
+        } else if input.peek(syn::LitBool) {
+            let _: syn::LitBool = input.parse()?;
+        } else {
+            let _: syn::Meta = input.parse()?;
+        }
+        let _: Token![=>] = input.parse()?;
+        if input.peek(syn::token::Brace) {
+            let block;
+            syn::braced!(block in input);
+            statements.extend(syn::Block::parse_within(&block)?);
+        } else {
+            let expr: syn::Expr = input.parse()?;
+            statements.push(syn::Stmt::Expr(expr, None));
+            if !input.is_empty() {
+                let _: Token![,] = input.parse()?;
+            }
+        }
+    }
+    Ok(statements)
 }
 
 #[derive(Debug)]
@@ -916,6 +956,38 @@ mod tests {
                     } else if #[cfg(windows)] {
                         mod windows;
                     } else {
+                        mod unknown;
+                    }
+                }
+            }
+            "src/linux.rs" => {}
+            "src/windows.rs" => {}
+            "src/unknown.rs" => {}
+        };
+
+        assert_srcfiles(
+            dir.path(),
+            &[
+                "src/lib.rs",
+                "src/linux.rs",
+                "src/windows.rs",
+                "src/unknown.rs",
+            ],
+        );
+    }
+
+    #[test]
+    fn test_cfg_select() {
+        let dir = cargo_manifest_dir! {
+            "src/lib.rs" => {
+                cfg_select! {
+                    target_os = "linux" => {
+                        mod linux;
+                    }
+                    windows => {
+                        mod windows;
+                    }
+                    _ => {
                         mod unknown;
                     }
                 }
