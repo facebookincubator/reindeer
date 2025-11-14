@@ -599,7 +599,7 @@ fn generate_target_rules<'scope>(
                     .entry(platform_name.clone())
                     .or_insert_with(PlatformRustCommon::default)
             };
-            if dep_kind.artifact == Some(ArtifactKind::Bin) {
+            if let Some(ArtifactKind::Bin(_) | ArtifactKind::EveryBin) = dep_kind.artifact {
                 let target_name = dep.target.strip_prefix(':').unwrap();
                 let bin_name = dep_kind.bin_name.as_ref().unwrap();
                 let env = format!("{}-{}", target_name, bin_name);

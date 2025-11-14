@@ -42,6 +42,7 @@ use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::de::Unexpected;
 use serde::de::Visitor;
 use serde_with::As;
 use serde_with::DeserializeAs;
@@ -414,7 +415,7 @@ fn build_resolve_graph(
                             .ok()
                             .map(|intern| intern.as_str().to_owned()),
                         artifact: Some(match kind.crate_type() {
-                            "bin" => ArtifactKind::Bin,
+                            "bin" => ArtifactKind::EveryBin,
                             "staticlib" => ArtifactKind::Staticlib,
                             "cdylib" => ArtifactKind::Cdylib,
                             _ => unimplemented!(),
@@ -776,12 +777,50 @@ pub struct ArtifactDep {
     pub lib: bool,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub enum ArtifactKind {
-    Bin,
+    Bin(String),
+    EveryBin,
     Staticlib,
     Cdylib,
+}
+
+impl<'de> Deserialize<'de> for ArtifactKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArtifactKindVisitor;
+
+        impl<'de> Visitor<'de> for ArtifactKindVisitor {
+            type Value = ArtifactKind;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("artifact kind")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match value {
+                    "bin" => return Ok(ArtifactKind::EveryBin),
+                    "staticlib" => return Ok(ArtifactKind::Staticlib),
+                    "cdylib" => return Ok(ArtifactKind::Cdylib),
+                    _ => {}
+                }
+                if let Some(specific_bin) = value.strip_prefix("bin:") {
+                    return Ok(ArtifactKind::Bin(specific_bin.to_owned()));
+                }
+                Err(serde::de::Error::invalid_value(
+                    Unexpected::Str(value),
+                    &self,
+                ))
+            }
+        }
+
+        deserializer.deserialize_str(ArtifactKindVisitor)
+    }
 }
 
 /// Package build target
@@ -962,7 +1001,7 @@ impl NodeDepKind {
     pub fn target_req(&self) -> TargetReq<'_> {
         match self.artifact {
             None => TargetReq::Lib,
-            Some(ArtifactKind::Bin) => {
+            Some(ArtifactKind::Bin(_) | ArtifactKind::EveryBin) => {
                 if let Some(bin_name) = &self.bin_name {
                     TargetReq::Bin(bin_name)
                 } else {

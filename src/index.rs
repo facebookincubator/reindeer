@@ -705,12 +705,23 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                 }
             }
 
-            if let Some(node_artifact_kind) = dep_kind.artifact {
+            if let Some(node_artifact_kind) = &dep_kind.artifact {
                 // Look for an artifact dependency.
                 let Some(manifest_artifact) = &manifest_dep.artifact else {
                     continue;
                 };
-                if !manifest_artifact.kinds.contains(&node_artifact_kind) {
+
+                if !manifest_artifact
+                    .kinds
+                    .iter()
+                    .any(|manifest_artifact_kind| {
+                        if let ArtifactKind::Bin(_) = manifest_artifact_kind {
+                            *node_artifact_kind == ArtifactKind::EveryBin
+                        } else {
+                            *node_artifact_kind == *manifest_artifact_kind
+                        }
+                    })
+                {
                     continue;
                 }
 
@@ -727,7 +738,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                     match node_artifact_kind {
                         // For bin artifacts without a rename, the extern_name
                         // will be based on bin_name.
-                        ArtifactKind::Bin => {
+                        ArtifactKind::Bin(_) | ArtifactKind::EveryBin => {
                             let Some(bin_name) = &dep_kind.bin_name else {
                                 continue;
                             };
