@@ -46,6 +46,7 @@ mod platform;
 mod remap;
 mod srcfiles;
 mod subtarget;
+mod tp_metadata;
 mod unused;
 mod vendor;
 

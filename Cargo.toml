@@ -16,6 +16,7 @@ cargo_toml = "0.22.1"
 clap = { version = "4.5.42", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 dunce = "1.0.5"
 env_logger = { version = "0.11.8", features = ["color"] }
+erased-serde = "0.4.9"
 fnv = "1.0"
 foldhash = "0.1.5"
 globset = { version = "0.4.13", features = ["serde1"] }
@@ -35,6 +36,7 @@ serde = { version = "1.0.219", features = ["derive", "rc"] }
 serde_json = { version = "1.0.140", features = ["alloc", "float_roundtrip", "raw_value", "unbounded_depth"] }
 serde_starlark = "0.1.13"
 serde_with = { version = "3", features = ["hex", "json"] }
+spdx = "0.12"
 strum = { version = "0.27.1", features = ["derive"] }
 syn = { version = "2.0.110", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 termcolor = "1.0"

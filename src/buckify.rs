@@ -76,6 +76,7 @@ use crate::platform::PlatformName;
 use crate::srcfiles::crate_srcfiles;
 use crate::subtarget::CollectSubtargets;
 use crate::subtarget::Subtarget;
+use crate::tp_metadata::TpMetadata;
 use crate::unused::UnusedFixups;
 
 pub fn evaluate_for_platforms<Rule, Collection, R>(
@@ -634,6 +635,7 @@ fn generate_target_rules<'scope>(
                 krate: tgt.name.replace('-', "_"),
                 crate_root: BuckPath(crate_root),
                 edition,
+                metadata: BTreeMap::new(),
                 base,
                 platform: perplat,
             },
@@ -745,6 +747,14 @@ fn generate_target_rules<'scope>(
             .insert(RuleRef::from(index.private_rule_name(pkg)));
     }
 
+    let mut metadata = BTreeMap::new();
+    if config.third_party_metadata {
+        metadata.insert(
+            "third-party.metadata".to_owned(),
+            Box::new(TpMetadata::new(pkg)) as Box<dyn erased_serde::Serialize + Send + Sync>,
+        );
+    }
+
     // Generate rules appropriate to each kind of crate we want to support
     let mut rules: Vec<Rule> = if (tgt.kind_lib() && tgt.crate_lib())
         || (tgt.kind_proc_macro() && tgt.crate_proc_macro())
@@ -800,6 +810,7 @@ fn generate_target_rules<'scope>(
                 krate: tgt.name.replace('-', "_"),
                 crate_root: BuckPath(crate_root),
                 edition,
+                metadata,
                 base: lib_base,
                 platform: lib_perplat,
             },
@@ -860,6 +871,7 @@ fn generate_target_rules<'scope>(
                 krate: tgt.name.replace('-', "_"),
                 crate_root: BuckPath(crate_root),
                 edition,
+                metadata,
                 base: bin_base,
                 platform: bin_perplat,
             },

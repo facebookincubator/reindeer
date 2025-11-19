@@ -423,16 +423,40 @@ impl Serialize for PlatformRustCommon {
     }
 }
 
-#[derive(Debug)]
 pub struct RustCommon {
     pub common: Common,
     pub krate: String,
     pub crate_root: BuckPath,
     pub edition: crate::cargo::Edition,
+    pub metadata: BTreeMap<String, Box<dyn erased_serde::Serialize + Send + Sync>>,
     // Platform-dependent
     pub base: PlatformRustCommon,
     // Platform-specific
     pub platform: BTreeMap<PlatformName, PlatformRustCommon>,
+}
+
+impl Debug for RustCommon {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        let RustCommon {
+            common,
+            krate,
+            crate_root,
+            edition,
+            metadata,
+            base,
+            platform,
+        } = self;
+        formatter
+            .debug_struct("RustCommon")
+            .field("common", common)
+            .field("krate", krate)
+            .field("crate_root", crate_root)
+            .field("edition", edition)
+            .field("metadata", &serde_json::to_value(metadata).unwrap())
+            .field("base", base)
+            .field("platform", platform)
+            .finish()
+    }
 }
 
 /// Serialize as:
@@ -522,6 +546,7 @@ impl Serialize for RustLibrary {
                     krate,
                     crate_root,
                     edition,
+                    metadata,
                     base:
                         PlatformRustCommon {
                             srcs,
@@ -577,6 +602,9 @@ impl Serialize for RustLibrary {
         if !mapped_srcs.is_empty() {
             map.serialize_entry("mapped_srcs", mapped_srcs)?;
         }
+        if !metadata.is_empty() {
+            map.serialize_entry("metadata", metadata)?;
+        }
         if !named_deps.is_empty() {
             map.serialize_entry("named_deps", named_deps)?;
         }
@@ -625,6 +653,7 @@ impl Serialize for RustBinary {
                     krate,
                     crate_root,
                     edition,
+                    metadata,
                     base:
                         PlatformRustCommon {
                             srcs,
@@ -669,6 +698,9 @@ impl Serialize for RustBinary {
         }
         if !mapped_srcs.is_empty() {
             map.serialize_entry("mapped_srcs", mapped_srcs)?;
+        }
+        if !metadata.is_empty() {
+            map.serialize_entry("metadata", metadata)?;
         }
         if !named_deps.is_empty() {
             map.serialize_entry("named_deps", named_deps)?;

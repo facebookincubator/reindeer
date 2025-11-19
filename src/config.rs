@@ -86,6 +86,21 @@ pub struct Config {
     #[serde(default)]
     pub include_workspace_members: bool,
 
+    /// Generate "third-party.metadata" metadata on every `rust_library` and
+    /// `rust_binary` target.
+    ///
+    /// ```starlark
+    /// metadata = {
+    ///     "third-party.metadata": {
+    ///         "name": "anyhow",
+    ///         "version": "1.0.100",
+    ///         "licenses": ["MIT", "Apache-2.0"],
+    ///     },
+    /// }
+    /// ```
+    #[serde(default)]
+    pub third_party_metadata: bool,
+
     /// List of Cargo environment variables (like CARGO_PKG_AUTHORS) to provide
     /// to crates by default, when not otherwise specified by a crate-specific
     /// fixup. Default: none.

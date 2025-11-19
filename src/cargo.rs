@@ -666,6 +666,8 @@ pub struct Manifest {
     /// Canonical ID for package
     #[serde(with = "As::<PackageIdFromSpec>")]
     pub id: PackageId,
+    /// SPDX license expression
+    pub license: Option<String>,
     /// Path to license
     pub license_file: Option<PathBuf>,
     /// Package description

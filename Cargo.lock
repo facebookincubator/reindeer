@@ -3305,6 +3305,7 @@ dependencies = [
  "clap",
  "dunce",
  "env_logger",
+ "erased-serde",
  "fnv",
  "foldhash",
  "globset",
@@ -3324,6 +3325,7 @@ dependencies = [
  "serde_json",
  "serde_starlark",
  "serde_with",
+ "spdx",
  "strum",
  "syn 2.0.110",
  "tempfile",
@@ -3778,6 +3780,15 @@ checksum = "c970269d99b64e60ec3bd6ad27270092a5394c4e309314b18ae3fe575695fbe8"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "spdx"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41cf87c0efffc158b9dde4d6e0567a43e4383adc4c949e687a2039732db2f23a"
+dependencies = [
+ "smallvec",
 ]
 
 [[package]]
