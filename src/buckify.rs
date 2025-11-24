@@ -782,9 +782,10 @@ fn generate_target_rules<'scope>(
                 };
             rules.push(Rule::Alias(Alias {
                 name: index.public_rule_name(pkg),
-                actual: Name(pkg.to_string()),
+                actual: RuleRef::new(format!(":{}", pkg)),
                 platforms,
                 visibility: fixups.visibility().clone(),
+                sort_key: Name(pkg.to_string()),
             }));
         }
 
@@ -851,9 +852,10 @@ fn generate_target_rules<'scope>(
             };
             rules.push(Rule::Alias(Alias {
                 name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
-                actual: actual.clone(),
+                actual: RuleRef::from(actual.clone()),
                 platforms,
                 visibility: fixups.visibility().clone(),
+                sort_key: actual.clone(),
             }));
         }
 

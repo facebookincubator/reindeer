@@ -433,9 +433,10 @@ impl<'meta> Fixups<'meta> {
             if *public {
                 let rule = Rule::Alias(Alias {
                     name: Name(format!("{}-{}", index.public_rule_name(self.package), name)),
-                    actual: actual.clone(),
+                    actual: RuleRef::from(actual.clone()),
                     platforms: None,
                     visibility: self.visibility().clone(),
+                    sort_key: actual.clone(),
                 });
                 res.push(rule);
             }
@@ -545,9 +546,10 @@ impl<'meta> Fixups<'meta> {
                             name,
                             static_lib.file_name().unwrap().to_string_lossy(),
                         )),
-                        actual: actual.clone(),
+                        actual: RuleRef::from(actual.clone()),
                         platforms: None,
                         visibility: self.visibility().clone(),
+                        sort_key: actual.clone(),
                     });
                     res.push(rule);
                 }

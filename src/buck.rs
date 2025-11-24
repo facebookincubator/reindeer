@@ -191,10 +191,11 @@ impl<'de> Deserialize<'de> for Visibility {
 #[derive(Debug, PartialEq)]
 pub struct Alias {
     pub name: Name,
-    /// Local target that the alias refers to -- always in the same package.
-    pub actual: Name,
+    /// Target that the alias refers to.
+    pub actual: RuleRef,
     pub platforms: Option<BTreeSet<PlatformName>>,
     pub visibility: Visibility,
+    pub sort_key: Name,
 }
 
 impl Serialize for Alias {
@@ -204,10 +205,11 @@ impl Serialize for Alias {
             actual,
             platforms,
             visibility,
+            sort_key: _,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
-        map.serialize_entry("actual", &NameAsLabel(actual))?;
+        map.serialize_entry("actual", actual)?;
         if let Some(platforms) = platforms {
             map.serialize_entry("platforms", platforms)?;
         }
@@ -1063,7 +1065,7 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
     match rule {
         // Make the alias rule come before the actual rule. Note that aliases
         // emitted by reindeer are always to a target within the same package.
-        Rule::Alias(Alias { actual, .. }) => RuleSortKey::Other(actual, 0),
+        Rule::Alias(Alias { sort_key, .. }) => RuleSortKey::Other(sort_key, 0),
         Rule::ExtractArchive(ExtractArchive { sort_key, .. }) => RuleSortKey::Other(sort_key, 1),
         Rule::HttpArchive(HttpArchive { sort_key, .. }) => RuleSortKey::Other(sort_key, 1),
         Rule::GitFetch(GitFetch { name, .. }) => RuleSortKey::GitFetch(name),
