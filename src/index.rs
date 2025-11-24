@@ -235,11 +235,6 @@ impl<'meta> Index<'meta> {
         self.public_targets.contains_key(&(pkg.id, target_req))
     }
 
-    /// Return the private package rule name.
-    pub fn private_rule_name(&self, pkg: &Manifest) -> Name {
-        Name(pkg.to_string())
-    }
-
     /// Return the package public rule name.
     pub fn public_rule_name(&self, pkg: &'meta Manifest) -> Name {
         Name(match self.public_packages.get(&pkg.id) {

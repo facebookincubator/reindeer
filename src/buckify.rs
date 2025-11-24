@@ -742,9 +742,7 @@ fn generate_target_rules<'scope>(
     // Standalone binary - binary for a package always takes the package's library as a dependency
     // if there is one
     if let Some(true) = pkg.dependency_target().map(ManifestTarget::kind_lib) {
-        bin_base
-            .deps
-            .insert(RuleRef::from(index.private_rule_name(pkg)));
+        bin_base.deps.insert(RuleRef::new(format!(":{}", pkg)));
     }
 
     let mut metadata = BTreeMap::new();
@@ -784,7 +782,7 @@ fn generate_target_rules<'scope>(
                 };
             rules.push(Rule::Alias(Alias {
                 name: index.public_rule_name(pkg),
-                actual: index.private_rule_name(pkg),
+                actual: Name(pkg.to_string()),
                 platforms,
                 visibility: fixups.visibility().clone(),
             }));
@@ -796,7 +794,7 @@ fn generate_target_rules<'scope>(
                     name: if index.is_root_package(pkg) {
                         index.public_rule_name(pkg)
                     } else {
-                        index.private_rule_name(pkg)
+                        Name(pkg.to_string())
                     },
                     visibility: if index.is_root_package(pkg) {
                         fixups.visibility().clone()
@@ -838,7 +836,7 @@ fn generate_target_rules<'scope>(
         rules
     } else if tgt.kind_bin() && tgt.crate_bin() {
         let mut rules = vec![];
-        let actual = Name(format!("{}-{}", index.private_rule_name(pkg), tgt.name));
+        let actual = Name(format!("{}-{}", pkg, tgt.name));
 
         if index.is_public_target(pkg, TargetReq::Bin(&tgt.name)) {
             let platforms = if !config.buck.alias_with_platforms.is_default {
@@ -938,7 +936,7 @@ fn generate_target_rules<'scope>(
             .into()
         };
         let rule = Filegroup {
-            name: Name(format!("{}-{}", index.private_rule_name(pkg), name)),
+            name: Name(format!("{}-{}", pkg, name)),
             srcs,
             visibility: visibility.clone(),
         };

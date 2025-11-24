@@ -428,11 +428,7 @@ impl<'meta> Fixups<'meta> {
             ..
         } in cxx_library
         {
-            let actual = Name(format!(
-                "{}-{}",
-                index.private_rule_name(self.package),
-                name,
-            ));
+            let actual = Name(format!("{}-{}", self.package, name));
 
             if *public {
                 let rule = Rule::Alias(Alias {
@@ -536,7 +532,7 @@ impl<'meta> Fixups<'meta> {
             for static_lib in static_lib_globs.walk(self.manifest_dir) {
                 let actual = Name(format!(
                     "{}-{}-{}",
-                    index.private_rule_name(self.package),
+                    self.package,
                     name,
                     static_lib.file_name().unwrap().to_string_lossy(),
                 ));
@@ -850,11 +846,7 @@ impl<'meta> Fixups<'meta> {
                 }
                 ret.insert(
                     (
-                        RuleRef::new(format!(
-                            ":{}-{}",
-                            index.private_rule_name(self.package),
-                            name
-                        )),
+                        RuleRef::new(format!(":{}-{}", self.package, name)),
                         None,
                         &NodeDepKind::ORDINARY,
                     ),
@@ -879,7 +871,7 @@ impl<'meta> Fixups<'meta> {
                         (
                             RuleRef::new(format!(
                                 ":{}-{}-{}",
-                                index.private_rule_name(self.package),
+                                self.package,
                                 name,
                                 static_lib.file_name().unwrap().to_string_lossy(),
                             )),
@@ -910,7 +902,7 @@ impl<'meta> Fixups<'meta> {
 
             ret.insert(
                 (
-                    RuleRef::from(index.private_rule_name(package)),
+                    RuleRef::new(format!(":{}", package)),
                     // Only use the rename if it isn't the same as the target anyway.
                     match package.dependency_target() {
                         Some(tgt) if tgt.name.replace('-', "_") == rename => None,
