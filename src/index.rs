@@ -237,10 +237,7 @@ impl<'meta> Index<'meta> {
 
     /// Return the private package rule name.
     pub fn private_rule_name(&self, pkg: &Manifest) -> Name {
-        Name(match self.public_packages.get(&pkg.id) {
-            Some(None) | None => pkg.to_string(), // Full version info
-            Some(Some(rename)) => format!("{}-{}", pkg, rename), // Rename
-        })
+        Name(pkg.to_string())
     }
 
     /// Return the package public rule name.
