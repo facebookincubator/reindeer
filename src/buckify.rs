@@ -619,6 +619,14 @@ fn generate_target_rules<'scope>(
         }
     }
 
+    let mut metadata = BTreeMap::new();
+    if config.third_party_metadata {
+        metadata.insert(
+            "third-party.metadata".to_owned(),
+            Box::new(TpMetadata::new(pkg)) as Box<dyn buck::Metadata>,
+        );
+    }
+
     // If this is a build script, we only apply fixups pertaining to srcs
     // (extra_srcs), mapped_srcs (overlay), and features. Return early before
     // applying any other fixups (such as rustc_flags, env, or link_style).
@@ -631,13 +639,13 @@ fn generate_target_rules<'scope>(
                     name: Name(format!("{}-{}", pkg, tgt.name)),
                     visibility: Visibility::Private,
                     licenses: Default::default(),
+                    metadata,
                     compatible_with: vec![],
                     target_compatible_with: vec![],
                 },
                 krate: tgt.name.replace('-', "_"),
                 crate_root: BuckPath(crate_root),
                 edition,
-                metadata: BTreeMap::new(),
                 base,
                 platform: perplat,
             },
@@ -747,14 +755,6 @@ fn generate_target_rules<'scope>(
         bin_base.deps.insert(RuleRef::new(format!(":{}", pkg)));
     }
 
-    let mut metadata = BTreeMap::new();
-    if config.third_party_metadata {
-        metadata.insert(
-            "third-party.metadata".to_owned(),
-            Box::new(TpMetadata::new(pkg)) as Box<dyn erased_serde::Serialize + Send + Sync>,
-        );
-    }
-
     // Generate rules appropriate to each kind of crate we want to support
     let mut rules: Vec<Rule> = if (tgt.kind_lib() && tgt.crate_lib())
         || (tgt.kind_proc_macro() && tgt.crate_proc_macro())
@@ -805,13 +805,13 @@ fn generate_target_rules<'scope>(
                         Visibility::Private
                     },
                     licenses,
+                    metadata,
                     compatible_with: fixups.compatible_with().clone(),
                     target_compatible_with: fixups.target_compatible_with().clone(),
                 },
                 krate: tgt.name.replace('-', "_"),
                 crate_root: BuckPath(crate_root),
                 edition,
-                metadata,
                 base: lib_base,
                 platform: lib_perplat,
             },
@@ -867,13 +867,13 @@ fn generate_target_rules<'scope>(
                     name: actual,
                     visibility: Visibility::Private,
                     licenses,
+                    metadata,
                     compatible_with: fixups.compatible_with().clone(),
                     target_compatible_with: fixups.target_compatible_with().clone(),
                 },
                 krate: tgt.name.replace('-', "_"),
                 crate_root: BuckPath(crate_root),
                 edition,
-                metadata,
                 base: bin_base,
                 platform: bin_perplat,
             },

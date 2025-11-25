@@ -18,6 +18,9 @@ use std::fmt::Display;
 use std::io::Write;
 use std::path::PathBuf;
 
+use dyn_clone::DynClone;
+use dyn_clone::clone_trait_object;
+use erased_serde::serialize_trait_object;
 use semver::Version;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -188,6 +191,13 @@ impl<'de> Deserialize<'de> for Visibility {
     }
 }
 
+pub trait Metadata: erased_serde::Serialize + DynClone + Send + Sync {}
+
+serialize_trait_object!(Metadata);
+clone_trait_object!(Metadata);
+
+impl<T> Metadata for T where T: Serialize + Clone + Send + Sync {}
+
 #[derive(Debug, PartialEq)]
 pub struct Alias {
     pub name: Name,
@@ -349,13 +359,35 @@ impl Serialize for GitFetch {
     }
 }
 
-#[derive(Debug, PartialEq)]
 pub struct Common {
     pub name: Name,
     pub visibility: Visibility,
     pub licenses: BTreeSet<BuckPath>,
+    pub metadata: BTreeMap<String, Box<dyn Metadata>>,
     pub compatible_with: Vec<RuleRef>,
     pub target_compatible_with: Vec<RuleRef>,
+}
+
+impl Debug for Common {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        let Common {
+            name,
+            visibility,
+            licenses,
+            metadata,
+            compatible_with,
+            target_compatible_with,
+        } = self;
+        formatter
+            .debug_struct("Common")
+            .field("name", name)
+            .field("visibility", visibility)
+            .field("licenses", licenses)
+            .field("metadata", &serde_json::to_value(metadata).unwrap())
+            .field("compatible_with", compatible_with)
+            .field("target_compatible_with", target_compatible_with)
+            .finish()
+    }
 }
 
 // Rule attributes which could be platform-specific
@@ -425,40 +457,16 @@ impl Serialize for PlatformRustCommon {
     }
 }
 
+#[derive(Debug)]
 pub struct RustCommon {
     pub common: Common,
     pub krate: String,
     pub crate_root: BuckPath,
     pub edition: crate::cargo::Edition,
-    pub metadata: BTreeMap<String, Box<dyn erased_serde::Serialize + Send + Sync>>,
     // Platform-dependent
     pub base: PlatformRustCommon,
     // Platform-specific
     pub platform: BTreeMap<PlatformName, PlatformRustCommon>,
-}
-
-impl Debug for RustCommon {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        let RustCommon {
-            common,
-            krate,
-            crate_root,
-            edition,
-            metadata,
-            base,
-            platform,
-        } = self;
-        formatter
-            .debug_struct("RustCommon")
-            .field("common", common)
-            .field("krate", krate)
-            .field("crate_root", crate_root)
-            .field("edition", edition)
-            .field("metadata", &serde_json::to_value(metadata).unwrap())
-            .field("base", base)
-            .field("platform", platform)
-            .finish()
-    }
 }
 
 /// Serialize as:
@@ -542,13 +550,13 @@ impl Serialize for RustLibrary {
                             name,
                             visibility,
                             licenses,
+                            metadata,
                             compatible_with,
                             target_compatible_with,
                         },
                     krate,
                     crate_root,
                     edition,
-                    metadata,
                     base:
                         PlatformRustCommon {
                             srcs,
@@ -649,13 +657,13 @@ impl Serialize for RustBinary {
                             name,
                             visibility,
                             licenses,
+                            metadata,
                             compatible_with,
                             target_compatible_with,
                         },
                     krate,
                     crate_root,
                     edition,
-                    metadata,
                     base:
                         PlatformRustCommon {
                             srcs,
@@ -818,7 +826,7 @@ impl Serialize for PlatformBuildscriptGenrule {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct CxxLibrary {
     pub common: Common,
     pub srcs: BTreeSet<SubtargetOrPath>,
@@ -841,6 +849,7 @@ impl Serialize for CxxLibrary {
                     name,
                     visibility,
                     licenses,
+                    metadata,
                     compatible_with,
                     target_compatible_with,
                 },
@@ -881,6 +890,9 @@ impl Serialize for CxxLibrary {
         }
         if !licenses.is_empty() {
             map.serialize_entry("licenses", licenses)?;
+        }
+        if !metadata.is_empty() {
+            map.serialize_entry("metadata", metadata)?;
         }
         if let Some(preferred_linkage) = preferred_linkage {
             map.serialize_entry("preferred_linkage", preferred_linkage)?;
@@ -979,7 +991,7 @@ impl<'a> Serialize for PreprocessorFlags<'a> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct PrebuiltCxxLibrary {
     pub common: Common,
     pub static_lib: SubtargetOrPath,
@@ -994,6 +1006,7 @@ impl Serialize for PrebuiltCxxLibrary {
                     name,
                     visibility,
                     licenses,
+                    metadata,
                     compatible_with,
                     target_compatible_with,
                 },
@@ -1007,6 +1020,9 @@ impl Serialize for PrebuiltCxxLibrary {
         }
         if !licenses.is_empty() {
             map.serialize_entry("licenses", licenses)?;
+        }
+        if !metadata.is_empty() {
+            map.serialize_entry("metadata", metadata)?;
         }
         map.serialize_entry("static_lib", static_lib)?;
         if !target_compatible_with.is_empty() {

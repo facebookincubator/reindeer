@@ -16,6 +16,7 @@ use serde::ser::SerializeSeq as _;
 
 use crate::cargo::Manifest;
 
+#[derive(Clone)]
 pub struct TpMetadata {
     pub name: String,
     pub version: semver::Version,
@@ -53,6 +54,7 @@ impl TpMetadata {
     }
 }
 
+#[derive(Clone)]
 pub enum License {
     Single(spdx::LicenseReq),
     Associative {
