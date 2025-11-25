@@ -143,6 +143,10 @@ pub struct BuckConfig {
     #[serde(default)]
     pub file_name: StringWithDefault<MustBe!("BUCK")>,
 
+    /// Split mode, with each crate getting a separate generated BUCK file.
+    #[serde(default)]
+    pub split: bool,
+
     /// Banner for the top of all generated bzl files, namely BUCK and METADATA.bzl
     #[serde(default)]
     pub generated_file_header:
@@ -358,6 +362,10 @@ pub fn read_config(reindeer_toml: &Path, args: &Args) -> anyhow::Result<Config> 
     let mut config = try_read_config(reindeer_toml)?;
 
     config.config_dir = dir.to_path_buf();
+
+    if config.buck.split && !config.license_patterns.is_empty() {
+        bail!("`license_patterns` is not supported with `split = true`.");
+    }
 
     if config.buck.buckfile_imports.is_default {
         // Fill in some prelude imports so Reindeer generates working targets

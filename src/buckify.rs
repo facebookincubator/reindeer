@@ -473,7 +473,9 @@ fn generate_target_rules<'scope>(
     let edition = tgt.edition.unwrap_or(pkg.edition);
 
     let mut licenses = BTreeSet::new();
-    if !matches!(config.vendor, VendorConfig::Source(_)) {
+    if config.buck.split {
+        // The `licenses` attribute is not currently implemented for split mode.
+    } else if !matches!(config.vendor, VendorConfig::Source(_)) {
         // The `licenses` attribute takes `attrs.source()` which is the file
         // containing the custom license text. For `vendor = false` mode, we
         // don't have such a file on disk, and we don't have a Buck label either
