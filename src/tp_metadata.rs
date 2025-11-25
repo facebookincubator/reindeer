@@ -45,10 +45,10 @@ impl TpMetadata {
         TpMetadata {
             name: pkg.name.clone(),
             version: pkg.version.clone(),
-            licenses: pkg
-                .license
-                .as_deref()
-                .map_or_else(Vec::new, split_spdx_license_list),
+            licenses: match &pkg.license {
+                None => Vec::new(),
+                Some(expr) => vec![format_spdx_license(expr)],
+            },
         }
     }
 }
@@ -103,11 +103,11 @@ impl Serialize for License {
 }
 
 // https://spdx.github.io/spdx-spec/appendix-IV-SPDX-license-expressions/
-fn split_spdx_license_list(spdx: &str) -> Vec<License> {
+fn format_spdx_license(spdx: &str) -> License {
     let mode = spdx::ParseMode::LAX; // designed for crates.io compatibility
     let expr = match spdx::Expression::parse_mode(spdx, mode) {
         Ok(expr) => expr,
-        Err(_) => return vec![License::Verbatim(spdx.to_owned())],
+        Err(_) => return License::Verbatim(spdx.to_owned()),
     };
 
     // Postorder traversal of license expression.
@@ -166,16 +166,7 @@ fn split_spdx_license_list(spdx: &str) -> Vec<License> {
 
     let license = stack.pop().unwrap();
     assert!(stack.is_empty());
-
-    if let License::Associative {
-        op: spdx::expression::Operator::Or,
-        nodes,
-    } = license
-    {
-        nodes
-    } else {
-        vec![license]
-    }
+    license
 }
 
 struct OneLineList<'a, T: Serialize>(&'a [T]);
