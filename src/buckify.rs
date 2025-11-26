@@ -42,6 +42,7 @@ use crate::buck::Filegroup;
 use crate::buck::GitFetch;
 use crate::buck::HttpArchive;
 use crate::buck::Name;
+use crate::buck::PackageVersion;
 use crate::buck::PlatformRustCommon;
 use crate::buck::Rule;
 use crate::buck::RuleRef;
@@ -270,6 +271,10 @@ fn generate_nonvendored_sources_archive<'scope>(
 
 fn generate_extract_archive(pkg: &Manifest) -> Rule {
     Rule::ExtractArchive(ExtractArchive {
+        owner: PackageVersion {
+            name: pkg.name.clone(),
+            version: pkg.version.clone(),
+        },
         name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
         src: BuckPath(PathBuf::from(format!(
             "vendor/{}-{}.crate",
@@ -302,6 +307,10 @@ fn generate_http_archive<'scope>(
     };
 
     Ok(Rule::HttpArchive(HttpArchive {
+        owner: PackageVersion {
+            name: pkg.name.clone(),
+            version: pkg.version.clone(),
+        },
         name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
         sha256,
         strip_prefix: format!("{}-{}", pkg.name, pkg.version),
@@ -634,6 +643,10 @@ fn generate_target_rules<'scope>(
     // library or binary, not a build script.
     if tgt.crate_bin() && tgt.kind_custom_build() {
         let buildscript = RustBinary {
+            owner: PackageVersion {
+                name: pkg.name.clone(),
+                version: pkg.version.clone(),
+            },
             common: RustCommon {
                 common: Common {
                     name: Name(format!("{}-{}", pkg, tgt.name)),
@@ -783,6 +796,10 @@ fn generate_target_rules<'scope>(
                     None
                 };
             rules.push(Rule::Alias(Alias {
+                owner: PackageVersion {
+                    name: pkg.name.clone(),
+                    version: pkg.version.clone(),
+                },
                 name: index.public_rule_name(pkg),
                 actual: RuleRef::new(format!(":{}", pkg)),
                 platforms,
@@ -792,6 +809,10 @@ fn generate_target_rules<'scope>(
         }
 
         let rust_library = RustLibrary {
+            owner: PackageVersion {
+                name: pkg.name.clone(),
+                version: pkg.version.clone(),
+            },
             common: RustCommon {
                 common: Common {
                     name: if index.is_root_package(pkg) {
@@ -853,6 +874,10 @@ fn generate_target_rules<'scope>(
                 None
             };
             rules.push(Rule::Alias(Alias {
+                owner: PackageVersion {
+                    name: pkg.name.clone(),
+                    version: pkg.version.clone(),
+                },
                 name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
                 actual: RuleRef::from(actual.clone()),
                 platforms,
@@ -862,6 +887,10 @@ fn generate_target_rules<'scope>(
         }
 
         rules.push(Rule::Binary(RustBinary {
+            owner: PackageVersion {
+                name: pkg.name.clone(),
+                version: pkg.version.clone(),
+            },
             common: RustCommon {
                 common: Common {
                     name: actual,
@@ -940,6 +969,10 @@ fn generate_target_rules<'scope>(
             .into()
         };
         let rule = Filegroup {
+            owner: PackageVersion {
+                name: pkg.name.clone(),
+                version: pkg.version.clone(),
+            },
             name: Name(format!("{}-{}", pkg, name)),
             srcs,
             visibility: visibility.clone(),

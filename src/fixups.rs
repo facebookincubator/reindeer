@@ -30,6 +30,7 @@ use crate::buck::BuckPath;
 use crate::buck::BuildscriptGenrule;
 use crate::buck::Common;
 use crate::buck::Name;
+use crate::buck::PackageVersion;
 use crate::buck::PlatformBuildscriptGenrule;
 use crate::buck::Rule;
 use crate::buck::RuleRef;
@@ -432,6 +433,10 @@ impl<'meta> Fixups<'meta> {
 
             if *public {
                 let rule = Rule::Alias(Alias {
+                    owner: PackageVersion {
+                        name: self.package.name.clone(),
+                        version: self.package.version.clone(),
+                    },
                     name: Name(format!("{}-{}", index.public_rule_name(self.package), name)),
                     actual: RuleRef::from(actual.clone()),
                     platforms: None,
@@ -442,6 +447,10 @@ impl<'meta> Fixups<'meta> {
             }
 
             let rule = buck::CxxLibrary {
+                owner: PackageVersion {
+                    name: self.package.name.clone(),
+                    version: self.package.version.clone(),
+                },
                 common: Common {
                     name: actual,
                     visibility: Visibility::Private,
@@ -541,6 +550,10 @@ impl<'meta> Fixups<'meta> {
 
                 if *public {
                     let rule = Rule::Alias(Alias {
+                        owner: PackageVersion {
+                            name: self.package.name.clone(),
+                            version: self.package.version.clone(),
+                        },
                         name: Name(format!(
                             "{}-{}-{}",
                             index.public_rule_name(self.package),
@@ -556,6 +569,10 @@ impl<'meta> Fixups<'meta> {
                 }
 
                 let rule = buck::PrebuiltCxxLibrary {
+                    owner: PackageVersion {
+                        name: self.package.name.clone(),
+                        version: self.package.version.clone(),
+                    },
                     common: Common {
                         name: actual,
                         visibility: Visibility::Private,
@@ -591,10 +608,12 @@ impl<'meta> Fixups<'meta> {
             };
 
             let mut buildscript_run = BuildscriptGenrule {
+                owner: PackageVersion {
+                    name: self.package.name.clone(),
+                    version: self.package.version.clone(),
+                },
                 name: self.buildscript_genrule_name(),
                 buildscript_rule: buildscript_rule_name.clone(),
-                package_name: self.package.name.clone(),
-                version: self.package.version.clone(),
                 local_manifest_dir,
                 manifest_dir,
                 base: PlatformBuildscriptGenrule {

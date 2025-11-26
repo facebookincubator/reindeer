@@ -36,6 +36,12 @@ use crate::config::BuckConfig;
 use crate::platform::PlatformName;
 use crate::subtarget::Subtarget;
 
+#[derive(Eq, PartialEq, Ord, PartialOrd, Debug)]
+pub struct PackageVersion {
+    pub name: String,
+    pub version: Version,
+}
+
 /// Only the name of a target. Does not include package path, nor leading colon.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
@@ -200,6 +206,7 @@ impl<T> Metadata for T where T: Serialize + Clone + Send + Sync {}
 
 #[derive(Debug, PartialEq)]
 pub struct Alias {
+    pub owner: PackageVersion,
     pub name: Name,
     /// Target that the alias refers to.
     pub actual: RuleRef,
@@ -211,6 +218,7 @@ pub struct Alias {
 impl Serialize for Alias {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         let Self {
+            owner: _,
             name,
             actual,
             platforms,
@@ -238,6 +246,7 @@ impl Serialize for NameAsLabel<'_> {
 
 #[derive(Debug, PartialEq)]
 pub struct Filegroup {
+    pub owner: PackageVersion,
     pub name: Name,
     pub srcs: BTreeMap<BuckPath, SubtargetOrPath>,
     pub visibility: Visibility,
@@ -246,6 +255,7 @@ pub struct Filegroup {
 impl Serialize for Filegroup {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         let Self {
+            owner: _,
             name,
             srcs,
             visibility,
@@ -264,6 +274,7 @@ impl Serialize for Filegroup {
 
 #[derive(PartialEq, Debug)]
 pub struct HttpArchive {
+    pub owner: PackageVersion,
     pub name: Name,
     pub sha256: String,
     pub strip_prefix: String,
@@ -276,6 +287,7 @@ pub struct HttpArchive {
 impl Serialize for HttpArchive {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         let Self {
+            owner: _,
             name,
             sha256,
             strip_prefix,
@@ -299,6 +311,7 @@ impl Serialize for HttpArchive {
 
 #[derive(Debug, PartialEq)]
 pub struct ExtractArchive {
+    pub owner: PackageVersion,
     pub name: Name,
     pub src: BuckPath,
     pub strip_prefix: String,
@@ -310,6 +323,7 @@ pub struct ExtractArchive {
 impl Serialize for ExtractArchive {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         let Self {
+            owner: _,
             name,
             src,
             strip_prefix,
@@ -533,6 +547,7 @@ where
 
 #[derive(Debug)]
 pub struct RustLibrary {
+    pub owner: PackageVersion,
     pub common: RustCommon,
     pub proc_macro: bool,
     pub dlopen_enable: bool,
@@ -543,6 +558,7 @@ pub struct RustLibrary {
 impl Serialize for RustLibrary {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         let Self {
+            owner: _,
             common:
                 RustCommon {
                     common:
@@ -644,12 +660,14 @@ impl Serialize for RustLibrary {
 
 #[derive(Debug)]
 pub struct RustBinary {
+    pub owner: PackageVersion,
     pub common: RustCommon,
 }
 
 impl Serialize for RustBinary {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         let Self {
+            owner: _,
             common:
                 RustCommon {
                     common:
@@ -735,10 +753,9 @@ impl Serialize for RustBinary {
 
 #[derive(Debug)]
 pub struct BuildscriptGenrule {
+    pub owner: PackageVersion,
     pub name: Name,
     pub buildscript_rule: Name,
-    pub package_name: String,
-    pub version: Version,
     pub local_manifest_dir: Option<BuckPath>,
     pub manifest_dir: Option<Subtarget>,
     // Platform-dependent
@@ -750,10 +767,13 @@ pub struct BuildscriptGenrule {
 impl Serialize for BuildscriptGenrule {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         let Self {
+            owner:
+                PackageVersion {
+                    name: package_name,
+                    version,
+                },
             name,
             buildscript_rule,
-            package_name,
-            version,
             local_manifest_dir,
             manifest_dir,
             base:
@@ -828,6 +848,7 @@ impl Serialize for PlatformBuildscriptGenrule {
 
 #[derive(Debug)]
 pub struct CxxLibrary {
+    pub owner: PackageVersion,
     pub common: Common,
     pub srcs: BTreeSet<SubtargetOrPath>,
     pub headers: BTreeSet<SubtargetOrPath>,
@@ -844,6 +865,7 @@ pub struct CxxLibrary {
 impl Serialize for CxxLibrary {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         let Self {
+            owner: _,
             common:
                 Common {
                     name,
@@ -993,6 +1015,7 @@ impl<'a> Serialize for PreprocessorFlags<'a> {
 
 #[derive(Debug)]
 pub struct PrebuiltCxxLibrary {
+    pub owner: PackageVersion,
     pub common: Common,
     pub static_lib: SubtargetOrPath,
     pub preferred_linkage: Option<String>,
@@ -1001,6 +1024,7 @@ pub struct PrebuiltCxxLibrary {
 impl Serialize for PrebuiltCxxLibrary {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         let Self {
+            owner: _,
             common:
                 Common {
                     name,
@@ -1072,7 +1096,7 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
         // Git_fetch targets go above all other targets. In general a single
         // repository can be used as the source of multiple crates.
         GitFetch(&'a Name),
-        Other(&'a Name, usize),
+        Owned(&'a PackageVersion, &'a Name, usize),
         // Root package goes last since it's an uninteresting list of
         // deps that looks awkward anywhere else.
         RootPackage,
@@ -1081,17 +1105,25 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
     match rule {
         // Make the alias rule come before the actual rule. Note that aliases
         // emitted by reindeer are always to a target within the same package.
-        Rule::Alias(Alias { sort_key, .. }) => RuleSortKey::Other(sort_key, 0),
-        Rule::ExtractArchive(ExtractArchive { sort_key, .. }) => RuleSortKey::Other(sort_key, 1),
-        Rule::HttpArchive(HttpArchive { sort_key, .. }) => RuleSortKey::Other(sort_key, 1),
+        Rule::Alias(Alias {
+            owner, sort_key, ..
+        }) => RuleSortKey::Owned(owner, sort_key, 0),
+        Rule::ExtractArchive(ExtractArchive {
+            owner, sort_key, ..
+        })
+        | Rule::HttpArchive(HttpArchive {
+            owner, sort_key, ..
+        }) => RuleSortKey::Owned(owner, sort_key, 1),
         Rule::GitFetch(GitFetch { name, .. }) => RuleSortKey::GitFetch(name),
-        Rule::Filegroup(_)
-        | Rule::Binary(_)
-        | Rule::Library(_)
-        | Rule::BuildscriptBinary(_)
-        | Rule::BuildscriptGenrule(_)
-        | Rule::CxxLibrary(_)
-        | Rule::PrebuiltCxxLibrary(_) => RuleSortKey::Other(rule.get_name(), 2),
+        Rule::Filegroup(Filegroup { owner, .. })
+        | Rule::Binary(RustBinary { owner, .. })
+        | Rule::Library(RustLibrary { owner, .. })
+        | Rule::BuildscriptBinary(RustBinary { owner, .. })
+        | Rule::BuildscriptGenrule(BuildscriptGenrule { owner, .. })
+        | Rule::CxxLibrary(CxxLibrary { owner, .. })
+        | Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary { owner, .. }) => {
+            RuleSortKey::Owned(owner, rule.get_name(), 2)
+        }
         Rule::RootPackage(_) => RuleSortKey::RootPackage,
     }
 }
