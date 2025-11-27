@@ -8,7 +8,7 @@ generate a BUCK file of build rules for them.
 This will require a Rust installation (stable, but probably fairly recent), and
 Buck to actually make use of the generated files.
 
-You can learn more about Buck at [buck.build](https://buck2.build). The
+You can learn more about Buck at [buck2.build](https://buck2.build). The
 [getting started](https://buck2.build/docs/about/getting_started/) page should
 help with getting it installed.
 

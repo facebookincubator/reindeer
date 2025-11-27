@@ -5,7 +5,7 @@ Jeremy Fitzhardinge <jsgf@fb.com>
 This is a set of tools for importing Rust crates from crates.io, git repos, etc
 and generating Buck build rules for them. Currently it primarily solves the
 problem of managing third-party dependencies in a monorepo built with
-[Buck](https://buck.build/), but my hope is that it can be extended to support
+[Buck](https://buck2.build/), but my hope is that it can be extended to support
 [Bazel](https://bazel.build/) and other similar build systems.
 
 ## Installation and Building

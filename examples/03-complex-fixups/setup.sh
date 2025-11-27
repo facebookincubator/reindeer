@@ -15,4 +15,4 @@ set -e
 # This will resolve all the dependencies, and create or update
 # third-party/Cargo.lock as required.
 
-../../target/debug/reindeer --third-party-dir third-party buckify
+../../target/debug/reindeer --third-party-dir=third-party buckify
