@@ -85,7 +85,7 @@ You can enable features or disable default features in the usual Cargo way.
 
 ```toml
 [dependencies]
-serde = { version = 1, features = ["derive", "rc"] }
+serde = { version = "1", features = ["derive", "rc"] }
 thiserror = { version = "1", default-features = false }
 ```
 
@@ -114,6 +114,28 @@ riscv = { git = "https://github.com/jsgf/riscv.git", rev = "90cfc5f2404e39e085e1
 [target.'cfg(any(target_arch = "riscv64", target_arch = "riscv64gc"))'.dependencies]
 riscv = "0.15"
 riscv-rt = "0.16"
+```
+
+**Binary dependencies**
+
+This is supported by Reindeer but requires a nightly version of Cargo during
+buckify until [artifact dependencies] are stabilized in Cargo. Nightly rustc is
+_not_ required at build time.
+
+[artifact dependencies]: https://github.com/rust-lang/cargo/issues/9096
+
+```toml
+[dependencies]
+cxxbridge-cmd = { version = "1", artifact = "bin:cxxbridge" }
+```
+
+Binary dependency support requires an opt-in in reindeer.toml.
+
+```toml
+# reindeer.toml
+
+[cargo]
+bindeps = true
 ```
 
 **Multiple versions of one package**
@@ -351,7 +373,7 @@ ENVNAME = "..."
 
 - **`extra_deps`** — List of extra dependencies to add. Often other C/C++
   libraries if this is a -sys binding package. Example: `extra_deps =
-  ["fbsource//third-party/zstd:zstd"]`
+  ["//third-party/zstd:zstd"]`
 
 ---
 
@@ -424,7 +446,7 @@ package's Cargo.toml file is located), and can be globs or literal paths.
 Some crates use `env!()` to access environment variables that Cargo normally
 sets. You can resolve these with a fixups.toml containing:
 
-```
+```toml
 cargo_env = [
     "CARGO_CRATE_NAME",
     "CARGO_MANIFEST_DIR",
@@ -611,7 +633,7 @@ fixups which apply to a subset of platforms only:
 ```toml
 ['cfg(all(target_os = "linux", target_arch = "x86_64"))']
 cfgs = ["use_libunwind"]
-extra_deps = ["fbsource//third-party/libunwind:unwind-ptrace"]
+extra_deps = ["//third-party/libunwind:unwind-ptrace"]
 ```
 
 Any TOML section starting with "cfg(" is a platform-specific fixup.
@@ -621,11 +643,11 @@ they're only applied to platforms for which the `cfg` predicate evaluates to
 true according to the Reindeer platform's target information.
 
 In the case of the example above, this fixup would apply to all x86\_64 Linux
-platforms, including platform010 (datacenter Linux) and centos-x86\_64 (Linux
-with dependencies from Antlir CentOS toolchains), but would not apply to
-Windows, macOS, AArch64 Linux, Android, iOS, etc.
+platforms, in Meta's case including among them platform010 (datacenter Linux)
+and centos-x86\_64 (Linux with dependencies from Antlir CentOS toolchains), but
+would not apply to Windows, macOS, AArch64 Linux, Android, iOS, etc.
 
-A platform-spefic C++ library would look like this:
+A platform-specific C++ library would look like this:
 
 ```toml
 buildscript.run = false
