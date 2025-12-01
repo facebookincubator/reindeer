@@ -1150,19 +1150,24 @@ pub(crate) fn buckify(
         }
 
         if config.buck.split {
-            // Make overlay sources accessible to targets in vendor directory.
             let mut out = Vec::new();
             out.write_all(config.buck.generated_file_header.as_bytes())?;
             if !config.buck.generated_file_header.is_empty() {
                 out.write_all(b"\n")?;
             }
+
+            // FIXME: consider restricting to specific package versions that use
+            // this overlay, such as `["//third-party/rust/vendor/openssl-0.10.0:"]`.
             let visibility = if paths.buck_package.is_empty() {
                 "PUBLIC".to_owned()
             } else {
                 format!("//{}/...", paths.buck_package)
             };
+
+            // Make overlay sources accessible to targets in vendor directory.
+            let mut overlay_export_file = out.clone();
             writedoc!(
-                out,
+                overlay_export_file,
                 r#"
                     [
                         export_file(
@@ -1175,15 +1180,42 @@ pub(crate) fn buckify(
                 buck = config.buck.file_name,
             )?;
 
+            // Make cxx_library fixup_include_paths accessible to vendor directory.
+            let mut include_filegroup = out.clone();
+            writedoc!(
+                include_filegroup,
+                r#"
+                    filegroup(
+                        name = "include",
+                        srcs = glob(["**"], exclude = ["{buck}"]),
+                        visibility = ["{visibility}"],
+                    )
+                "#,
+                buck = config.buck.file_name,
+            )?;
+
             for fixup in fixups.values() {
                 let mut overlay_dirs = BTreeSet::new();
+                let mut include_dirs = BTreeSet::new();
                 for fixup in iter::once(&fixup.base).chain(&fixup.platform_fixup) {
                     overlay_dirs.extend(&fixup.overlay);
+                    for cxx_library in &fixup.cxx_library {
+                        include_dirs.extend(&cxx_library.fixup_include_paths);
+                    }
                 }
-                for overlay in overlay_dirs {
-                    let buckpath = fixup.fixup_dir.join(overlay).join(&config.buck.file_name);
-                    if !fs::read(&buckpath).is_ok_and(|x| x == out) {
-                        fs::write(&buckpath, &out)
+                // FIXME: what if the same directory is both an overlay
+                // directory and fixup_include_paths directory.
+                for dir in overlay_dirs {
+                    let buckpath = fixup.fixup_dir.join(dir).join(&config.buck.file_name);
+                    if !fs::read(&buckpath).is_ok_and(|x| x == overlay_export_file) {
+                        fs::write(&buckpath, &overlay_export_file)
+                            .with_context(|| format!("write {} file", buckpath.display()))?;
+                    }
+                }
+                for dir in include_dirs {
+                    let buckpath = fixup.fixup_dir.join(dir).join(&config.buck.file_name);
+                    if !fs::read(&buckpath).is_ok_and(|x| x == include_filegroup) {
+                        fs::write(&buckpath, &include_filegroup)
                             .with_context(|| format!("write {} file", buckpath.display()))?;
                     }
                 }
