@@ -125,7 +125,6 @@ enum SubCommand {
 #[derive(Debug)]
 pub struct Paths {
     /// Value of `native.package_name()` in the top-level BUCK file.
-    #[expect(dead_code)]
     buck_package: String,
     third_party_dir: PathBuf,
     manifest_path: PathBuf,

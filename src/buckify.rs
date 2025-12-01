@@ -15,6 +15,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::io;
 use std::io::Write;
+use std::iter;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
@@ -28,6 +29,7 @@ use cargo::core::PackageId;
 use fnv::FnvHasher;
 use foldhash::HashMap;
 use foldhash::HashSet;
+use indoc::writedoc;
 use itertools::Itertools;
 use url::Url;
 
@@ -1109,6 +1111,7 @@ pub(crate) fn buckify(
     let rules = do_buckify(&context)?;
 
     // Report unused fixups
+    let fixups = context.fixups.lock();
     let mut public_packages = HashMap::default();
     for pkgid in context.index.public_packages.keys() {
         public_packages
@@ -1118,7 +1121,7 @@ pub(crate) fn buckify(
     }
     let mut unused = UnusedFixups::new();
     let no_public_versions = HashSet::default();
-    for (name, fixup) in &*context.fixups.lock() {
+    for (name, fixup) in &*fixups {
         let public_versions = public_packages.get(name).unwrap_or(&no_public_versions);
         fixup.collect_unused(name, public_versions, &mut unused);
     }
@@ -1144,6 +1147,47 @@ pub(crate) fn buckify(
         if !fs::read(&buckpath).is_ok_and(|x| x == out) {
             fs::write(&buckpath, out)
                 .with_context(|| format!("write {} file", buckpath.display()))?;
+        }
+
+        if config.buck.split {
+            // Make overlay sources accessible to targets in vendor directory.
+            let mut out = Vec::new();
+            out.write_all(config.buck.generated_file_header.as_bytes())?;
+            if !config.buck.generated_file_header.is_empty() {
+                out.write_all(b"\n")?;
+            }
+            let visibility = if paths.buck_package.is_empty() {
+                "PUBLIC".to_owned()
+            } else {
+                format!("//{}/...", paths.buck_package)
+            };
+            writedoc!(
+                out,
+                r#"
+                    [
+                        export_file(
+                            name = name,
+                            visibility = ["{visibility}"],
+                        )
+                        for name in glob(["**"], exclude = ["{buck}"])
+                    ]
+                "#,
+                buck = config.buck.file_name,
+            )?;
+
+            for fixup in fixups.values() {
+                let mut overlay_dirs = BTreeSet::new();
+                for fixup in iter::once(&fixup.base).chain(&fixup.platform_fixup) {
+                    overlay_dirs.extend(&fixup.overlay);
+                }
+                for overlay in overlay_dirs {
+                    let buckpath = fixup.fixup_dir.join(overlay).join(&config.buck.file_name);
+                    if !fs::read(&buckpath).is_ok_and(|x| x == out) {
+                        fs::write(&buckpath, &out)
+                            .with_context(|| format!("write {} file", buckpath.display()))?;
+                    }
+                }
+            }
         }
     }
 

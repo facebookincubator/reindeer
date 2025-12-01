@@ -1123,7 +1123,8 @@ impl<'meta> Fixups<'meta> {
         }
 
         for fixup in self.configs(platform_name) {
-            let mapped_files = fixup.overlay_and_mapped_files(&self.fixup_config.fixup_dir);
+            let mapped_files =
+                fixup.overlay_and_mapped_files(&self.fixup_config.fixup_dir, &self.config.buck);
             ret.retain(|path| {
                 let path_in_crate = relative_path(&manifest_rel, path);
                 !mapped_files.contains(&path_in_crate) && !fixup.omit_srcs.is_match(&path_in_crate)
@@ -1220,7 +1221,8 @@ impl<'meta> Fixups<'meta> {
             if let Some(overlay) = &config.overlay {
                 let overlay_dir = self.fixup_config.fixup_dir.join(overlay);
                 let relative_overlay_dir = relative_path(self.third_party_dir, &overlay_dir);
-                let overlay_files = config.overlay_files(&self.fixup_config.fixup_dir);
+                let overlay_files =
+                    config.overlay_files(&self.fixup_config.fixup_dir, &self.config.buck);
 
                 log::debug!(
                     "pkg {} target {} overlay_dir {} overlay_files {:?}",

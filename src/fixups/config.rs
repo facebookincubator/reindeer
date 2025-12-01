@@ -34,6 +34,7 @@ use walkdir::WalkDir;
 
 use crate::buck::RuleRef;
 use crate::buck::Visibility;
+use crate::config::BuckConfig;
 use crate::fixups::buildscript::BuildscriptFixups;
 use crate::fixups::buildscript::CxxLibraryFixup;
 use crate::fixups::buildscript::ExportedHeaders;
@@ -317,14 +318,16 @@ pub struct FixupConfig {
 impl FixupConfig {
     /// Return set of overlay files, relative to the overlay dir (and therefore
     /// relative to manifest dir).
-    pub fn overlay_files(&self, fixup_dir: &Path) -> HashSet<PathBuf> {
+    pub fn overlay_files(&self, fixup_dir: &Path, buck_config: &BuckConfig) -> HashSet<PathBuf> {
         match &self.overlay {
             Some(overlay) => {
                 let overlay_dir = fixup_dir.join(overlay);
                 WalkDir::new(&overlay_dir)
                     .into_iter()
                     .filter_map(|ent| ent.ok())
-                    .filter(|ent| ent.path().is_file())
+                    .filter(|ent| {
+                        *ent.file_name() != **buck_config.file_name && ent.path().is_file()
+                    })
                     .map(|ent| relative_path(&overlay_dir, ent.path()))
                     .collect()
             }
@@ -334,8 +337,12 @@ impl FixupConfig {
 
     /// Returns set of files that are provided either by an overlay or by mapped
     /// srcs.
-    pub fn overlay_and_mapped_files(&self, fixup_dir: &Path) -> HashSet<PathBuf> {
-        let mut files = self.overlay_files(fixup_dir);
+    pub fn overlay_and_mapped_files(
+        &self,
+        fixup_dir: &Path,
+        buck_config: &BuckConfig,
+    ) -> HashSet<PathBuf> {
+        let mut files = self.overlay_files(fixup_dir, buck_config);
         files.extend(self.extra_mapped_srcs.values().map(PathBuf::clone));
         files
     }
