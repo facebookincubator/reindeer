@@ -415,7 +415,7 @@ fn srcfiles(manifest_dir: PathBuf, crate_root: PathBuf) -> Vec<PathBuf> {
     }
 }
 
-fn split_srcs(
+pub(crate) fn split_srcs(
     paths: &Paths,
     common: &RustCommon,
 ) -> (PlatformSources, BTreeMap<PlatformName, PlatformSources>) {

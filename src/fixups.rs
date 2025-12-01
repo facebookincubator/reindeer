@@ -38,11 +38,13 @@ use crate::buck::PlatformBuildscriptGenrule;
 use crate::buck::Rule;
 use crate::buck::RuleRef;
 use crate::buck::RustBinary;
+use crate::buck::Sources;
 use crate::buck::StringOrPath;
 use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
 use crate::buckify::evaluate_for_platforms;
 use crate::buckify::short_name_for_git_repo;
+use crate::buckify::split_srcs;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
 use crate::cargo::NodeDepKind;
@@ -786,6 +788,17 @@ impl<'meta> Fixups<'meta> {
                 },
                 |rule, rustc_link_search| rule.rustc_link_search = rustc_link_search,
             )?;
+
+            if config.buck.split {
+                let (base, platform) = split_srcs(self.paths, &buildscript_build.common);
+                res.push(Rule::Sources(Sources {
+                    owner: buildscript_build.owner.clone(),
+                    name: Name("build-script".to_owned()),
+                    base,
+                    platform,
+                    visibility: Visibility::Custom(vec![format!("//{}:", self.paths.buck_package)]),
+                }));
+            }
 
             // Emit the build script itself
             res.push(Rule::BuildscriptBinary(buildscript_build));
