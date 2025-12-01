@@ -1080,7 +1080,7 @@ impl Eq for Rule {}
 
 impl PartialEq for Rule {
     fn eq(&self, other: &Self) -> bool {
-        self.get_name().eq(other.get_name())
+        rule_sort_key(self).eq(&rule_sort_key(other))
     }
 }
 
@@ -1115,15 +1115,45 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
             owner, sort_key, ..
         }) => RuleSortKey::Owned(owner, sort_key, 1),
         Rule::GitFetch(GitFetch { name, .. }) => RuleSortKey::GitFetch(name),
-        Rule::Filegroup(Filegroup { owner, .. })
-        | Rule::Binary(RustBinary { owner, .. })
-        | Rule::Library(RustLibrary { owner, .. })
-        | Rule::BuildscriptBinary(RustBinary { owner, .. })
-        | Rule::BuildscriptGenrule(BuildscriptGenrule { owner, .. })
-        | Rule::CxxLibrary(CxxLibrary { owner, .. })
-        | Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary { owner, .. }) => {
-            RuleSortKey::Owned(owner, rule.get_name(), 2)
-        }
+        Rule::Filegroup(Filegroup { owner, name, .. })
+        | Rule::Binary(RustBinary {
+            owner,
+            common:
+                RustCommon {
+                    common: Common { name, .. },
+                    ..
+                },
+            ..
+        })
+        | Rule::Library(RustLibrary {
+            owner,
+            common:
+                RustCommon {
+                    common: Common { name, .. },
+                    ..
+                },
+            ..
+        })
+        | Rule::BuildscriptBinary(RustBinary {
+            owner,
+            common:
+                RustCommon {
+                    common: Common { name, .. },
+                    ..
+                },
+            ..
+        })
+        | Rule::BuildscriptGenrule(BuildscriptGenrule { owner, name, .. })
+        | Rule::CxxLibrary(CxxLibrary {
+            owner,
+            common: Common { name, .. },
+            ..
+        })
+        | Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
+            owner,
+            common: Common { name, .. },
+            ..
+        }) => RuleSortKey::Owned(owner, name, 2),
         Rule::RootPackage(_) => RuleSortKey::RootPackage,
     }
 }
@@ -1135,57 +1165,6 @@ impl Ord for Rule {
 }
 
 impl Rule {
-    pub fn get_name(&self) -> &Name {
-        match self {
-            Rule::Alias(Alias { name, .. })
-            | Rule::Filegroup(Filegroup { name, .. })
-            | Rule::HttpArchive(HttpArchive { name, .. })
-            | Rule::ExtractArchive(ExtractArchive { name, .. })
-            | Rule::GitFetch(GitFetch { name, .. })
-            | Rule::Binary(RustBinary {
-                common:
-                    RustCommon {
-                        common: Common { name, .. },
-                        ..
-                    },
-                ..
-            })
-            | Rule::Library(RustLibrary {
-                common:
-                    RustCommon {
-                        common: Common { name, .. },
-                        ..
-                    },
-                ..
-            })
-            | Rule::BuildscriptBinary(RustBinary {
-                common:
-                    RustCommon {
-                        common: Common { name, .. },
-                        ..
-                    },
-                ..
-            })
-            | Rule::BuildscriptGenrule(BuildscriptGenrule { name, .. })
-            | Rule::CxxLibrary(CxxLibrary {
-                common: Common { name, .. },
-                ..
-            })
-            | Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
-                common: Common { name, .. },
-                ..
-            })
-            | Rule::RootPackage(RustLibrary {
-                common:
-                    RustCommon {
-                        common: Common { name, .. },
-                        ..
-                    },
-                ..
-            }) => name,
-        }
-    }
-
     pub fn render(&self, config: &BuckConfig, out: &mut impl Write) -> anyhow::Result<()> {
         use serde_starlark::Serializer;
         let serialized = match self {
