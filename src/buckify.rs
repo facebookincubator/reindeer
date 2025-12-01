@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
+use std::fmt::Write as _;
 use std::fs;
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -22,6 +23,7 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::PoisonError;
 use std::sync::mpsc;
 
 use anyhow::Context;
@@ -491,6 +493,72 @@ pub(crate) fn split_srcs(
     }
 
     (rewrite_platform_sources(&mut common.base), platform_srcs)
+}
+
+fn buckify_overlay_export_files(config: &Config, paths: &Paths) -> String {
+    let mut overlay_export_files = String::new();
+    overlay_export_files.push_str(&config.buck.generated_file_header);
+    if !config.buck.generated_file_header.is_empty() {
+        overlay_export_files.push('\n');
+    }
+
+    // FIXME: consider restricting to specific package versions that use
+    // this overlay, such as `["//third-party/rust/vendor/openssl-0.10.0:"]`.
+    let visibility = if paths.buck_package.is_empty() {
+        "//vendor/...".to_owned()
+    } else {
+        format!("//{}/vendor/...", paths.buck_package)
+    };
+
+    // Make overlay sources accessible to targets in vendor directory.
+    writedoc!(
+        overlay_export_files,
+        r#"
+            [
+                export_file(
+                    name = name,
+                    visibility = ["{visibility}"],
+                )
+                for name in glob(["**"], exclude = ["{buck}"])
+            ]
+        "#,
+        buck = config.buck.file_name,
+    )
+    .unwrap();
+
+    overlay_export_files
+}
+
+fn buckify_cxx_library_fixup_include_paths(config: &Config, paths: &Paths) -> String {
+    let mut include_filegroup = String::new();
+    include_filegroup.push_str(&config.buck.generated_file_header);
+    if !config.buck.generated_file_header.is_empty() {
+        include_filegroup.push('\n');
+    }
+
+    // FIXME: consider restricting to specific package versions that use
+    // this overlay, such as `["//third-party/rust/vendor/openssl-0.10.0:"]`.
+    let visibility = if paths.buck_package.is_empty() {
+        "//vendor/...".to_owned()
+    } else {
+        format!("//{}/vendor/...", paths.buck_package)
+    };
+
+    // Make cxx_library fixup_include_paths accessible to vendor directory.
+    writedoc!(
+        include_filegroup,
+        r#"
+            filegroup(
+                name = "include",
+                srcs = glob(["**"], exclude = ["{buck}"]),
+                visibility = ["{visibility}"],
+            )
+        "#,
+        buck = config.buck.file_name,
+    )
+    .unwrap();
+
+    include_filegroup
 }
 
 /// Generate rules for a target. Returns the rules, and the
@@ -1396,7 +1464,7 @@ pub(crate) fn buckify(
     let rules = do_buckify(&context)?;
 
     // Report unused fixups
-    let fixups = context.fixups.lock();
+    let fixups = &context.fixups.lock();
     let mut public_packages = HashMap::default();
     for pkgid in context.index.public_packages.keys() {
         public_packages
@@ -1406,7 +1474,7 @@ pub(crate) fn buckify(
     }
     let mut unused = UnusedFixups::new();
     let no_public_versions = HashSet::default();
-    for (name, fixup) in &*fixups {
+    for (name, fixup) in &**fixups {
         let public_versions = public_packages.get(name).unwrap_or(&no_public_versions);
         fixup.collect_unused(name, public_versions, &mut unused);
     }
@@ -1423,7 +1491,7 @@ pub(crate) fn buckify(
     }
 
     // Write build rules to file
-    let buckpath = paths.third_party_dir.join(&config.buck.file_name);
+    let buckpath = &paths.third_party_dir.join(&config.buck.file_name);
     {
         measure_time::trace_time!("Write build rules to file");
 
@@ -1464,132 +1532,145 @@ pub(crate) fn buckify(
                 }
             }
 
-            let mut out = Vec::new();
-            buck::write_buckfile(&config.buck, toplevel_rules.into_iter(), &mut out)
-                .context("writing buck file")?;
-            if !fs::read(&buckpath).is_ok_and(|x| x == out) {
-                fs::write(&buckpath, out)
-                    .with_context(|| format!("write {} file", buckpath.display()))?;
-            }
-
-            for (owner, rules) in crate_rules {
-                let mut out = Vec::new();
-                buck::write_buckfile(&config.buck, rules.into_iter(), &mut out)
-                    .context("writing buck file")?;
-                let owner_dir = paths.third_party_dir.join("vendor").join(owner);
-                fs::create_dir_all(&owner_dir)
-                    .with_context(|| format!("crate {}", owner_dir.display()))?;
-                let buckpath = owner_dir.join(&config.buck.file_name);
-                if !fs::read(&buckpath).is_ok_and(|x| x == out) {
-                    fs::write(&buckpath, out)
-                        .with_context(|| format!("write {} file", buckpath.display()))?;
-                }
-            }
-
-            for (owner, rules) in version_rules {
-                let mut out = Vec::new();
-                buck::write_buckfile(&config.buck, rules.into_iter(), &mut out)
-                    .context("writing buck file")?;
-                let buckpath = paths
-                    .third_party_dir
-                    .join("vendor")
-                    .join(format!("{}-{}", owner.name, owner.version))
-                    .join(&config.buck.file_name);
-                if !fs::read(&buckpath).is_ok_and(|x| x == out) {
-                    fs::write(&buckpath, out)
-                        .with_context(|| format!("write {} file", buckpath.display()))?;
-                }
-            }
-
-            if let Some(root_package_rule) = root_package_rule {
-                let mut out = Vec::new();
-                buck::write_buckfile(&config.buck, iter::once(root_package_rule), &mut out)
-                    .context("writing buck file")?;
-                let buckpath = context.index.root_pkg.unwrap().targets[0]
-                    .src_path
-                    .with_file_name(&*config.buck.file_name);
-                if !fs::read(&buckpath).is_ok_and(|x| x == out) {
-                    fs::write(&buckpath, out)
-                        .with_context(|| format!("write {} file", buckpath.display()))?;
-                }
-            }
-
-            let mut out = Vec::new();
-            out.write_all(config.buck.generated_file_header.as_bytes())?;
-            if !config.buck.generated_file_header.is_empty() {
-                out.write_all(b"\n")?;
-            }
-
-            // FIXME: consider restricting to specific package versions that use
-            // this overlay, such as `["//third-party/rust/vendor/openssl-0.10.0:"]`.
-            let visibility = if paths.buck_package.is_empty() {
-                "//vendor/...".to_owned()
-            } else {
-                format!("//{}/vendor/...", paths.buck_package)
-            };
-
-            // Make overlay sources accessible to targets in vendor directory.
-            let mut overlay_export_file = out.clone();
-            writedoc!(
-                overlay_export_file,
-                r#"
-                    [
-                        export_file(
-                            name = name,
-                            visibility = ["{visibility}"],
-                        )
-                        for name in glob(["**"], exclude = ["{buck}"])
-                    ]
-                "#,
-                buck = config.buck.file_name,
-            )?;
-
-            // Make cxx_library fixup_include_paths accessible to vendor directory.
-            let mut include_filegroup = out.clone();
-            writedoc!(
-                include_filegroup,
-                r#"
-                    filegroup(
-                        name = "include",
-                        srcs = glob(["**"], exclude = ["{buck}"]),
-                        visibility = ["{visibility}"],
-                    )
-                "#,
-                buck = config.buck.file_name,
-            )?;
-
-            for fixup in fixups.values() {
-                let mut overlay_dirs = BTreeSet::new();
-                let mut include_dirs = BTreeSet::new();
-                for fixup in iter::once(&fixup.base).chain(&fixup.platform_fixup) {
-                    overlay_dirs.extend(&fixup.overlay);
-                    for cxx_library in &fixup.cxx_library {
-                        include_dirs.extend(&cxx_library.fixup_include_paths);
+            fn spawn<'a>(
+                scope: &rayon::Scope<'a>,
+                errors: &'a Mutex<Vec<anyhow::Error>>,
+                f: impl FnOnce() -> anyhow::Result<()> + Send + 'a,
+            ) {
+                scope.spawn(move |_| {
+                    if let Err(err) = f() {
+                        errors
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .push(err);
                     }
-                }
-                // FIXME: what if the same directory is both an overlay
-                // directory and fixup_include_paths directory.
-                for dir in overlay_dirs {
-                    let buckpath = fixup.fixup_dir.join(dir).join(&config.buck.file_name);
-                    if !fs::read(&buckpath).is_ok_and(|x| x == overlay_export_file) {
-                        fs::write(&buckpath, &overlay_export_file)
+                });
+            }
+
+            let errors_owned = Mutex::new(Vec::new());
+            let errors = &errors_owned;
+            rayon::scope(move |scope| {
+                spawn(scope, errors, move || {
+                    let mut out = Vec::new();
+                    buck::write_buckfile(&config.buck, toplevel_rules.into_iter(), &mut out)
+                        .context("writing buck file")?;
+                    if !fs::read(buckpath).is_ok_and(|x| x == out) {
+                        fs::write(buckpath, out)
                             .with_context(|| format!("write {} file", buckpath.display()))?;
                     }
+                    Ok(())
+                });
+
+                for (owner, rules) in crate_rules {
+                    spawn(scope, errors, move || {
+                        let mut out = Vec::new();
+                        buck::write_buckfile(&config.buck, rules.into_iter(), &mut out)
+                            .context("writing buck file")?;
+                        let owner_dir = paths.third_party_dir.join("vendor").join(owner);
+                        fs::create_dir_all(&owner_dir)
+                            .with_context(|| format!("crate {}", owner_dir.display()))?;
+                        let buckpath = owner_dir.join(&config.buck.file_name);
+                        if !fs::read(&buckpath).is_ok_and(|x| x == out) {
+                            fs::write(&buckpath, out)
+                                .with_context(|| format!("write {} file", buckpath.display()))?;
+                        }
+                        Ok(())
+                    });
                 }
-                for dir in include_dirs {
-                    let buckpath = fixup.fixup_dir.join(dir).join(&config.buck.file_name);
-                    if !fs::read(&buckpath).is_ok_and(|x| x == include_filegroup) {
-                        fs::write(&buckpath, &include_filegroup)
-                            .with_context(|| format!("write {} file", buckpath.display()))?;
+
+                for (owner, rules) in version_rules {
+                    spawn(scope, errors, move || {
+                        let mut out = Vec::new();
+                        buck::write_buckfile(&config.buck, rules.into_iter(), &mut out)
+                            .context("writing buck file")?;
+                        let buckpath = paths
+                            .third_party_dir
+                            .join("vendor")
+                            .join(format!("{}-{}", owner.name, owner.version))
+                            .join(&config.buck.file_name);
+                        if !fs::read(&buckpath).is_ok_and(|x| x == out) {
+                            fs::write(&buckpath, out)
+                                .with_context(|| format!("write {} file", buckpath.display()))?;
+                        }
+                        Ok(())
+                    });
+                }
+
+                if let Some(root_package_rule) = root_package_rule {
+                    spawn(scope, errors, move || {
+                        let mut out = Vec::new();
+                        buck::write_buckfile(&config.buck, iter::once(root_package_rule), &mut out)
+                            .context("writing buck file")?;
+                        let buckpath = context.index.root_pkg.unwrap().targets[0]
+                            .src_path
+                            .with_file_name(&*config.buck.file_name);
+                        if !fs::read(&buckpath).is_ok_and(|x| x == out) {
+                            fs::write(&buckpath, out)
+                                .with_context(|| format!("write {} file", buckpath.display()))?;
+                        }
+                        Ok(())
+                    });
+                }
+
+                for fixup in fixups.values() {
+                    let mut overlay_dirs = BTreeSet::new();
+                    let mut include_dirs = BTreeSet::new();
+                    for fixup in iter::once(&fixup.base).chain(&fixup.platform_fixup) {
+                        overlay_dirs.extend(&fixup.overlay);
+                        for cxx_library in &fixup.cxx_library {
+                            include_dirs.extend(&cxx_library.fixup_include_paths);
+                        }
+                    }
+
+                    // FIXME: what if the same directory is both an overlay
+                    // directory and fixup_include_paths directory.
+                    for dir in overlay_dirs {
+                        spawn(scope, errors, move || {
+                            let content = buckify_overlay_export_files(config, paths);
+                            let buckpath = fixup.fixup_dir.join(dir).join(&config.buck.file_name);
+                            if !fs::read(&buckpath).is_ok_and(|x| x == content.as_bytes()) {
+                                fs::write(&buckpath, content).with_context(|| {
+                                    format!("write {} file", buckpath.display())
+                                })?;
+                            }
+                            Ok(())
+                        });
+                    }
+
+                    for dir in include_dirs {
+                        spawn(scope, errors, move || {
+                            let content = buckify_cxx_library_fixup_include_paths(config, paths);
+                            let buckpath = fixup.fixup_dir.join(dir).join(&config.buck.file_name);
+                            if !fs::read(&buckpath).is_ok_and(|x| x == content.as_bytes()) {
+                                fs::write(&buckpath, content).with_context(|| {
+                                    format!("write {} file", buckpath.display())
+                                })?;
+                            }
+                            Ok(())
+                        });
                     }
                 }
+            });
+
+            // Report just the first error, if there is one. Starlark
+            // serialization is infallible so errors here are just from
+            // filesystem I/O, and if there is more than one, it is very likely
+            // there are thousands and they are all identical: for example an
+            // unhealthy edenfs mount.
+            if let Some(err) = errors_owned
+                .into_inner()
+                .unwrap_or_else(PoisonError::into_inner)
+                .into_iter()
+                .next()
+            {
+                return Err(err);
             }
         } else {
             let mut out = Vec::new();
             buck::write_buckfile(&config.buck, rules.iter(), &mut out)
                 .context("writing buck file")?;
-            if !fs::read(&buckpath).is_ok_and(|x| x == out) {
-                fs::write(&buckpath, out)
+            if !fs::read(buckpath).is_ok_and(|x| x == out) {
+                fs::write(buckpath, out)
                     .with_context(|| format!("write {} file", buckpath.display()))?;
             }
         }
