@@ -956,7 +956,7 @@ fn generate_target_rules<'scope>(
             }));
         }
 
-        rules.push(Rule::Binary(RustBinary {
+        let rust_binary = RustBinary {
             owner: PackageVersion {
                 name: pkg.name.clone(),
                 version: pkg.version.clone(),
@@ -976,7 +976,20 @@ fn generate_target_rules<'scope>(
                 base: bin_base,
                 platform: bin_perplat,
             },
-        }));
+        };
+
+        if config.buck.split {
+            let (base, platform) = split_srcs(paths, &rust_binary.common);
+            rules.push(Rule::Sources(Sources {
+                owner: rust_binary.owner.clone(),
+                name: Name(format!("bin-{}", tgt.name)),
+                base,
+                platform,
+                visibility: Visibility::Custom(vec![format!("//{}:", paths.buck_package)]),
+            }));
+        }
+
+        rules.push(Rule::Binary(rust_binary));
 
         // Binary depends on the library (if there is one) and build script (if
         // there is one).
