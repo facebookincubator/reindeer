@@ -51,6 +51,7 @@ use crate::buck::Name;
 use crate::buck::PackageVersion;
 use crate::buck::PlatformRustCommon;
 use crate::buck::PlatformSources;
+use crate::buck::PrebuiltCxxLibrary;
 use crate::buck::Rule;
 use crate::buck::RuleRef;
 use crate::buck::RustBinary;
@@ -1313,12 +1314,12 @@ pub(crate) fn buckify(
                     | Rule::BuildscriptBinary(_)
                     | Rule::BuildscriptGenrule(_)
                     | Rule::CxxLibrary(_)
-                    | Rule::PrebuiltCxxLibrary(_)
                     | Rule::RootPackage(_) => {
                         toplevel_rules.push(rule);
                     }
                     Rule::Sources(Sources { owner, .. })
-                    | Rule::Filegroup(Filegroup { owner, .. }) => {
+                    | Rule::Filegroup(Filegroup { owner, .. })
+                    | Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary { owner, .. }) => {
                         version_rules
                             .entry(owner)
                             .or_insert_with(Vec::new)

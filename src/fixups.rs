@@ -35,6 +35,7 @@ use crate::buck::FilegroupSources;
 use crate::buck::Name;
 use crate::buck::PackageVersion;
 use crate::buck::PlatformBuildscriptGenrule;
+use crate::buck::PrebuiltCxxLibrary;
 use crate::buck::Rule;
 use crate::buck::RuleRef;
 use crate::buck::RustBinary;
@@ -548,15 +549,67 @@ impl<'meta> Fixups<'meta> {
         {
             let static_lib_globs = Globs::new(static_libs, NO_EXCLUDE);
             for static_lib in static_lib_globs.walk(self.manifest_dir) {
-                let actual = Name(format!(
-                    "{}-{}-{}",
-                    self.package,
-                    name,
-                    static_lib.file_name().unwrap().to_string_lossy(),
-                ));
+                let static_lib_file_name = static_lib.file_name().unwrap().to_string_lossy();
+                let prebuilt_cxx_library_target = if self.config.buck.split {
+                    let target_name = Name(format!("{}-{}", name, static_lib_file_name));
+                    res.push(Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
+                        owner: PackageVersion {
+                            name: self.package.name.clone(),
+                            version: self.package.version.clone(),
+                        },
+                        common: Common {
+                            name: target_name.clone(),
+                            visibility: Visibility::Custom(vec![format!(
+                                "//{}:",
+                                self.paths.buck_package,
+                            )]),
+                            licenses: Default::default(),
+                            metadata: buildscript_build.common.common.metadata.clone(),
+                            compatible_with: compatible_with.clone(),
+                            target_compatible_with: target_compatible_with.clone(),
+                        },
+                        static_lib: SubtargetOrPath::Path(BuckPath(static_lib.to_owned())),
+                        preferred_linkage: preferred_linkage.clone(),
+                    }));
+                    RuleRef::new(format!(
+                        "//{}{}vendor/{}:{}",
+                        self.paths.buck_package,
+                        if self.paths.buck_package.is_empty() {
+                            ""
+                        } else {
+                            "/"
+                        },
+                        self.package,
+                        target_name,
+                    ))
+                } else {
+                    let target_name = Name(format!(
+                        "{}-{}-{}",
+                        self.package,
+                        name,
+                        static_lib.file_name().unwrap().to_string_lossy(),
+                    ));
+                    res.push(Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
+                        owner: PackageVersion {
+                            name: self.package.name.clone(),
+                            version: self.package.version.clone(),
+                        },
+                        common: Common {
+                            name: target_name.clone(),
+                            visibility: Visibility::Private,
+                            licenses: Default::default(),
+                            metadata: buildscript_build.common.common.metadata.clone(),
+                            compatible_with: compatible_with.clone(),
+                            target_compatible_with: target_compatible_with.clone(),
+                        },
+                        static_lib: self.subtarget_or_path(&static_lib)?,
+                        preferred_linkage: preferred_linkage.clone(),
+                    }));
+                    RuleRef::from(target_name)
+                };
 
                 if *public {
-                    let rule = Rule::Alias(Alias {
+                    res.push(Rule::Alias(Alias {
                         owner: PackageVersion {
                             name: self.package.name.clone(),
                             version: self.package.version.clone(),
@@ -565,33 +618,17 @@ impl<'meta> Fixups<'meta> {
                             "{}-{}-{}",
                             index.public_rule_name(self.package),
                             name,
-                            static_lib.file_name().unwrap().to_string_lossy(),
+                            static_lib_file_name,
                         )),
-                        actual: RuleRef::from(actual.clone()),
+                        actual: prebuilt_cxx_library_target,
                         platforms: None,
                         visibility: self.visibility().clone(),
-                        sort_key: actual.clone(),
-                    });
-                    res.push(rule);
+                        sort_key: Name(format!(
+                            "{}-{}-{}",
+                            self.package, name, static_lib_file_name,
+                        )),
+                    }));
                 }
-
-                let rule = buck::PrebuiltCxxLibrary {
-                    owner: PackageVersion {
-                        name: self.package.name.clone(),
-                        version: self.package.version.clone(),
-                    },
-                    common: Common {
-                        name: actual,
-                        visibility: Visibility::Private,
-                        licenses: Default::default(),
-                        metadata: buildscript_build.common.common.metadata.clone(),
-                        compatible_with: compatible_with.clone(),
-                        target_compatible_with: target_compatible_with.clone(),
-                    },
-                    static_lib: self.subtarget_or_path(&static_lib)?,
-                    preferred_linkage: preferred_linkage.clone(),
-                };
-                res.push(Rule::PrebuiltCxxLibrary(rule));
             }
         }
 
@@ -953,12 +990,27 @@ impl<'meta> Fixups<'meta> {
                 for static_lib in static_lib_globs.walk(self.manifest_dir) {
                     ret.insert(
                         (
-                            RuleRef::new(format!(
-                                ":{}-{}-{}",
-                                self.package,
-                                name,
-                                static_lib.file_name().unwrap().to_string_lossy(),
-                            )),
+                            RuleRef::new(if self.config.buck.split {
+                                format!(
+                                    "//{}{}vendor/{}:{}-{}",
+                                    self.paths.buck_package,
+                                    if self.paths.buck_package.is_empty() {
+                                        ""
+                                    } else {
+                                        "/"
+                                    },
+                                    self.package,
+                                    name,
+                                    static_lib.file_name().unwrap().to_string_lossy(),
+                                )
+                            } else {
+                                format!(
+                                    ":{}-{}-{}",
+                                    self.package,
+                                    name,
+                                    static_lib.file_name().unwrap().to_string_lossy(),
+                                )
+                            }),
                             None,
                             &NodeDepKind::ORDINARY,
                         ),
