@@ -5,9 +5,13 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use std::fs;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
+
+use anyhow::Result;
+use anyhow::bail;
 
 // normalize a/b/../c => a/c and a/./b => a/b
 pub fn normalize_path(path: &Path) -> PathBuf {
@@ -59,4 +63,33 @@ pub fn relative_path(mut base: &Path, to: &Path) -> PathBuf {
         to.strip_prefix(base)
             .expect("already worked out it was a prefix"),
     )
+}
+
+pub fn buck_package(third_party_dir: &Path) -> Result<String> {
+    let mut dir = third_party_dir;
+    loop {
+        if fs::exists(dir.join(".buckconfig"))? || fs::exists(dir.join(".buckroot"))? {
+            let Ok(package) = third_party_dir.strip_prefix(dir) else {
+                bail!(
+                    "output directory ({}) is not a subdirectory of buck root ({})",
+                    third_party_dir.display(),
+                    dir.display(),
+                );
+            };
+            let Some(package_str) = package.to_str() else {
+                bail!(
+                    "output directory relative to Buck root ({}) is not a UTF-8 path",
+                    package.display(),
+                );
+            };
+            return Ok(package_str.to_owned());
+        }
+        if let Some(parent) = dir.parent() {
+            dir = parent;
+        } else {
+            // Someone may be experimenting with reindeer before setting up a
+            // Buck repo. Assume output directory would be the repo root.
+            return Ok(String::new());
+        }
+    }
 }

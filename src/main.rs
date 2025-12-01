@@ -28,6 +28,7 @@ use clap::Parser;
 use clap::Subcommand;
 
 use crate::config::VendorConfig;
+use crate::path::buck_package;
 
 #[cfg(fbcode_build)]
 mod audit_sec;
@@ -123,6 +124,9 @@ enum SubCommand {
 /// Computed paths
 #[derive(Debug)]
 pub struct Paths {
+    /// Value of `native.package_name()` in the top-level BUCK file.
+    #[expect(dead_code)]
+    buck_package: String,
     third_party_dir: PathBuf,
     manifest_path: PathBuf,
     lockfile_path: PathBuf,
@@ -145,6 +149,7 @@ fn try_main() -> anyhow::Result<()> {
             .unwrap_or_else(|| third_party_dir.join("Cargo.toml"));
 
         paths = Paths {
+            buck_package: buck_package(&third_party_dir)?,
             lockfile_path: manifest_path.with_file_name("Cargo.lock"),
             manifest_path,
             cargo_home: third_party_dir.join(".cargo"),
@@ -177,6 +182,7 @@ fn try_main() -> anyhow::Result<()> {
         let lockfile_path = manifest_path.with_file_name("Cargo.lock");
 
         paths = Paths {
+            buck_package: buck_package(&third_party_dir)?,
             lockfile_path,
             manifest_path,
             cargo_home: third_party_dir.join(".cargo"),
