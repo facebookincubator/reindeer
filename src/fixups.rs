@@ -24,12 +24,12 @@ use anyhow::bail;
 use foldhash::HashSet;
 
 use crate::Paths;
-use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::BuildscriptGenrule;
 use crate::buck::BuildscriptGenruleManifestDir;
 use crate::buck::Common;
+use crate::buck::CxxLibrary;
 use crate::buck::Filegroup;
 use crate::buck::FilegroupSources;
 use crate::buck::Name;
@@ -437,103 +437,188 @@ impl<'meta> Fixups<'meta> {
             ..
         } in cxx_library
         {
-            let actual = Name(format!("{}-{}", self.package, name));
+            let cxx_library_target = if self.config.buck.split {
+                res.push(Rule::CxxLibrary(CxxLibrary {
+                    owner: PackageVersion {
+                        name: self.package.name.clone(),
+                        version: self.package.version.clone(),
+                    },
+                    common: Common {
+                        name: Name(name.clone()),
+                        visibility: Visibility::Custom(vec![format!(
+                            "//{}:",
+                            self.paths.buck_package,
+                        )]),
+                        licenses: Default::default(),
+                        metadata: buildscript_build.common.common.metadata.clone(),
+                        compatible_with: compatible_with.clone(),
+                        target_compatible_with: target_compatible_with.clone(),
+                    },
+                    srcs: Globs::new(srcs, exclude)
+                        .walk(self.manifest_dir)
+                        .map(|path| SubtargetOrPath::Path(BuckPath(path)))
+                        .collect(),
+                    headers: Globs::new(headers, exclude)
+                        .walk(self.manifest_dir)
+                        .map(|path| SubtargetOrPath::Path(BuckPath(path)))
+                        .collect(),
+                    exported_headers: match exported_headers {
+                        ExportedHeaders::Set(exported_headers) => {
+                            let exported_header_globs = Globs::new(exported_headers, exclude);
+                            let exported_headers = exported_header_globs
+                                .walk(self.manifest_dir)
+                                .map(|path| SubtargetOrPath::Path(BuckPath(path)))
+                                .collect();
+                            SetOrMap::Set(exported_headers)
+                        }
+                        ExportedHeaders::Map(exported_headers) => SetOrMap::Map(
+                            exported_headers
+                                .iter()
+                                .map(|(name, path)| {
+                                    (
+                                        name.clone(),
+                                        SubtargetOrPath::Path(BuckPath(PathBuf::from(
+                                            path.clone(),
+                                        ))),
+                                    )
+                                })
+                                .collect(),
+                        ),
+                    },
+                    include_directories: fixup_include_paths
+                        .iter()
+                        .map(|path| {
+                            SubtargetOrPath::Path(BuckPath(PathBuf::from(format!(
+                                "//{}{}fixups/{}/{}:include",
+                                self.paths.buck_package,
+                                if self.paths.buck_package.is_empty() {
+                                    ""
+                                } else {
+                                    "/"
+                                },
+                                self.package.name,
+                                path.to_str().unwrap(),
+                            ))))
+                        })
+                        .chain(
+                            include_paths
+                                .iter()
+                                .map(|path| SubtargetOrPath::Path(BuckPath(path.clone()))),
+                        )
+                        .collect(),
+                    compiler_flags: compiler_flags.clone(),
+                    preprocessor_flags: preprocessor_flags.clone(),
+                    header_namespace: header_namespace.clone(),
+                    deps: deps.iter().cloned().map(RuleRef::new).collect(),
+                    preferred_linkage: preferred_linkage.clone(),
+                    undefined_symbols: *undefined_symbols,
+                }));
+                RuleRef::new(format!(
+                    "//{}{}vendor/{}:{}",
+                    self.paths.buck_package,
+                    if self.paths.buck_package.is_empty() {
+                        ""
+                    } else {
+                        "/"
+                    },
+                    self.package,
+                    name,
+                ))
+            } else {
+                let target_name = Name(format!("{}-{}", self.package, name));
+                res.push(Rule::CxxLibrary(CxxLibrary {
+                    owner: PackageVersion {
+                        name: self.package.name.clone(),
+                        version: self.package.version.clone(),
+                    },
+                    common: Common {
+                        name: target_name.clone(),
+                        visibility: Visibility::Private,
+                        licenses: Default::default(),
+                        metadata: buildscript_build.common.common.metadata.clone(),
+                        compatible_with: compatible_with.clone(),
+                        target_compatible_with: target_compatible_with.clone(),
+                    },
+                    // Just collect the sources, excluding things in the exclude list
+                    srcs: Globs::new(srcs, exclude)
+                        .walk(self.manifest_dir)
+                        .map(|path| self.subtarget_or_path(&path))
+                        .collect::<anyhow::Result<_>>()?,
+                    // Collect the nominated headers, plus everything in the fixup include
+                    // path(s).
+                    headers: {
+                        let globs = Globs::new(headers, exclude);
+                        let mut headers = BTreeSet::new();
+                        for path in globs.walk(self.manifest_dir) {
+                            headers.insert(self.subtarget_or_path(&path)?);
+                        }
+
+                        let globs = Globs::new(
+                            GlobSetKind::from_iter(["**/*.asm", "**/*.h"]).unwrap(),
+                            NO_EXCLUDE,
+                        );
+                        for fixup_include_path in fixup_include_paths {
+                            for path in
+                                globs.walk(self.fixup_config.fixup_dir.join(fixup_include_path))
+                            {
+                                headers.insert(SubtargetOrPath::Path(BuckPath(
+                                    rel_fixup.join(fixup_include_path).join(path),
+                                )));
+                            }
+                        }
+
+                        headers
+                    },
+                    exported_headers: match exported_headers {
+                        ExportedHeaders::Set(exported_headers) => {
+                            let exported_header_globs = Globs::new(exported_headers, exclude);
+                            let exported_headers = exported_header_globs
+                                .walk(self.manifest_dir)
+                                .map(|path| self.subtarget_or_path(&path))
+                                .collect::<anyhow::Result<_>>()?;
+                            SetOrMap::Set(exported_headers)
+                        }
+                        ExportedHeaders::Map(exported_headers) => SetOrMap::Map(
+                            exported_headers
+                                .iter()
+                                .map(|(name, path)| {
+                                    Ok((name.clone(), self.subtarget_or_path(Path::new(path))?))
+                                })
+                                .collect::<anyhow::Result<_>>()?,
+                        ),
+                    },
+                    include_directories: fixup_include_paths
+                        .iter()
+                        .map(|path| Ok(SubtargetOrPath::Path(BuckPath(rel_fixup.join(path)))))
+                        .chain(
+                            include_paths
+                                .iter()
+                                .map(|path| self.subtarget_or_path(path)),
+                        )
+                        .collect::<anyhow::Result<_>>()?,
+                    compiler_flags: compiler_flags.clone(),
+                    preprocessor_flags: preprocessor_flags.clone(),
+                    header_namespace: header_namespace.clone(),
+                    deps: deps.iter().cloned().map(RuleRef::new).collect(),
+                    preferred_linkage: preferred_linkage.clone(),
+                    undefined_symbols: *undefined_symbols,
+                }));
+                RuleRef::from(target_name)
+            };
 
             if *public {
-                let rule = Rule::Alias(Alias {
+                res.push(Rule::Alias(Alias {
                     owner: PackageVersion {
                         name: self.package.name.clone(),
                         version: self.package.version.clone(),
                     },
                     name: Name(format!("{}-{}", index.public_rule_name(self.package), name)),
-                    actual: RuleRef::from(actual.clone()),
+                    actual: cxx_library_target,
                     platforms: None,
                     visibility: self.visibility().clone(),
-                    sort_key: actual.clone(),
-                });
-                res.push(rule);
+                    sort_key: Name(format!("{}-{}", self.package, name)),
+                }));
             }
-
-            let rule = buck::CxxLibrary {
-                owner: PackageVersion {
-                    name: self.package.name.clone(),
-                    version: self.package.version.clone(),
-                },
-                common: Common {
-                    name: actual,
-                    visibility: Visibility::Private,
-                    licenses: Default::default(),
-                    metadata: buildscript_build.common.common.metadata.clone(),
-                    compatible_with: compatible_with.clone(),
-                    target_compatible_with: target_compatible_with.clone(),
-                },
-                // Just collect the sources, excluding things in the exclude list
-                srcs: {
-                    Globs::new(srcs, exclude)
-                        .walk(self.manifest_dir)
-                        .map(|path| self.subtarget_or_path(&path))
-                        .collect::<anyhow::Result<_>>()?
-                },
-                // Collect the nominated headers, plus everything in the fixup include
-                // path(s).
-                headers: {
-                    let globs = Globs::new(headers, exclude);
-                    let mut headers = BTreeSet::new();
-                    for path in globs.walk(self.manifest_dir) {
-                        headers.insert(self.subtarget_or_path(&path)?);
-                    }
-
-                    let globs = Globs::new(
-                        GlobSetKind::from_iter(["**/*.asm", "**/*.h"]).unwrap(),
-                        NO_EXCLUDE,
-                    );
-                    for fixup_include_path in fixup_include_paths {
-                        for path in globs.walk(self.fixup_config.fixup_dir.join(fixup_include_path))
-                        {
-                            headers.insert(SubtargetOrPath::Path(BuckPath(
-                                rel_fixup.join(fixup_include_path).join(path),
-                            )));
-                        }
-                    }
-
-                    headers
-                },
-                exported_headers: match exported_headers {
-                    ExportedHeaders::Set(exported_headers) => {
-                        let exported_header_globs = Globs::new(exported_headers, exclude);
-                        let exported_headers = exported_header_globs
-                            .walk(self.manifest_dir)
-                            .map(|path| self.subtarget_or_path(&path))
-                            .collect::<anyhow::Result<_>>()?;
-                        SetOrMap::Set(exported_headers)
-                    }
-                    ExportedHeaders::Map(exported_headers) => SetOrMap::Map(
-                        exported_headers
-                            .iter()
-                            .map(|(name, path)| {
-                                Ok((name.clone(), self.subtarget_or_path(Path::new(path))?))
-                            })
-                            .collect::<anyhow::Result<_>>()?,
-                    ),
-                },
-                include_directories: fixup_include_paths
-                    .iter()
-                    .map(|path| Ok(SubtargetOrPath::Path(BuckPath(rel_fixup.join(path)))))
-                    .chain(
-                        include_paths
-                            .iter()
-                            .map(|path| self.subtarget_or_path(path)),
-                    )
-                    .collect::<anyhow::Result<_>>()?,
-                compiler_flags: compiler_flags.clone(),
-                preprocessor_flags: preprocessor_flags.clone(),
-                header_namespace: header_namespace.clone(),
-                deps: deps.iter().cloned().map(RuleRef::new).collect(),
-                preferred_linkage: preferred_linkage.clone(),
-                undefined_symbols: *undefined_symbols,
-            };
-
-            res.push(Rule::CxxLibrary(rule));
         }
 
         // Emit a prebuilt C++ library rule for each static library (elsewhere - add dependencies to them)
@@ -967,7 +1052,21 @@ impl<'meta> Fixups<'meta> {
                 }
                 ret.insert(
                     (
-                        RuleRef::new(format!(":{}-{}", self.package, name)),
+                        RuleRef::new(if self.config.buck.split {
+                            format!(
+                                "//{}{}vendor/{}:{}",
+                                self.paths.buck_package,
+                                if self.paths.buck_package.is_empty() {
+                                    ""
+                                } else {
+                                    "/"
+                                },
+                                self.package,
+                                name,
+                            )
+                        } else {
+                            format!(":{}-{}", self.package, name)
+                        }),
                         None,
                         &NodeDepKind::ORDINARY,
                     ),

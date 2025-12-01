@@ -156,12 +156,16 @@ pub enum SubtargetOrPath {
 }
 
 impl SubtargetOrPath {
-    fn is_subtarget(&self) -> bool {
-        matches!(self, SubtargetOrPath::Subtarget(_))
-    }
-
-    fn is_path(&self) -> bool {
-        matches!(self, SubtargetOrPath::Path(_))
+    fn is_target(&self) -> bool {
+        match self {
+            SubtargetOrPath::Subtarget(_) => true,
+            SubtargetOrPath::Path(path) => {
+                let Some(path) = path.0.to_str() else {
+                    return false;
+                };
+                path.starts_with(":") || path.contains("//")
+            }
+        }
     }
 }
 
@@ -1020,7 +1024,7 @@ impl Serialize for CxxLibrary {
         if !compiler_flags.is_empty() {
             map.serialize_entry("compiler_flags", compiler_flags)?;
         }
-        if include_directories.iter().any(SubtargetOrPath::is_path) {
+        if !include_directories.iter().all(SubtargetOrPath::is_target) {
             map.serialize_entry(
                 "include_directories",
                 &IncludeDirectories {
@@ -1038,9 +1042,7 @@ impl Serialize for CxxLibrary {
             map.serialize_entry("preferred_linkage", preferred_linkage)?;
         }
         if !preprocessor_flags.is_empty()
-            || include_directories
-                .iter()
-                .any(SubtargetOrPath::is_subtarget)
+            || include_directories.iter().any(SubtargetOrPath::is_target)
         {
             map.serialize_entry(
                 "preprocessor_flags",
@@ -1073,7 +1075,7 @@ impl<'a> Serialize for IncludeDirectories<'a> {
         let len = self
             .include_directories
             .iter()
-            .filter(|dir| dir.is_path())
+            .filter(|dir| !dir.is_target())
             .count();
         let mut array = serializer.serialize_seq(Some(len))?;
 
@@ -1083,7 +1085,11 @@ impl<'a> Serialize for IncludeDirectories<'a> {
                     // serialized under "preprocessor_flags" because "include_directories"
                     // does not support $(location ...) macros.
                 }
-                SubtargetOrPath::Path(path) => array.serialize_element(path)?,
+                SubtargetOrPath::Path(path) => {
+                    if !element.is_target() {
+                        array.serialize_element(path)?;
+                    }
+                }
             }
         }
 
@@ -1101,7 +1107,7 @@ impl<'a> Serialize for PreprocessorFlags<'a> {
         let len = self
             .include_directories
             .iter()
-            .filter(|dir| dir.is_subtarget())
+            .filter(|dir| dir.is_target())
             .count()
             + self.preprocessor_flags.len();
         let mut array = serializer.serialize_seq(Some(len))?;
@@ -1117,8 +1123,13 @@ impl<'a> Serialize for PreprocessorFlags<'a> {
                         subtarget.target, subtarget.relative,
                     ))?;
                 }
-                SubtargetOrPath::Path(_) => {
-                    // serialized under "include_directories"
+                SubtargetOrPath::Path(path) => {
+                    if element.is_target() {
+                        array.serialize_element(&format!(
+                            "-I$(location {})",
+                            path.0.to_str().unwrap(),
+                        ))?;
+                    }
                 }
             }
         }

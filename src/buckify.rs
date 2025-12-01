@@ -42,6 +42,7 @@ use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::BuildscriptGenruleManifestDir;
 use crate::buck::Common;
+use crate::buck::CxxLibrary;
 use crate::buck::ExtractArchive;
 use crate::buck::Filegroup;
 use crate::buck::FilegroupSources;
@@ -1313,12 +1314,12 @@ pub(crate) fn buckify(
                     | Rule::Library(_)
                     | Rule::BuildscriptBinary(_)
                     | Rule::BuildscriptGenrule(_)
-                    | Rule::CxxLibrary(_)
                     | Rule::RootPackage(_) => {
                         toplevel_rules.push(rule);
                     }
                     Rule::Sources(Sources { owner, .. })
                     | Rule::Filegroup(Filegroup { owner, .. })
+                    | Rule::CxxLibrary(CxxLibrary { owner, .. })
                     | Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary { owner, .. }) => {
                         version_rules
                             .entry(owner)
