@@ -915,7 +915,7 @@ fn generate_target_rules<'scope>(
                     format!(":{}", pkg)
                 }),
                 platforms,
-                visibility: fixups.visibility().clone(),
+                visibility: fixups.visibility(index),
                 sort_key: Name(pkg.to_string()),
             }));
         }
@@ -935,7 +935,7 @@ fn generate_target_rules<'scope>(
                         Name(pkg.to_string())
                     },
                     visibility: if index.is_root_package(pkg) {
-                        fixups.visibility().clone()
+                        fixups.visibility(index)
                     } else if config.buck.split {
                         Visibility::Custom(vec![
                             format!("//{}:", paths.buck_package),
@@ -977,6 +977,47 @@ fn generate_target_rules<'scope>(
         };
 
         if index.is_root_package(pkg) {
+            if config.buck.split {
+                let crate_root = rust_library.common.crate_root.0.parent().unwrap();
+                rules.push(Rule::Alias(Alias {
+                    owner: PackageVersion {
+                        name: pkg.name.clone(),
+                        version: pkg.version.clone(),
+                    },
+                    name: Name(pkg.name.clone()),
+                    actual: RuleRef::new(format!(
+                        "//{}{}{}:{}",
+                        paths.buck_package,
+                        if paths.buck_package.is_empty() {
+                            ""
+                        } else {
+                            "/"
+                        },
+                        crate_root.to_str().unwrap(),
+                        pkg.name,
+                    )),
+                    platforms: None,
+                    visibility: fixups.visibility(index),
+                    sort_key: Name(pkg.to_string()),
+                }));
+                rust_library.common.base.srcs = rust_library
+                    .common
+                    .base
+                    .srcs
+                    .into_iter()
+                    .map(|path| {
+                        BuckPath(
+                            path.0
+                                .components()
+                                .skip(crate_root.components().count())
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                rust_library.common.crate_root = BuckPath(PathBuf::from(
+                    rust_library.common.crate_root.0.file_name().unwrap(),
+                ));
+            }
             rules.push(Rule::RootPackage(rust_library));
         } else {
             if config.buck.split {
@@ -1044,7 +1085,7 @@ fn generate_target_rules<'scope>(
                     format!(":{}-{}", pkg, tgt.name)
                 }),
                 platforms,
-                visibility: fixups.visibility().clone(),
+                visibility: fixups.visibility(index),
                 sort_key: Name(format!("{}-{}", pkg, tgt.name)),
             }));
         }
@@ -1390,13 +1431,13 @@ pub(crate) fn buckify(
             let mut toplevel_rules = Vec::new();
             let mut crate_rules = BTreeMap::new();
             let mut version_rules = BTreeMap::new();
+            let mut root_package_rule = None;
             for rule in &rules {
                 match rule {
                     Rule::Alias(_)
                     | Rule::ExtractArchive(_)
                     | Rule::HttpArchive(_)
-                    | Rule::GitFetch(_)
-                    | Rule::RootPackage(_) => {
+                    | Rule::GitFetch(_) => {
                         toplevel_rules.push(rule);
                     }
                     Rule::Binary(RustBinary { owner, .. })
@@ -1416,6 +1457,9 @@ pub(crate) fn buckify(
                             .entry(owner)
                             .or_insert_with(Vec::new)
                             .push(rule);
+                    }
+                    Rule::RootPackage(_) => {
+                        root_package_rule = Some(rule);
                     }
                 }
             }
@@ -1451,6 +1495,19 @@ pub(crate) fn buckify(
                     .join("vendor")
                     .join(format!("{}-{}", owner.name, owner.version))
                     .join(&config.buck.file_name);
+                if !fs::read(&buckpath).is_ok_and(|x| x == out) {
+                    fs::write(&buckpath, out)
+                        .with_context(|| format!("write {} file", buckpath.display()))?;
+                }
+            }
+
+            if let Some(root_package_rule) = root_package_rule {
+                let mut out = Vec::new();
+                buck::write_buckfile(&config.buck, iter::once(root_package_rule), &mut out)
+                    .context("writing buck file")?;
+                let buckpath = context.index.root_pkg.unwrap().targets[0]
+                    .src_path
+                    .with_file_name(&*config.buck.file_name);
                 if !fs::read(&buckpath).is_ok_and(|x| x == out) {
                     fs::write(&buckpath, out)
                         .with_context(|| format!("write {} file", buckpath.display()))?;

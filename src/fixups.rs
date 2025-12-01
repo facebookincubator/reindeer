@@ -235,7 +235,7 @@ impl<'meta> Fixups<'meta> {
         }
     }
 
-    pub fn visibility(&self) -> &Visibility {
+    pub fn visibility(&self, index: &Index) -> Visibility {
         let mut visibility = &Visibility::Public;
 
         for config in self.platform_independent_configs() {
@@ -244,6 +244,30 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
+        let mut visibility = visibility.clone();
+        if self.config.buck.split
+            && index.is_public_package(self.package)
+            && !index.is_root_package(self.package)
+            && let Visibility::Custom(visibility) = &mut visibility
+            && let Some(root_pkg) = index.root_pkg
+        {
+            visibility.push(format!(
+                "//{}{}{}:{}",
+                self.paths.buck_package,
+                if self.paths.buck_package.is_empty() {
+                    ""
+                } else {
+                    "/"
+                },
+                relative_path(
+                    self.third_party_dir,
+                    root_pkg.targets[0].src_path.parent().unwrap()
+                )
+                .to_str()
+                .unwrap(),
+                root_pkg.name,
+            ));
+        }
         visibility
     }
 
@@ -627,7 +651,7 @@ impl<'meta> Fixups<'meta> {
                     name: Name(format!("{}-{}", index.public_rule_name(self.package), name)),
                     actual: cxx_library_target,
                     platforms: None,
-                    visibility: self.visibility().clone(),
+                    visibility: self.visibility(index),
                     sort_key: Name(format!("{}-{}", self.package, name)),
                 }));
             }
@@ -727,7 +751,7 @@ impl<'meta> Fixups<'meta> {
                         )),
                         actual: prebuilt_cxx_library_target,
                         platforms: None,
-                        visibility: self.visibility().clone(),
+                        visibility: self.visibility(index),
                         sort_key: Name(format!(
                             "{}-{}-{}",
                             self.package, name, static_lib_file_name,
@@ -1169,17 +1193,25 @@ impl<'meta> Fixups<'meta> {
             ret.insert(
                 (
                     RuleRef::new(if self.config.buck.split {
-                        format!(
-                            "//{}{}vendor/{}:{}",
-                            self.paths.buck_package,
-                            if self.paths.buck_package.is_empty() {
-                                ""
-                            } else {
-                                "/"
-                            },
-                            package.name,
-                            package.version,
-                        )
+                        if index.is_root_package(self.package) {
+                            format!(
+                                "//{}:{}",
+                                self.paths.buck_package,
+                                index.public_rule_name(package),
+                            )
+                        } else {
+                            format!(
+                                "//{}{}vendor/{}:{}",
+                                self.paths.buck_package,
+                                if self.paths.buck_package.is_empty() {
+                                    ""
+                                } else {
+                                    "/"
+                                },
+                                package.name,
+                                package.version,
+                            )
+                        }
                     } else {
                         format!(":{}", package)
                     }),
