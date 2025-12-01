@@ -3393,7 +3393,6 @@ dependencies = [
  "nom 8.0.0",
  "nom-language",
  "proc-macro2",
- "rayon",
  "semver",
  "serde",
  "serde_json",

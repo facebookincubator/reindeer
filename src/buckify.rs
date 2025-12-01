@@ -25,6 +25,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::PoisonError;
 use std::sync::mpsc;
+use std::thread;
 
 use anyhow::Context;
 use anyhow::bail;
@@ -156,30 +157,30 @@ struct RuleContext<'meta> {
 /// Generate rules for a set of dependencies
 /// This is the top-level because the overall structure is that we're
 /// generating rules for the top-level pseudo-package.
-fn generate_dep_rules<'scope>(
-    context: &'scope RuleContext<'scope>,
-    scope: &rayon::Scope<'scope>,
+fn generate_dep_rules<'scope, 'env>(
+    context: &'env RuleContext<'env>,
+    scope: &'scope thread::Scope<'scope, 'env>,
     rule_tx: mpsc::Sender<anyhow::Result<Rule>>,
-    pkg_deps: impl IntoIterator<Item = (&'scope Manifest, TargetReq<'scope>)>,
+    pkg_deps: impl IntoIterator<Item = (&'env Manifest, TargetReq<'env>)>,
 ) {
     let mut done = context.done.lock().unwrap();
     for (pkg, target_req) in pkg_deps {
         if done.insert((pkg.id, target_req)) {
             let rule_tx = rule_tx.clone();
-            scope.spawn(move |scope| {
+            scope.spawn(move || {
                 generate_rules(context, scope, rule_tx, pkg, target_req);
-            })
+            });
         }
     }
 }
 
 /// Generate rules for all of a package's targets
-fn generate_rules<'scope>(
-    context: &'scope RuleContext<'scope>,
-    scope: &rayon::Scope<'scope>,
+fn generate_rules<'scope, 'env>(
+    context: &'env RuleContext<'env>,
+    scope: &'scope thread::Scope<'scope, 'env>,
     rule_tx: mpsc::Sender<anyhow::Result<Rule>>,
-    pkg: &'scope Manifest,
-    target_req: TargetReq<'scope>,
+    pkg: &'env Manifest,
+    target_req: TargetReq<'env>,
 ) {
     if let TargetReq::Sources = target_req {
         if let Some(nonvendored_sources) =
@@ -240,9 +241,9 @@ fn generate_rules<'scope>(
     }
 }
 
-fn generate_nonvendored_sources_archive<'scope>(
-    context: &'scope RuleContext<'scope>,
-    pkg: &'scope Manifest,
+fn generate_nonvendored_sources_archive(
+    context: &RuleContext,
+    pkg: &Manifest,
 ) -> anyhow::Result<Option<Rule>> {
     let lockfile_package = match context.lockfile.find(pkg) {
         Some(lockfile_package) => lockfile_package,
@@ -300,9 +301,9 @@ fn generate_extract_archive(pkg: &Manifest) -> Rule {
     })
 }
 
-fn generate_http_archive<'scope>(
-    context: &'scope RuleContext<'scope>,
-    pkg: &'scope Manifest,
+fn generate_http_archive(
+    context: &RuleContext,
+    pkg: &Manifest,
     lockfile_package: &LockfilePackage,
 ) -> anyhow::Result<Rule> {
     let sha256 = match &lockfile_package.checksum {
@@ -563,12 +564,12 @@ fn buckify_cxx_library_fixup_include_paths(config: &Config, paths: &Paths) -> St
 
 /// Generate rules for a target. Returns the rules, and the
 /// packages we depend on for further rule generation.
-fn generate_target_rules<'scope>(
-    context: &'scope RuleContext<'scope>,
-    pkg: &'scope Manifest,
-    tgt: &'scope ManifestTarget,
+fn generate_target_rules<'a>(
+    context: &'a RuleContext<'a>,
+    pkg: &'a Manifest,
+    tgt: &'a ManifestTarget,
     will_use_rules: bool,
-) -> anyhow::Result<(Vec<Rule>, Vec<(&'scope Manifest, TargetReq<'scope>)>)> {
+) -> anyhow::Result<(Vec<Rule>, Vec<(&'a Manifest, TargetReq<'a>)>)> {
     let RuleContext {
         config,
         paths,
@@ -1340,7 +1341,7 @@ fn do_buckify<'a>(context: &'a RuleContext<'a>) -> anyhow::Result<BTreeSet<Rule>
     {
         log::info!("Generating buck rules...");
         measure_time::info_time!("Generating buck rules");
-        rayon::scope(move |scope| {
+        thread::scope(move |scope| {
             for &workspace_member in &context.index.workspace_members {
                 generate_dep_rules(
                     context,
@@ -1532,12 +1533,12 @@ pub(crate) fn buckify(
                 }
             }
 
-            fn spawn<'a>(
-                scope: &rayon::Scope<'a>,
-                errors: &'a Mutex<Vec<anyhow::Error>>,
-                f: impl FnOnce() -> anyhow::Result<()> + Send + 'a,
+            fn spawn<'scope, 'env>(
+                scope: &'scope thread::Scope<'scope, 'env>,
+                errors: &'scope Mutex<Vec<anyhow::Error>>,
+                f: impl FnOnce() -> anyhow::Result<()> + Send + 'scope,
             ) {
-                scope.spawn(move |_| {
+                scope.spawn(move || {
                     if let Err(err) = f() {
                         errors
                             .lock()
@@ -1549,7 +1550,7 @@ pub(crate) fn buckify(
 
             let errors_owned = Mutex::new(Vec::new());
             let errors = &errors_owned;
-            rayon::scope(move |scope| {
+            thread::scope(move |scope| {
                 spawn(scope, errors, move || {
                     let mut out = Vec::new();
                     buck::write_buckfile(&config.buck, toplevel_rules.into_iter(), &mut out)
