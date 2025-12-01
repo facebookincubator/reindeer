@@ -340,8 +340,12 @@ impl<'meta> Fixups<'meta> {
     }
 
     fn buildscript_rule_name(&self) -> Option<Name> {
-        self.buildscript_target()
-            .map(|tgt| Name(format!("{}-{}", self.package, tgt.name)))
+        let buildscript_target = self.buildscript_target()?;
+        Some(Name(if self.config.buck.split {
+            format!("{}-{}", self.package.version, buildscript_target.name)
+        } else {
+            format!("{}-{}", self.package, buildscript_target.name)
+        }))
     }
 
     /// Return buildscript-related rules
@@ -445,10 +449,18 @@ impl<'meta> Fixups<'meta> {
                     },
                     common: Common {
                         name: Name(name.clone()),
-                        visibility: Visibility::Custom(vec![format!(
-                            "//{}:",
-                            self.paths.buck_package,
-                        )]),
+                        visibility: Visibility::Custom(vec![
+                            format!("//{}:", self.paths.buck_package),
+                            format!(
+                                "//{}{}vendor/...",
+                                self.paths.buck_package,
+                                if self.paths.buck_package.is_empty() {
+                                    ""
+                                } else {
+                                    "/"
+                                },
+                            ),
+                        ]),
                         licenses: Default::default(),
                         metadata: buildscript_build.common.common.metadata.clone(),
                         compatible_with: compatible_with.clone(),
@@ -644,10 +656,18 @@ impl<'meta> Fixups<'meta> {
                         },
                         common: Common {
                             name: target_name.clone(),
-                            visibility: Visibility::Custom(vec![format!(
-                                "//{}:",
-                                self.paths.buck_package,
-                            )]),
+                            visibility: Visibility::Custom(vec![
+                                format!("//{}:", self.paths.buck_package),
+                                format!(
+                                    "//{}{}vendor/...",
+                                    self.paths.buck_package,
+                                    if self.paths.buck_package.is_empty() {
+                                        ""
+                                    } else {
+                                        "/"
+                                    },
+                                ),
+                            ]),
                             licenses: Default::default(),
                             metadata: buildscript_build.common.common.metadata.clone(),
                             compatible_with: compatible_with.clone(),
@@ -747,10 +767,16 @@ impl<'meta> Fixups<'meta> {
                                 include: vec!["**".to_owned()],
                                 exclude: vec![config.buck.file_name.to_string()],
                             },
-                            visibility: Visibility::Custom(vec![format!(
-                                "//{}:",
-                                self.paths.buck_package,
-                            )]),
+                            // FIXME: consider restricting to specific package version directories
+                            visibility: Visibility::Custom(vec![if self
+                                .paths
+                                .buck_package
+                                .is_empty()
+                            {
+                                "//vendor/...".to_owned()
+                            } else {
+                                format!("//{}/vendor/...", self.paths.buck_package)
+                            }]),
                         }));
                         BuildscriptGenruleManifestDir::Target(RuleRef::new(format!(
                             "//{}{}vendor/{}-{}:{}",
@@ -924,7 +950,12 @@ impl<'meta> Fixups<'meta> {
                     name: srcs_name,
                     base,
                     platform,
-                    visibility: Visibility::Custom(vec![format!("//{}:", self.paths.buck_package)]),
+                    // FIXME: consider restricting to specific package version directories
+                    visibility: Visibility::Custom(vec![if self.paths.buck_package.is_empty() {
+                        "//vendor/...".to_owned()
+                    } else {
+                        format!("//{}/vendor/...", self.paths.buck_package)
+                    }]),
                 }));
             }
 
@@ -1137,7 +1168,21 @@ impl<'meta> Fixups<'meta> {
 
             ret.insert(
                 (
-                    RuleRef::new(format!(":{}", package)),
+                    RuleRef::new(if self.config.buck.split {
+                        format!(
+                            "//{}{}vendor/{}:{}",
+                            self.paths.buck_package,
+                            if self.paths.buck_package.is_empty() {
+                                ""
+                            } else {
+                                "/"
+                            },
+                            package.name,
+                            package.version,
+                        )
+                    } else {
+                        format!(":{}", package)
+                    }),
                     // Only use the rename if it isn't the same as the target anyway.
                     match package.dependency_target() {
                         Some(tgt) if tgt.name.replace('-', "_") == rename => None,

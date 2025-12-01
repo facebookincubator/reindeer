@@ -40,6 +40,7 @@ use crate::Paths;
 use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
+use crate::buck::BuildscriptGenrule;
 use crate::buck::BuildscriptGenruleManifestDir;
 use crate::buck::Common;
 use crate::buck::CxxLibrary;
@@ -696,9 +697,13 @@ fn generate_target_rules<'scope>(
                     .or_insert_with(PlatformRustCommon::default)
             };
             if let Some(ArtifactKind::Bin(_) | ArtifactKind::EveryBin) = dep_kind.artifact {
-                let target_name = dep.target.strip_prefix(':').unwrap();
                 let bin_name = dep_kind.bin_name.as_ref().unwrap();
-                let env = format!("{}-{}", target_name, bin_name);
+                let env = if config.buck.split {
+                    format!("{}-{}", manifest.unwrap(), bin_name)
+                } else {
+                    let target_name = dep.target.strip_prefix(':').unwrap();
+                    format!("{}-{}", target_name, bin_name)
+                };
                 let location = format!("$(location {}-{}[check])", dep.target, bin_name);
                 recipient.env.insert(env, StringOrPath::String(location));
             } else if let Some(rename) = rename {
@@ -733,7 +738,11 @@ fn generate_target_rules<'scope>(
             },
             common: RustCommon {
                 common: Common {
-                    name: Name(format!("{}-{}", pkg, tgt.name)),
+                    name: Name(if config.buck.split {
+                        format!("{}-{}", pkg.version, tgt.name)
+                    } else {
+                        format!("{}-{}", pkg, tgt.name)
+                    }),
                     visibility: Visibility::Private,
                     licenses: Default::default(),
                     metadata,
@@ -850,7 +859,11 @@ fn generate_target_rules<'scope>(
     // Standalone binary - binary for a package always takes the package's library as a dependency
     // if there is one
     if let Some(true) = pkg.dependency_target().map(ManifestTarget::kind_lib) {
-        bin_base.deps.insert(RuleRef::new(format!(":{}", pkg)));
+        bin_base.deps.insert(RuleRef::new(if config.buck.split {
+            format!(":{}", pkg.version)
+        } else {
+            format!(":{}", pkg)
+        }));
     }
 
     // Generate rules appropriate to each kind of crate we want to support
@@ -886,7 +899,21 @@ fn generate_target_rules<'scope>(
                     version: pkg.version.clone(),
                 },
                 name: index.public_rule_name(pkg),
-                actual: RuleRef::new(format!(":{}", pkg)),
+                actual: RuleRef::new(if config.buck.split {
+                    format!(
+                        "//{}{}vendor/{}:{}",
+                        paths.buck_package,
+                        if paths.buck_package.is_empty() {
+                            ""
+                        } else {
+                            "/"
+                        },
+                        pkg.name,
+                        pkg.version,
+                    )
+                } else {
+                    format!(":{}", pkg)
+                }),
                 platforms,
                 visibility: fixups.visibility().clone(),
                 sort_key: Name(pkg.to_string()),
@@ -902,11 +929,26 @@ fn generate_target_rules<'scope>(
                 common: Common {
                     name: if index.is_root_package(pkg) {
                         index.public_rule_name(pkg)
+                    } else if config.buck.split {
+                        Name(pkg.version.to_string())
                     } else {
                         Name(pkg.to_string())
                     },
                     visibility: if index.is_root_package(pkg) {
                         fixups.visibility().clone()
+                    } else if config.buck.split {
+                        Visibility::Custom(vec![
+                            format!("//{}:", paths.buck_package),
+                            format!(
+                                "//{}{}vendor/...",
+                                paths.buck_package,
+                                if paths.buck_package.is_empty() {
+                                    ""
+                                } else {
+                                    "/"
+                                },
+                            ),
+                        ])
                     } else {
                         Visibility::Private
                     },
@@ -950,7 +992,12 @@ fn generate_target_rules<'scope>(
                     name: srcs_name,
                     base,
                     platform,
-                    visibility: Visibility::Custom(vec![format!("//{}:", paths.buck_package)]),
+                    // FIXME: consider restricting to specific package version directories
+                    visibility: Visibility::Custom(vec![if paths.buck_package.is_empty() {
+                        "//vendor/...".to_owned()
+                    } else {
+                        format!("//{}/vendor/...", paths.buck_package)
+                    }]),
                 }));
             }
             rules.push(Rule::Library(rust_library));
@@ -962,7 +1009,6 @@ fn generate_target_rules<'scope>(
         rules
     } else if tgt.kind_bin() && tgt.crate_bin() {
         let mut rules = vec![];
-        let actual = Name(format!("{}-{}", pkg, tgt.name));
 
         if index.is_public_target(pkg, TargetReq::Bin(&tgt.name)) {
             let platforms = if !config.buck.alias_with_platforms.is_default {
@@ -981,10 +1027,25 @@ fn generate_target_rules<'scope>(
                     version: pkg.version.clone(),
                 },
                 name: Name(format!("{}-{}", index.public_rule_name(pkg), tgt.name)),
-                actual: RuleRef::from(actual.clone()),
+                actual: RuleRef::new(if config.buck.split {
+                    format!(
+                        "//{}{}vendor/{}:{}-{}",
+                        paths.buck_package,
+                        if paths.buck_package.is_empty() {
+                            ""
+                        } else {
+                            "/"
+                        },
+                        pkg.name,
+                        pkg.version,
+                        tgt.name,
+                    )
+                } else {
+                    format!(":{}-{}", pkg, tgt.name)
+                }),
                 platforms,
                 visibility: fixups.visibility().clone(),
-                sort_key: actual.clone(),
+                sort_key: Name(format!("{}-{}", pkg, tgt.name)),
             }));
         }
 
@@ -995,8 +1056,27 @@ fn generate_target_rules<'scope>(
             },
             common: RustCommon {
                 common: Common {
-                    name: actual,
-                    visibility: Visibility::Private,
+                    name: Name(if config.buck.split {
+                        format!("{}-{}", pkg.version, tgt.name)
+                    } else {
+                        format!("{}-{}", pkg, tgt.name)
+                    }),
+                    visibility: if config.buck.split {
+                        Visibility::Custom(vec![
+                            format!("//{}:", paths.buck_package),
+                            format!(
+                                "//{}{}vendor/...",
+                                paths.buck_package,
+                                if paths.buck_package.is_empty() {
+                                    ""
+                                } else {
+                                    "/"
+                                },
+                            ),
+                        ])
+                    } else {
+                        Visibility::Private
+                    },
                     licenses,
                     metadata,
                     compatible_with: fixups.compatible_with().clone(),
@@ -1024,7 +1104,12 @@ fn generate_target_rules<'scope>(
                 name: srcs_name,
                 base,
                 platform,
-                visibility: Visibility::Custom(vec![format!("//{}:", paths.buck_package)]),
+                // FIXME: consider restricting to specific package version directories
+                visibility: Visibility::Custom(vec![if paths.buck_package.is_empty() {
+                    "//vendor/...".to_owned()
+                } else {
+                    format!("//{}/vendor/...", paths.buck_package)
+                }]),
             }));
         }
 
@@ -1303,6 +1388,7 @@ pub(crate) fn buckify(
 
         if config.buck.split {
             let mut toplevel_rules = Vec::new();
+            let mut crate_rules = BTreeMap::new();
             let mut version_rules = BTreeMap::new();
             for rule in &rules {
                 match rule {
@@ -1310,12 +1396,17 @@ pub(crate) fn buckify(
                     | Rule::ExtractArchive(_)
                     | Rule::HttpArchive(_)
                     | Rule::GitFetch(_)
-                    | Rule::Binary(_)
-                    | Rule::Library(_)
-                    | Rule::BuildscriptBinary(_)
-                    | Rule::BuildscriptGenrule(_)
                     | Rule::RootPackage(_) => {
                         toplevel_rules.push(rule);
+                    }
+                    Rule::Binary(RustBinary { owner, .. })
+                    | Rule::Library(RustLibrary { owner, .. })
+                    | Rule::BuildscriptBinary(RustBinary { owner, .. })
+                    | Rule::BuildscriptGenrule(BuildscriptGenrule { owner, .. }) => {
+                        crate_rules
+                            .entry(&owner.name)
+                            .or_insert_with(Vec::new)
+                            .push(rule);
                     }
                     Rule::Sources(Sources { owner, .. })
                     | Rule::Filegroup(Filegroup { owner, .. })
@@ -1335,6 +1426,20 @@ pub(crate) fn buckify(
             if !fs::read(&buckpath).is_ok_and(|x| x == out) {
                 fs::write(&buckpath, out)
                     .with_context(|| format!("write {} file", buckpath.display()))?;
+            }
+
+            for (owner, rules) in crate_rules {
+                let mut out = Vec::new();
+                buck::write_buckfile(&config.buck, rules.into_iter(), &mut out)
+                    .context("writing buck file")?;
+                let owner_dir = paths.third_party_dir.join("vendor").join(owner);
+                fs::create_dir_all(&owner_dir)
+                    .with_context(|| format!("crate {}", owner_dir.display()))?;
+                let buckpath = owner_dir.join(&config.buck.file_name);
+                if !fs::read(&buckpath).is_ok_and(|x| x == out) {
+                    fs::write(&buckpath, out)
+                        .with_context(|| format!("write {} file", buckpath.display()))?;
+                }
             }
 
             for (owner, rules) in version_rules {
@@ -1361,9 +1466,9 @@ pub(crate) fn buckify(
             // FIXME: consider restricting to specific package versions that use
             // this overlay, such as `["//third-party/rust/vendor/openssl-0.10.0:"]`.
             let visibility = if paths.buck_package.is_empty() {
-                "PUBLIC".to_owned()
+                "//vendor/...".to_owned()
             } else {
-                format!("//{}/...", paths.buck_package)
+                format!("//{}/vendor/...", paths.buck_package)
             };
 
             // Make overlay sources accessible to targets in vendor directory.
