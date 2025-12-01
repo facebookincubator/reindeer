@@ -38,6 +38,7 @@ use crate::Paths;
 use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
+use crate::buck::BuildscriptGenruleManifestDir;
 use crate::buck::Common;
 use crate::buck::ExtractArchive;
 use crate::buck::Filegroup;
@@ -1040,7 +1041,11 @@ fn do_buckify<'a>(context: &'a RuleContext<'a>) -> anyhow::Result<BTreeSet<Rule>
                     }
                 }
                 Rule::BuildscriptGenrule(rule) => {
-                    subtargets.insert_all(&rule.manifest_dir);
+                    if let BuildscriptGenruleManifestDir::Subtarget(manifest_dir) =
+                        &rule.manifest_dir
+                    {
+                        subtargets.insert(manifest_dir);
+                    }
                 }
                 Rule::CxxLibrary(rule) => {
                     subtargets.insert_all(&rule.srcs);

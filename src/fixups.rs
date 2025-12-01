@@ -28,6 +28,7 @@ use crate::buck;
 use crate::buck::Alias;
 use crate::buck::BuckPath;
 use crate::buck::BuildscriptGenrule;
+use crate::buck::BuildscriptGenruleManifestDir;
 use crate::buck::Common;
 use crate::buck::Name;
 use crate::buck::PackageVersion;
@@ -601,10 +602,12 @@ impl<'meta> Fixups<'meta> {
             buildscript_build.common.base.link_style =
                 self.fixup_config.base.buildscript.build.link_style.clone();
 
-            let (local_manifest_dir, manifest_dir) = match manifest_dir {
-                None => (None, None),
-                Some(SubtargetOrPath::Path(path)) => (Some(path), None),
-                Some(SubtargetOrPath::Subtarget(subtarget)) => (None, Some(subtarget)),
+            let manifest_dir = match manifest_dir {
+                None => BuildscriptGenruleManifestDir::None,
+                Some(SubtargetOrPath::Path(path)) => BuildscriptGenruleManifestDir::Path(path),
+                Some(SubtargetOrPath::Subtarget(subtarget)) => {
+                    BuildscriptGenruleManifestDir::Subtarget(subtarget)
+                }
             };
 
             let mut buildscript_run = BuildscriptGenrule {
@@ -614,7 +617,6 @@ impl<'meta> Fixups<'meta> {
                 },
                 name: self.buildscript_genrule_name(),
                 buildscript_rule: buildscript_rule_name.clone(),
-                local_manifest_dir,
                 manifest_dir,
                 base: PlatformBuildscriptGenrule {
                     features: buildscript_build.common.base.features.clone(),

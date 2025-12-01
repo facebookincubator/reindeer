@@ -756,12 +756,18 @@ pub struct BuildscriptGenrule {
     pub owner: PackageVersion,
     pub name: Name,
     pub buildscript_rule: Name,
-    pub local_manifest_dir: Option<BuckPath>,
-    pub manifest_dir: Option<Subtarget>,
+    pub manifest_dir: BuildscriptGenruleManifestDir,
     // Platform-dependent
     pub base: PlatformBuildscriptGenrule,
     // Platform-specific
     pub platform: BTreeMap<PlatformName, PlatformBuildscriptGenrule>,
+}
+
+#[derive(Debug)]
+pub enum BuildscriptGenruleManifestDir {
+    None,
+    Path(BuckPath),
+    Subtarget(Subtarget),
 }
 
 impl Serialize for BuildscriptGenrule {
@@ -774,7 +780,6 @@ impl Serialize for BuildscriptGenrule {
                 },
             name,
             buildscript_rule,
-            local_manifest_dir,
             manifest_dir,
             base:
                 PlatformBuildscriptGenrule {
@@ -795,11 +800,14 @@ impl Serialize for BuildscriptGenrule {
         if !features.is_empty() {
             map.serialize_entry("features", features)?;
         }
-        if let Some(local_manifest_dir) = local_manifest_dir {
-            map.serialize_entry("local_manifest_dir", local_manifest_dir)?;
-        }
-        if let Some(manifest_dir) = manifest_dir {
-            map.serialize_entry("manifest_dir", manifest_dir)?;
+        match manifest_dir {
+            BuildscriptGenruleManifestDir::None => {}
+            BuildscriptGenruleManifestDir::Path(local_manifest_dir) => {
+                map.serialize_entry("local_manifest_dir", local_manifest_dir)?;
+            }
+            BuildscriptGenruleManifestDir::Subtarget(manifest_dir) => {
+                map.serialize_entry("manifest_dir", manifest_dir)?;
+            }
         }
         serialize_platforms_dict(&mut map, platform)?;
         if *rustc_link_lib {
