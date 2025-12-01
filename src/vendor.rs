@@ -11,6 +11,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use cargo_toml::OptionalFile;
+use globset::Glob;
 use globset::GlobBuilder;
 use globset::GlobSetBuilder;
 use ignore::gitignore::GitignoreBuilder;
@@ -21,6 +22,7 @@ use serde::Serialize;
 use crate::Args;
 use crate::Paths;
 use crate::cargo;
+use crate::config::BuckConfig;
 use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::config::VendorSourceConfig;
@@ -111,7 +113,12 @@ pub(crate) fn cargo_vendor(
         }
 
         if let VendorConfig::Source(source_config) = &config.vendor {
-            filter_checksum_files(&paths.third_party_dir, vendordir, source_config)?;
+            filter_checksum_files(
+                &paths.third_party_dir,
+                vendordir,
+                source_config,
+                &config.buck,
+            )?;
             write_excluded_build_scripts(&paths.third_party_dir, vendordir)?;
         }
     }
@@ -172,6 +179,7 @@ fn filter_checksum_files(
     third_party_dir: &Path,
     vendordir: &Path,
     config: &VendorSourceConfig,
+    buck_config: &BuckConfig,
 ) -> anyhow::Result<()> {
     if config.checksum_exclude.is_empty() && config.gitignore_checksum_exclude.is_empty() {
         return Ok(());
@@ -191,6 +199,9 @@ fn filter_checksum_files(
             .build()
             .with_context(|| format!("Invalid checksum exclude glob `{}`", glob))?;
         remove_globs.add(glob);
+    }
+    if let Ok(buck_glob) = Glob::new(&buck_config.file_name) {
+        remove_globs.add(buck_glob);
     }
     let remove_globs = remove_globs.build()?;
 
