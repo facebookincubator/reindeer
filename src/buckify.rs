@@ -10,6 +10,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::VecDeque;
+use std::ffi::OsStr;
 use std::fs;
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -48,11 +49,13 @@ use crate::buck::HttpArchive;
 use crate::buck::Name;
 use crate::buck::PackageVersion;
 use crate::buck::PlatformRustCommon;
+use crate::buck::PlatformSources;
 use crate::buck::Rule;
 use crate::buck::RuleRef;
 use crate::buck::RustBinary;
 use crate::buck::RustCommon;
 use crate::buck::RustLibrary;
+use crate::buck::Sources;
 use crate::buck::StringOrPath;
 use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
@@ -410,6 +413,59 @@ fn srcfiles(manifest_dir: PathBuf, crate_root: PathBuf) -> Vec<PathBuf> {
         log::debug!("crate_srcfiles failed: {:?}", sources.errors);
         vec![]
     }
+}
+
+fn split_srcs(
+    paths: &Paths,
+    common: &RustCommon,
+) -> (PlatformSources, BTreeMap<PlatformName, PlatformSources>) {
+    let rewrite_platform_sources = |common: &PlatformRustCommon| -> PlatformSources {
+        // "vendor/cxx-1.0.100/src/lib.rs" => "src/lib.rs"
+        let mut srcs = BTreeSet::new();
+        for src in &common.srcs {
+            srcs.insert(BuckPath(src.0.components().skip(2).collect()));
+        }
+
+        // "fixups/cxx/overlay/src/lib.rs" => "//third-party/rust/fixups/cxx/overlay:src/lib.rs"
+        let mut mapped_srcs = BTreeMap::new();
+        for (src, mapped) in &common.mapped_srcs {
+            let SubtargetOrPath::Path(src) = src else {
+                unimplemented!();
+            };
+            let mut components = src.0.components();
+            assert_eq!(
+                components.next(),
+                Some(Component::Normal(OsStr::new("fixups"))),
+            );
+            let rewrite = format!(
+                "//{}{}fixups/{}/{}:{}",
+                paths.buck_package,
+                if paths.buck_package.is_empty() {
+                    ""
+                } else {
+                    "/"
+                },
+                components.next().unwrap().as_os_str().to_str().unwrap(),
+                components.next().unwrap().as_os_str().to_str().unwrap(),
+                components.as_path().to_str().unwrap(),
+            );
+            mapped_srcs.insert(
+                SubtargetOrPath::Path(BuckPath(PathBuf::from(rewrite))),
+                BuckPath(mapped.0.components().skip(2).collect()),
+            );
+        }
+
+        PlatformSources { srcs, mapped_srcs }
+    };
+
+    let mut platform_srcs = BTreeMap::new();
+    for (platform_name, platform) in &common.platform {
+        if !platform.srcs.is_empty() || !platform.mapped_srcs.is_empty() {
+            platform_srcs.insert(platform_name.clone(), rewrite_platform_sources(platform));
+        }
+    }
+
+    (rewrite_platform_sources(&common.base), platform_srcs)
 }
 
 /// Generate rules for a target. Returns the rules, and the
@@ -852,11 +908,21 @@ fn generate_target_rules<'scope>(
             },
         };
 
-        rules.push(if index.is_root_package(pkg) {
-            Rule::RootPackage(rust_library)
+        if index.is_root_package(pkg) {
+            rules.push(Rule::RootPackage(rust_library));
         } else {
-            Rule::Library(rust_library)
-        });
+            if config.buck.split {
+                let (base, platform) = split_srcs(paths, &rust_library.common);
+                rules.push(Rule::Sources(Sources {
+                    owner: rust_library.owner.clone(),
+                    name: Name("srcs".to_owned()),
+                    base,
+                    platform,
+                    visibility: Visibility::Custom(vec![format!("//{}:", paths.buck_package)]),
+                }));
+            }
+            rules.push(Rule::Library(rust_library));
+        }
 
         // Library depends on the build script (if there is one).
         dep_pkgs.push((pkg, TargetReq::BuildScript));
@@ -1176,6 +1242,12 @@ pub(crate) fn buckify(
                     | Rule::PrebuiltCxxLibrary(_)
                     | Rule::RootPackage(_) => {
                         toplevel_rules.push(rule);
+                    }
+                    Rule::Sources(Sources { owner, .. }) => {
+                        version_rules
+                            .entry(owner)
+                            .or_insert_with(Vec::new)
+                            .push(rule);
                     }
                 }
             }

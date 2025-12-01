@@ -162,6 +162,9 @@ pub struct BuckConfig {
     /// Alias that also takes a `platforms` argument
     #[serde(default)]
     pub alias_with_platforms: StringWithDefault<MustBe!("alias")>,
+    /// Rule name for Rust sources filegroup
+    #[serde(default)]
+    pub rust_filegroup: StringWithDefault<MustBe!("rust_filegroup")>,
     /// Rule name for filegroup
     #[serde(default)]
     pub filegroup: StringWithDefault<MustBe!("filegroup")>,

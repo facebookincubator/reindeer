@@ -37,7 +37,7 @@ use crate::config::BuckConfig;
 use crate::platform::PlatformName;
 use crate::subtarget::Subtarget;
 
-#[derive(Eq, PartialEq, Ord, PartialOrd, Debug)]
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
 pub struct PackageVersion {
     pub name: String,
     pub version: Version,
@@ -242,6 +242,58 @@ struct NameAsLabel<'a>(&'a Name);
 impl Serialize for NameAsLabel<'_> {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         ser.collect_str(&format_args!(":{}", self.0))
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Sources {
+    pub owner: PackageVersion,
+    pub name: Name,
+    pub base: PlatformSources,
+    pub platform: BTreeMap<PlatformName, PlatformSources>,
+    pub visibility: Visibility,
+}
+
+impl Serialize for Sources {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self {
+            owner: _,
+            name,
+            base: PlatformSources { srcs, mapped_srcs },
+            platform,
+            visibility,
+        } = self;
+        let mut map = ser.serialize_map(None)?;
+        map.serialize_entry("name", name)?;
+        if !srcs.is_empty() {
+            map.serialize_entry("srcs", srcs)?;
+        }
+        if !mapped_srcs.is_empty() {
+            map.serialize_entry("mapped_srcs", mapped_srcs)?;
+        }
+        serialize_platforms_dict(&mut map, platform)?;
+        map.serialize_entry("visibility", visibility)?;
+        map.end()
+    }
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct PlatformSources {
+    pub srcs: BTreeSet<BuckPath>,
+    pub mapped_srcs: BTreeMap<SubtargetOrPath, BuckPath>,
+}
+
+impl Serialize for PlatformSources {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let Self { srcs, mapped_srcs } = self;
+        let mut map = ser.serialize_map(None)?;
+        if !srcs.is_empty() {
+            map.serialize_entry("srcs", srcs)?;
+        }
+        if !mapped_srcs.is_empty() {
+            map.serialize_entry("mapped_srcs", mapped_srcs)?;
+        }
+        map.end()
     }
 }
 
@@ -1117,6 +1169,7 @@ impl Serialize for PrebuiltCxxLibrary {
 #[derive(Debug)]
 pub enum Rule {
     Alias(Alias),
+    Sources(Sources),
     Filegroup(Filegroup),
     ExtractArchive(ExtractArchive),
     HttpArchive(HttpArchive),
@@ -1169,7 +1222,8 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
             owner, sort_key, ..
         }) => RuleSortKey::Owned(owner, sort_key, 1),
         Rule::GitFetch(GitFetch { name, .. }) => RuleSortKey::GitFetch(name),
-        Rule::Filegroup(Filegroup { owner, name, .. })
+        Rule::Sources(Sources { owner, name, .. })
+        | Rule::Filegroup(Filegroup { owner, name, .. })
         | Rule::Binary(RustBinary {
             owner,
             common:
@@ -1228,6 +1282,9 @@ impl Rule {
                     Some(_) => &config.alias_with_platforms,
                 };
                 FunctionCall::new(function, alias).serialize(Serializer)
+            }
+            Rule::Sources(sources) => {
+                FunctionCall::new(&config.rust_filegroup, sources).serialize(Serializer)
             }
             Rule::Filegroup(filegroup) => {
                 FunctionCall::new(&config.filegroup, filegroup).serialize(Serializer)
