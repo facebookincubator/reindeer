@@ -1054,50 +1054,85 @@ fn generate_target_rules<'scope>(
         let srcs = if matches!(config.vendor, VendorConfig::Source(_))
             || matches!(pkg.source, Source::Local)
         {
-            // e.g. {"src/lib.rs": "vendor/foo-1.0.0/src/lib.rs"}
-            Globs::new(srcs, exclude)
-                .walk(manifest_dir)
-                .map(|path| {
-                    let source = mapped_manifest_dir.join(&path);
-                    (BuckPath(path), SubtargetOrPath::Path(BuckPath(source)))
-                })
-                .collect()
+            if config.buck.split {
+                // e.g. ["src/lib.rs"]
+                FilegroupSources::Set(BTreeSet::from_iter(
+                    Globs::new(srcs, exclude).walk(manifest_dir).map(BuckPath),
+                ))
+            } else {
+                // e.g. {"src/lib.rs": "vendor/foo-1.0.0/src/lib.rs"}
+                FilegroupSources::Map(BTreeMap::from_iter(
+                    Globs::new(srcs, exclude).walk(manifest_dir).map(|path| {
+                        let source = mapped_manifest_dir.join(&path);
+                        (BuckPath(path), SubtargetOrPath::Path(BuckPath(source)))
+                    }),
+                ))
+            }
         } else if let VendorConfig::LocalRegistry = config.vendor {
             // e.g. {":foo-1.0.0.git": "foo-1.0.0"}
             let extract_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
-            [(
+            FilegroupSources::Map(BTreeMap::from([(
                 BuckPath(mapped_manifest_dir.clone()),
                 SubtargetOrPath::Path(BuckPath(PathBuf::from(extract_archive_target))),
-            )]
-            .into()
+            )]))
         } else if let Source::Git { repo, .. } = &pkg.source {
             // e.g. {":foo-123.git": "foo-123"}
             let short_name = short_name_for_git_repo(repo)?;
             let git_fetch_target = format!(":{}.git", short_name);
-            [(
+            FilegroupSources::Map(BTreeMap::from([(
                 BuckPath(mapped_manifest_dir.clone()),
                 SubtargetOrPath::Path(BuckPath(PathBuf::from(git_fetch_target))),
-            )]
-            .into()
+            )]))
         } else {
             // e.g. {":foo-1.0.0.git": "foo-1.0.0"}
             let http_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
-            [(
+            FilegroupSources::Map(BTreeMap::from([(
                 BuckPath(mapped_manifest_dir.clone()),
                 SubtargetOrPath::Path(BuckPath(PathBuf::from(http_archive_target))),
-            )]
-            .into()
+            )]))
         };
-        let rule = Filegroup {
-            owner: PackageVersion {
-                name: pkg.name.clone(),
-                version: pkg.version.clone(),
-            },
-            name: Name(format!("{}-{}", pkg, name)),
-            srcs: FilegroupSources::Map(srcs),
-            visibility: visibility.clone(),
-        };
-        rules.push(Rule::Filegroup(rule));
+        if config.buck.split {
+            rules.push(Rule::Filegroup(Filegroup {
+                owner: PackageVersion {
+                    name: pkg.name.clone(),
+                    version: pkg.version.clone(),
+                },
+                name: Name(format!("filegroup-{}", name)),
+                srcs,
+                visibility: Visibility::Custom(vec![format!("//{}:", paths.buck_package)]),
+            }));
+            rules.push(Rule::Alias(Alias {
+                owner: PackageVersion {
+                    name: pkg.name.clone(),
+                    version: pkg.version.clone(),
+                },
+                name: Name(format!("{}-{}", pkg, name)),
+                actual: RuleRef::new(format!(
+                    "//{}{}vendor/{}:filegroup-{}",
+                    paths.buck_package,
+                    if paths.buck_package.is_empty() {
+                        ""
+                    } else {
+                        "/"
+                    },
+                    pkg,
+                    name,
+                )),
+                platforms: None,
+                visibility: visibility.clone(),
+                sort_key: Name(format!("{}-{}", pkg, name)),
+            }));
+        } else {
+            rules.push(Rule::Filegroup(Filegroup {
+                owner: PackageVersion {
+                    name: pkg.name.clone(),
+                    version: pkg.version.clone(),
+                },
+                name: Name(format!("{}-{}", pkg, name)),
+                srcs,
+                visibility: visibility.clone(),
+            }));
+        }
     }
 
     Ok((rules, dep_pkgs))
@@ -1269,18 +1304,7 @@ pub(crate) fn buckify(
             let mut version_rules = BTreeMap::new();
             for rule in &rules {
                 match rule {
-                    Rule::Filegroup(Filegroup {
-                        owner,
-                        srcs: FilegroupSources::Glob { .. },
-                        ..
-                    }) => {
-                        version_rules
-                            .entry(owner)
-                            .or_insert_with(Vec::new)
-                            .push(rule);
-                    }
                     Rule::Alias(_)
-                    | Rule::Filegroup(_)
                     | Rule::ExtractArchive(_)
                     | Rule::HttpArchive(_)
                     | Rule::GitFetch(_)
@@ -1293,7 +1317,8 @@ pub(crate) fn buckify(
                     | Rule::RootPackage(_) => {
                         toplevel_rules.push(rule);
                     }
-                    Rule::Sources(Sources { owner, .. }) => {
+                    Rule::Sources(Sources { owner, .. })
+                    | Rule::Filegroup(Filegroup { owner, .. }) => {
                         version_rules
                             .entry(owner)
                             .or_insert_with(Vec::new)

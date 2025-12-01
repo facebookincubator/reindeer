@@ -328,6 +328,7 @@ impl Serialize for Filegroup {
 #[derive(Debug, PartialEq)]
 pub enum FilegroupSources {
     Map(BTreeMap<BuckPath, SubtargetOrPath>),
+    Set(BTreeSet<BuckPath>),
     Glob {
         include: Vec<String>,
         exclude: Vec<String>,
@@ -338,6 +339,7 @@ impl FilegroupSources {
     fn is_empty(&self) -> bool {
         match self {
             FilegroupSources::Map(map) => map.is_empty(),
+            FilegroupSources::Set(set) => set.is_empty(),
             FilegroupSources::Glob { include, .. } => include.is_empty(),
         }
     }
@@ -347,6 +349,7 @@ impl Serialize for FilegroupSources {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         match self {
             FilegroupSources::Map(map) => map.serialize(ser),
+            FilegroupSources::Set(set) => set.serialize(ser),
             FilegroupSources::Glob { include, exclude } => {
                 struct Glob<'a> {
                     include: &'a [String],
