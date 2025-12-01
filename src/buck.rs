@@ -26,7 +26,8 @@ use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::ser::SerializeMap;
-use serde::ser::SerializeSeq;
+use serde::ser::SerializeSeq as _;
+use serde::ser::SerializeStruct as _;
 use serde::ser::Serializer;
 use serde_starlark::FunctionCall;
 
@@ -248,7 +249,7 @@ impl Serialize for NameAsLabel<'_> {
 pub struct Filegroup {
     pub owner: PackageVersion,
     pub name: Name,
-    pub srcs: BTreeMap<BuckPath, SubtargetOrPath>,
+    pub srcs: FilegroupSources,
     pub visibility: Visibility,
 }
 
@@ -269,6 +270,47 @@ impl Serialize for Filegroup {
         }
         map.serialize_entry("visibility", visibility)?;
         map.end()
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum FilegroupSources {
+    Map(BTreeMap<BuckPath, SubtargetOrPath>),
+    Glob {
+        include: Vec<String>,
+        exclude: Vec<String>,
+    },
+}
+
+impl FilegroupSources {
+    fn is_empty(&self) -> bool {
+        match self {
+            FilegroupSources::Map(map) => map.is_empty(),
+            FilegroupSources::Glob { include, .. } => include.is_empty(),
+        }
+    }
+}
+
+impl Serialize for FilegroupSources {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        match self {
+            FilegroupSources::Map(map) => map.serialize(ser),
+            FilegroupSources::Glob { include, exclude } => {
+                struct Glob<'a> {
+                    include: &'a [String],
+                    exclude: &'a [String],
+                }
+                impl<'a> Serialize for Glob<'a> {
+                    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+                        let mut glob = ser.serialize_struct("glob", serde_starlark::ONELINE)?;
+                        glob.serialize_field("", self.include)?;
+                        glob.serialize_field("exclude", self.exclude)?;
+                        glob.end()
+                    }
+                }
+                Glob { include, exclude }.serialize(ser)
+            }
+        }
     }
 }
 
@@ -767,6 +809,7 @@ pub struct BuildscriptGenrule {
 pub enum BuildscriptGenruleManifestDir {
     None,
     Path(BuckPath),
+    Target(RuleRef),
     Subtarget(Subtarget),
 }
 
@@ -804,6 +847,9 @@ impl Serialize for BuildscriptGenrule {
             BuildscriptGenruleManifestDir::None => {}
             BuildscriptGenruleManifestDir::Path(local_manifest_dir) => {
                 map.serialize_entry("local_manifest_dir", local_manifest_dir)?;
+            }
+            BuildscriptGenruleManifestDir::Target(manifest_dir) => {
+                map.serialize_entry("manifest_dir", manifest_dir)?;
             }
             BuildscriptGenruleManifestDir::Subtarget(manifest_dir) => {
                 map.serialize_entry("manifest_dir", manifest_dir)?;

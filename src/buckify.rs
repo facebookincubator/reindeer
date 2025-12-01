@@ -42,6 +42,7 @@ use crate::buck::BuildscriptGenruleManifestDir;
 use crate::buck::Common;
 use crate::buck::ExtractArchive;
 use crate::buck::Filegroup;
+use crate::buck::FilegroupSources;
 use crate::buck::GitFetch;
 use crate::buck::HttpArchive;
 use crate::buck::Name;
@@ -977,7 +978,7 @@ fn generate_target_rules<'scope>(
                 version: pkg.version.clone(),
             },
             name: Name(format!("{}-{}", pkg, name)),
-            srcs,
+            srcs: FilegroupSources::Map(srcs),
             visibility: visibility.clone(),
         };
         rules.push(Rule::Filegroup(rule));
@@ -1147,14 +1148,61 @@ pub(crate) fn buckify(
     {
         measure_time::trace_time!("Write build rules to file");
 
-        let mut out = Vec::new();
-        buck::write_buckfile(&config.buck, rules.iter(), &mut out).context("writing buck file")?;
-        if !fs::read(&buckpath).is_ok_and(|x| x == out) {
-            fs::write(&buckpath, out)
-                .with_context(|| format!("write {} file", buckpath.display()))?;
-        }
-
         if config.buck.split {
+            let mut toplevel_rules = Vec::new();
+            let mut version_rules = BTreeMap::new();
+            for rule in &rules {
+                match rule {
+                    Rule::Filegroup(Filegroup {
+                        owner,
+                        srcs: FilegroupSources::Glob { .. },
+                        ..
+                    }) => {
+                        version_rules
+                            .entry(owner)
+                            .or_insert_with(Vec::new)
+                            .push(rule);
+                    }
+                    Rule::Alias(_)
+                    | Rule::Filegroup(_)
+                    | Rule::ExtractArchive(_)
+                    | Rule::HttpArchive(_)
+                    | Rule::GitFetch(_)
+                    | Rule::Binary(_)
+                    | Rule::Library(_)
+                    | Rule::BuildscriptBinary(_)
+                    | Rule::BuildscriptGenrule(_)
+                    | Rule::CxxLibrary(_)
+                    | Rule::PrebuiltCxxLibrary(_)
+                    | Rule::RootPackage(_) => {
+                        toplevel_rules.push(rule);
+                    }
+                }
+            }
+
+            let mut out = Vec::new();
+            buck::write_buckfile(&config.buck, toplevel_rules.into_iter(), &mut out)
+                .context("writing buck file")?;
+            if !fs::read(&buckpath).is_ok_and(|x| x == out) {
+                fs::write(&buckpath, out)
+                    .with_context(|| format!("write {} file", buckpath.display()))?;
+            }
+
+            for (owner, rules) in version_rules {
+                let mut out = Vec::new();
+                buck::write_buckfile(&config.buck, rules.into_iter(), &mut out)
+                    .context("writing buck file")?;
+                let buckpath = paths
+                    .third_party_dir
+                    .join("vendor")
+                    .join(format!("{}-{}", owner.name, owner.version))
+                    .join(&config.buck.file_name);
+                if !fs::read(&buckpath).is_ok_and(|x| x == out) {
+                    fs::write(&buckpath, out)
+                        .with_context(|| format!("write {} file", buckpath.display()))?;
+                }
+            }
+
             let mut out = Vec::new();
             out.write_all(config.buck.generated_file_header.as_bytes())?;
             if !config.buck.generated_file_header.is_empty() {
@@ -1224,6 +1272,14 @@ pub(crate) fn buckify(
                             .with_context(|| format!("write {} file", buckpath.display()))?;
                     }
                 }
+            }
+        } else {
+            let mut out = Vec::new();
+            buck::write_buckfile(&config.buck, rules.iter(), &mut out)
+                .context("writing buck file")?;
+            if !fs::read(&buckpath).is_ok_and(|x| x == out) {
+                fs::write(&buckpath, out)
+                    .with_context(|| format!("write {} file", buckpath.display()))?;
             }
         }
     }

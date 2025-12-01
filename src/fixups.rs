@@ -30,6 +30,8 @@ use crate::buck::BuckPath;
 use crate::buck::BuildscriptGenrule;
 use crate::buck::BuildscriptGenruleManifestDir;
 use crate::buck::Common;
+use crate::buck::Filegroup;
+use crate::buck::FilegroupSources;
 use crate::buck::Name;
 use crate::buck::PackageVersion;
 use crate::buck::PlatformBuildscriptGenrule;
@@ -76,6 +78,7 @@ mod config;
 /// Fixups for a specific package & target
 pub struct Fixups<'meta> {
     config: &'meta Config,
+    paths: &'meta Paths,
     third_party_dir: &'meta Path,
     package: &'meta Manifest,
     fixup_config: Arc<FixupConfigFile>,
@@ -132,6 +135,7 @@ impl<'meta> FixupsCache<'meta> {
             package,
             fixup_config,
             config: self.config,
+            paths: self.paths,
         })
     }
 
@@ -603,7 +607,43 @@ impl<'meta> Fixups<'meta> {
                 self.fixup_config.base.buildscript.build.link_style.clone();
 
             let manifest_dir = match manifest_dir {
-                None => BuildscriptGenruleManifestDir::None,
+                None => {
+                    if config.buck.split {
+                        let manifest_dir_name = Name(format!(
+                            "{}-{}.crate",
+                            self.package.name, self.package.version,
+                        ));
+                        res.push(Rule::Filegroup(Filegroup {
+                            owner: PackageVersion {
+                                name: self.package.name.clone(),
+                                version: self.package.version.clone(),
+                            },
+                            name: manifest_dir_name.clone(),
+                            srcs: FilegroupSources::Glob {
+                                include: vec!["**".to_owned()],
+                                exclude: vec![config.buck.file_name.to_string()],
+                            },
+                            visibility: Visibility::Custom(vec![format!(
+                                "//{}:",
+                                self.paths.buck_package,
+                            )]),
+                        }));
+                        BuildscriptGenruleManifestDir::Target(RuleRef::new(format!(
+                            "//{}{}vendor/{}-{}:{}",
+                            self.paths.buck_package,
+                            if self.paths.buck_package.is_empty() {
+                                ""
+                            } else {
+                                "/"
+                            },
+                            self.package.name,
+                            self.package.version,
+                            manifest_dir_name,
+                        )))
+                    } else {
+                        BuildscriptGenruleManifestDir::None
+                    }
+                }
                 Some(SubtargetOrPath::Path(path)) => BuildscriptGenruleManifestDir::Path(path),
                 Some(SubtargetOrPath::Subtarget(subtarget)) => {
                     BuildscriptGenruleManifestDir::Subtarget(subtarget)
