@@ -790,10 +790,16 @@ impl<'meta> Fixups<'meta> {
             )?;
 
             if config.buck.split {
-                let (base, platform) = split_srcs(self.paths, &buildscript_build.common);
+                let srcs_name = Name("build-script".to_owned());
+                let (base, platform) = split_srcs(
+                    self.paths,
+                    &mut buildscript_build.common,
+                    &buildscript_build.owner,
+                    &srcs_name,
+                );
                 res.push(Rule::Sources(Sources {
                     owner: buildscript_build.owner.clone(),
-                    name: Name("build-script".to_owned()),
+                    name: srcs_name,
                     base,
                     platform,
                     visibility: Visibility::Custom(vec![format!("//{}:", self.paths.buck_package)]),
@@ -1084,10 +1090,14 @@ impl<'meta> Fixups<'meta> {
                 if matches!(self.config.vendor, VendorConfig::Source(_))
                     || matches!(self.package.source, Source::Local)
                 {
-                    StringOrPath::Path(BuckPath(relative_path(
-                        self.third_party_dir,
-                        self.manifest_dir,
-                    )))
+                    if self.config.buck.split {
+                        StringOrPath::String(".".to_owned())
+                    } else {
+                        StringOrPath::Path(BuckPath(relative_path(
+                            self.third_party_dir,
+                            self.manifest_dir,
+                        )))
+                    }
                 } else if let VendorConfig::LocalRegistry = self.config.vendor {
                     StringOrPath::String(format!(
                         "{}-{}.crate",

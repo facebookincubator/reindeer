@@ -569,6 +569,7 @@ impl Serialize for PlatformRustCommon {
 pub struct RustCommon {
     pub common: Common,
     pub krate: String,
+    pub srcs_filegroup: Option<RuleRef>,
     pub crate_root: BuckPath,
     pub edition: crate::cargo::Edition,
     // Platform-dependent
@@ -665,6 +666,7 @@ impl Serialize for RustLibrary {
                             target_compatible_with,
                         },
                     krate,
+                    srcs_filegroup,
                     crate_root,
                     edition,
                     base:
@@ -741,6 +743,9 @@ impl Serialize for RustLibrary {
         if !rustc_flags.is_empty() {
             map.serialize_entry("rustc_flags", rustc_flags)?;
         }
+        if let Some(srcs_filegroup) = srcs_filegroup {
+            map.serialize_entry("srcs_filegroup", srcs_filegroup)?;
+        }
         if !target_compatible_with.is_empty() {
             map.serialize_entry("target_compatible_with", target_compatible_with)?;
         }
@@ -774,6 +779,7 @@ impl Serialize for RustBinary {
                             target_compatible_with,
                         },
                     krate,
+                    srcs_filegroup,
                     crate_root,
                     edition,
                     base:
@@ -833,6 +839,9 @@ impl Serialize for RustBinary {
         }
         if !rustc_flags.is_empty() {
             map.serialize_entry("rustc_flags", rustc_flags)?;
+        }
+        if let Some(srcs_filegroup) = srcs_filegroup {
+            map.serialize_entry("srcs_filegroup", srcs_filegroup)?;
         }
         if !target_compatible_with.is_empty() {
             map.serialize_entry("target_compatible_with", target_compatible_with)?;

@@ -17,6 +17,7 @@ use std::hash::Hasher;
 use std::io;
 use std::io::Write;
 use std::iter;
+use std::mem;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
@@ -417,18 +418,39 @@ fn srcfiles(manifest_dir: PathBuf, crate_root: PathBuf) -> Vec<PathBuf> {
 
 pub(crate) fn split_srcs(
     paths: &Paths,
-    common: &RustCommon,
+    common: &mut RustCommon,
+    owner: &PackageVersion,
+    srcs_name: &Name,
 ) -> (PlatformSources, BTreeMap<PlatformName, PlatformSources>) {
-    let rewrite_platform_sources = |common: &PlatformRustCommon| -> PlatformSources {
+    common.srcs_filegroup = Some(RuleRef::new(format!(
+        "//{}{}vendor/{}-{}:{}",
+        paths.buck_package,
+        if paths.buck_package.is_empty() {
+            ""
+        } else {
+            "/"
+        },
+        owner.name,
+        owner.version,
+        srcs_name,
+    )));
+
+    fn rewrite_src(src: &BuckPath) -> BuckPath {
         // "vendor/cxx-1.0.100/src/lib.rs" => "src/lib.rs"
+        BuckPath(src.0.components().skip(2).collect())
+    }
+
+    common.crate_root = rewrite_src(&common.crate_root);
+
+    let rewrite_platform_sources = |common: &mut PlatformRustCommon| -> PlatformSources {
         let mut srcs = BTreeSet::new();
-        for src in &common.srcs {
-            srcs.insert(BuckPath(src.0.components().skip(2).collect()));
+        for src in mem::take(&mut common.srcs) {
+            srcs.insert(rewrite_src(&src));
         }
 
         // "fixups/cxx/overlay/src/lib.rs" => "//third-party/rust/fixups/cxx/overlay:src/lib.rs"
         let mut mapped_srcs = BTreeMap::new();
-        for (src, mapped) in &common.mapped_srcs {
+        for (src, mapped) in mem::take(&mut common.mapped_srcs) {
             let SubtargetOrPath::Path(src) = src else {
                 unimplemented!();
             };
@@ -451,7 +473,7 @@ pub(crate) fn split_srcs(
             );
             mapped_srcs.insert(
                 SubtargetOrPath::Path(BuckPath(PathBuf::from(rewrite))),
-                BuckPath(mapped.0.components().skip(2).collect()),
+                rewrite_src(&mapped),
             );
         }
 
@@ -459,13 +481,13 @@ pub(crate) fn split_srcs(
     };
 
     let mut platform_srcs = BTreeMap::new();
-    for (platform_name, platform) in &common.platform {
+    for (platform_name, platform) in &mut common.platform {
         if !platform.srcs.is_empty() || !platform.mapped_srcs.is_empty() {
             platform_srcs.insert(platform_name.clone(), rewrite_platform_sources(platform));
         }
     }
 
-    (rewrite_platform_sources(&common.base), platform_srcs)
+    (rewrite_platform_sources(&mut common.base), platform_srcs)
 }
 
 /// Generate rules for a target. Returns the rules, and the
@@ -717,6 +739,7 @@ fn generate_target_rules<'scope>(
                     target_compatible_with: vec![],
                 },
                 krate: tgt.name.replace('-', "_"),
+                srcs_filegroup: None,
                 crate_root: BuckPath(crate_root),
                 edition,
                 base,
@@ -868,7 +891,7 @@ fn generate_target_rules<'scope>(
             }));
         }
 
-        let rust_library = RustLibrary {
+        let mut rust_library = RustLibrary {
             owner: PackageVersion {
                 name: pkg.name.clone(),
                 version: pkg.version.clone(),
@@ -891,6 +914,7 @@ fn generate_target_rules<'scope>(
                     target_compatible_with: fixups.target_compatible_with().clone(),
                 },
                 krate: tgt.name.replace('-', "_"),
+                srcs_filegroup: None,
                 crate_root: BuckPath(crate_root),
                 edition,
                 base: lib_base,
@@ -912,10 +936,16 @@ fn generate_target_rules<'scope>(
             rules.push(Rule::RootPackage(rust_library));
         } else {
             if config.buck.split {
-                let (base, platform) = split_srcs(paths, &rust_library.common);
+                let srcs_name = Name("srcs".to_owned());
+                let (base, platform) = split_srcs(
+                    paths,
+                    &mut rust_library.common,
+                    &rust_library.owner,
+                    &srcs_name,
+                );
                 rules.push(Rule::Sources(Sources {
                     owner: rust_library.owner.clone(),
-                    name: Name("srcs".to_owned()),
+                    name: srcs_name,
                     base,
                     platform,
                     visibility: Visibility::Custom(vec![format!("//{}:", paths.buck_package)]),
@@ -956,7 +986,7 @@ fn generate_target_rules<'scope>(
             }));
         }
 
-        let rust_binary = RustBinary {
+        let mut rust_binary = RustBinary {
             owner: PackageVersion {
                 name: pkg.name.clone(),
                 version: pkg.version.clone(),
@@ -971,6 +1001,7 @@ fn generate_target_rules<'scope>(
                     target_compatible_with: fixups.target_compatible_with().clone(),
                 },
                 krate: tgt.name.replace('-', "_"),
+                srcs_filegroup: None,
                 crate_root: BuckPath(crate_root),
                 edition,
                 base: bin_base,
@@ -979,10 +1010,16 @@ fn generate_target_rules<'scope>(
         };
 
         if config.buck.split {
-            let (base, platform) = split_srcs(paths, &rust_binary.common);
+            let srcs_name = Name(format!("bin-{}", tgt.name));
+            let (base, platform) = split_srcs(
+                paths,
+                &mut rust_binary.common,
+                &rust_binary.owner,
+                &srcs_name,
+            );
             rules.push(Rule::Sources(Sources {
                 owner: rust_binary.owner.clone(),
-                name: Name(format!("bin-{}", tgt.name)),
+                name: srcs_name,
                 base,
                 platform,
                 visibility: Visibility::Custom(vec![format!("//{}:", paths.buck_package)]),
