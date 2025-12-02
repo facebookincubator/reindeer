@@ -10,6 +10,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::Context;
+use anyhow::bail;
 use cargo_toml::OptionalFile;
 use globset::Glob;
 use globset::GlobBuilder;
@@ -113,6 +114,7 @@ pub(crate) fn cargo_vendor(
         }
 
         if let VendorConfig::Source(source_config) = &config.vendor {
+            delete_buck_files(&paths.third_party_dir, &config.buck)?;
             filter_checksum_files(
                 &paths.third_party_dir,
                 vendordir,
@@ -173,6 +175,32 @@ pub(crate) fn is_vendored(config: &Config, paths: &Paths) -> anyhow::Result<bool
         },
         None => Ok(false),
     }
+}
+
+fn delete_buck_files(third_party_dir: &Path, buck_config: &BuckConfig) -> anyhow::Result<()> {
+    if !buck_config.split {
+        // Assume you will use .gitignore to ignore vendored BUCK files.
+        return Ok(());
+    }
+
+    // Remove top-level BUCK files (vendor/*/BUCK). Almost all of these would be
+    // overwritten anyway by buckify, except in the case that a crate containing
+    // BUCK is vendored by `cargo vendor` and then not buckified, either because
+    // it is a platform-specific dependency for some platform that Reindeer is
+    // not configured for, or because of an omit_deps fixup.
+    //
+    // Assume you will use .gitignore to ignore nested ones (vendor/*/*/**/BUCK).
+    for entry in fs::read_dir(third_party_dir.join("vendor"))? {
+        let entry = entry?;
+        let vendored_buck_file = entry.path().join(&buck_config.file_name);
+        if let Err(err) = fs::remove_file(&vendored_buck_file)
+            && err.kind() != ErrorKind::NotFound
+        {
+            bail!("failed to remove {}: {}", vendored_buck_file.display(), err);
+        }
+    }
+
+    Ok(())
 }
 
 fn filter_checksum_files(
