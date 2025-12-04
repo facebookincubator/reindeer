@@ -1481,6 +1481,20 @@ impl<'meta> Fixups<'meta> {
         Ok(extra_srcs)
     }
 
+    pub fn validate_srcs_fixups(&self, target: &ManifestTarget, platform_name: &PlatformName) {
+        let buildscript = target.crate_bin() && target.kind_custom_build();
+
+        for fixup in self.configs(platform_name) {
+            let extra_srcs = if buildscript {
+                &fixup.buildscript.build.extra_srcs
+            } else {
+                &fixup.extra_srcs
+            };
+            for _ in Globs::new(extra_srcs, NO_EXCLUDE).walk(self.manifest_dir) {}
+            for _ in Globs::new(&fixup.omit_srcs, NO_EXCLUDE).walk(self.manifest_dir) {}
+        }
+    }
+
     pub fn compute_mapped_srcs(
         &self,
         mapped_manifest_dir: &Path,

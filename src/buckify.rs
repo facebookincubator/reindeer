@@ -697,18 +697,27 @@ fn generate_target_rules<'a>(
             |platform| fixups.compute_srcs(tgt, platform, &srcs),
             |rule, src| rule.srcs.insert(BuckPath(src)),
         )?;
-    } else if let VendorConfig::LocalRegistry = config.vendor {
-        let extract_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
-        base.srcs
-            .insert(BuckPath(PathBuf::from(extract_archive_target)));
-    } else if let Source::Git { repo, .. } = &pkg.source {
-        let short_name = short_name_for_git_repo(repo)?;
-        let git_fetch_target = format!(":{}.git", short_name);
-        base.srcs.insert(BuckPath(PathBuf::from(git_fetch_target)));
     } else {
-        let http_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
-        base.srcs
-            .insert(BuckPath(PathBuf::from(http_archive_target)));
+        for platform in &compatible_platforms {
+            // Although `extra_srcs` and `omit_srcs` do not affect the output
+            // when we are not producing a srcs list, still evaluate globs in
+            // the fixup against the contents of the manifest directory so that
+            // unmatched globs are accurately reported.
+            fixups.validate_srcs_fixups(tgt, platform);
+        }
+        if let VendorConfig::LocalRegistry = config.vendor {
+            let extract_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
+            base.srcs
+                .insert(BuckPath(PathBuf::from(extract_archive_target)));
+        } else if let Source::Git { repo, .. } = &pkg.source {
+            let short_name = short_name_for_git_repo(repo)?;
+            let git_fetch_target = format!(":{}.git", short_name);
+            base.srcs.insert(BuckPath(PathBuf::from(git_fetch_target)));
+        } else {
+            let http_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
+            base.srcs
+                .insert(BuckPath(PathBuf::from(http_archive_target)));
+        }
     }
 
     evaluate_for_platforms(
