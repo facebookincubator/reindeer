@@ -1479,7 +1479,7 @@ pub(crate) fn buckify(
         let public_versions = public_packages.get(name).unwrap_or(&no_public_versions);
         fixup.collect_unused(name, public_versions, &mut unused);
     }
-    unused.check()?;
+    unused.check(config)?;
 
     // Emit build rules to stdout
     if stdout {

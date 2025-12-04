@@ -12,6 +12,9 @@ use std::fmt::Display;
 
 use globset::Glob;
 
+use crate::config::Config;
+use crate::config::VendorConfig;
+
 #[derive(Debug)]
 pub struct UnusedFixups {
     // key = (pkg, byte offset) for nicely sorted output
@@ -34,7 +37,10 @@ impl UnusedFixups {
         }
     }
 
-    pub fn check(self) -> anyhow::Result<()> {
+    pub fn check(mut self, config: &Config) -> anyhow::Result<()> {
+        if !matches!(config.vendor, VendorConfig::Source(..)) {
+            self.globs.clear();
+        }
         let UnusedFixups {
             buildscripts,
             globs,
