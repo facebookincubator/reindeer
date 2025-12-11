@@ -636,6 +636,7 @@ fn generate_target_rules<'a>(
     let edition = tgt.edition.unwrap_or(pkg.edition);
 
     let mut licenses = BTreeSet::new();
+    let license_globs = Globs::new(&config.license_patterns, NO_EXCLUDE);
     if config.buck.split {
         // The `licenses` attribute is not currently implemented for split mode.
     } else if !matches!(config.vendor, VendorConfig::Source(_)) {
@@ -645,9 +646,11 @@ fn generate_target_rules<'a>(
         // that could refer to the right generated location following download
         // because `http_archive` does not expose subtargets for each of the
         // individual contained files.
+        //
+        // But we validate globs anyway.
+        for _ in license_globs.walk(manifest_dir) {}
     } else {
         let rel_manifest = relative_path(&paths.third_party_dir, manifest_dir);
-        let license_globs = Globs::new(&config.license_patterns, NO_EXCLUDE);
         for path in license_globs.walk(manifest_dir) {
             licenses.insert(BuckPath(rel_manifest.join(path)));
         }
@@ -1254,6 +1257,8 @@ fn generate_target_rules<'a>(
         visibility,
     } in fixups.export_sources()
     {
+        let export_globs = Globs::new(srcs, exclude);
+
         // For non-disk sources (i.e. non-vendor mode git_fetch and
         // http_archive), `srcs` and `exclude` are ignored because
         // we can't look at the files to match globs.
@@ -1263,39 +1268,44 @@ fn generate_target_rules<'a>(
             if config.buck.split {
                 // e.g. ["src/lib.rs"]
                 FilegroupSources::Set(BTreeSet::from_iter(
-                    Globs::new(srcs, exclude).walk(manifest_dir).map(BuckPath),
+                    export_globs.walk(manifest_dir).map(BuckPath),
                 ))
             } else {
                 // e.g. {"src/lib.rs": "vendor/foo-1.0.0/src/lib.rs"}
-                FilegroupSources::Map(BTreeMap::from_iter(
-                    Globs::new(srcs, exclude).walk(manifest_dir).map(|path| {
+                FilegroupSources::Map(BTreeMap::from_iter(export_globs.walk(manifest_dir).map(
+                    |path| {
                         let source = mapped_manifest_dir.join(&path);
                         (BuckPath(path), SubtargetOrPath::Path(BuckPath(source)))
-                    }),
-                ))
+                    },
+                )))
             }
-        } else if let VendorConfig::LocalRegistry = config.vendor {
-            // e.g. {":foo-1.0.0.git": "foo-1.0.0"}
-            let extract_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
-            FilegroupSources::Map(BTreeMap::from([(
-                BuckPath(mapped_manifest_dir.clone()),
-                SubtargetOrPath::Path(BuckPath(PathBuf::from(extract_archive_target))),
-            )]))
-        } else if let Source::Git { repo, .. } = &pkg.source {
-            // e.g. {":foo-123.git": "foo-123"}
-            let short_name = short_name_for_git_repo(repo)?;
-            let git_fetch_target = format!(":{}.git", short_name);
-            FilegroupSources::Map(BTreeMap::from([(
-                BuckPath(mapped_manifest_dir.clone()),
-                SubtargetOrPath::Path(BuckPath(PathBuf::from(git_fetch_target))),
-            )]))
         } else {
-            // e.g. {":foo-1.0.0.git": "foo-1.0.0"}
-            let http_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
-            FilegroupSources::Map(BTreeMap::from([(
-                BuckPath(mapped_manifest_dir.clone()),
-                SubtargetOrPath::Path(BuckPath(PathBuf::from(http_archive_target))),
-            )]))
+            // Validate the globs anyway
+            for _ in export_globs.walk(manifest_dir) {}
+
+            if let VendorConfig::LocalRegistry = config.vendor {
+                // e.g. {":foo-1.0.0.git": "foo-1.0.0"}
+                let extract_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
+                FilegroupSources::Map(BTreeMap::from([(
+                    BuckPath(mapped_manifest_dir.clone()),
+                    SubtargetOrPath::Path(BuckPath(PathBuf::from(extract_archive_target))),
+                )]))
+            } else if let Source::Git { repo, .. } = &pkg.source {
+                // e.g. {":foo-123.git": "foo-123"}
+                let short_name = short_name_for_git_repo(repo)?;
+                let git_fetch_target = format!(":{}.git", short_name);
+                FilegroupSources::Map(BTreeMap::from([(
+                    BuckPath(mapped_manifest_dir.clone()),
+                    SubtargetOrPath::Path(BuckPath(PathBuf::from(git_fetch_target))),
+                )]))
+            } else {
+                // e.g. {":foo-1.0.0.git": "foo-1.0.0"}
+                let http_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
+                FilegroupSources::Map(BTreeMap::from([(
+                    BuckPath(mapped_manifest_dir.clone()),
+                    SubtargetOrPath::Path(BuckPath(PathBuf::from(http_archive_target))),
+                )]))
+            }
         };
         if config.buck.split {
             rules.push(Rule::Filegroup(Filegroup {
