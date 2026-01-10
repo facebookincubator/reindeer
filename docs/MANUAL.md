@@ -74,6 +74,41 @@ Points to note:
   [reindeer configuration](#Configuring-Reindeer) or in the
   [rule macros](#Buck-Macros).
 
+## `reindeer.toml`
+
+Reindeer can be configured with a `reindeer.toml` file. By default, this file
+will be looked up in the current directory, but it can be passed explicitly via
+the `-c`/`--config` CLI flags.
+
+The following list documents some of the main options supported in a
+`reindeer.toml` file. The exhaustive list of configuration options in a
+`reindeer.toml` file can be found in the source code at `src/config.rs` (see
+`Config`).
+
+- `manifest_path` (path): Path to the `Cargo.toml` we are buckifying.
+- `third_party_dir` (path): Where to write the output. Defaults to the current
+  directory.
+- `precise_srcs` (bool): Try to compute a precise list of sources rather than
+  using globbing.
+- `include_top_level` (bool): Include root package as top-level public target
+  in Buck file.
+- `cargo_env` (bool or list of env vars): List of Cargo environment variables
+  (like `CARGO_PKG_AUTHORS`) to provide to crates by default, when not
+  otherwise specified by a crate-specific fixup. All env vars are provided if
+  the value is `true`.
+- `vendor` (bool or "local-registry"): Whether Reindeer should download all
+  crate sources locally.
+- `cargo.cargo` (path): Path to `cargo` executable. If set, then relative to
+  this file.
+- `cargo.rustc` (path): Path to `rustc` executable. If set, then relative to
+  this file.
+- `cargo.bindeps` (bool): Support Cargo's unstable "artifact dependencies"
+  functionality, RFC 3028.
+- `buck.file_name` (string): Name of the `BUCK` file.
+- `buck.split` (bool): Split mode, with each crate getting a separate generated `BUCK` file.
+- `buck.buckfile_imports` (string): Front matter for the generated `BUCK` file.
+- `platform`: See the "Custom platforms" section.
+
 ## Cargo.toml syntax
 
 Reindeer implements the following dependency specification functionality with
@@ -287,14 +322,14 @@ actions of build scripts.
 Fixups are defined in `fixups/<package name>/fixups.toml`. The package name is
 the name only, not including version.
 
-*Note: after adding or editing a `fixups.toml` you will need to rerun `reindeer
+_Note: after adding or editing a `fixups.toml` you will need to rerun `reindeer
 buckify` to incorporate what the fixup says into the package's generated Buck
-targets.*
+targets._
 
-# fixups.toml reference
+## `fixups.toml` reference
 
 All top-level keys are optional, except for `buildscript.run` if a package
-contains a build.rs.
+contains a `build.rs`.
 
 ```ini
 extra_srcs = [...]         # list of strings (globs)
@@ -361,19 +396,16 @@ ENVNAME = "..."
 ---
 
 - **`features`** — List of extra feature flags to enable. Technically redundant
-  with _both_ `rustc_flags` and `cfgs`, but convenient. Example: `features =
-  ["unstable_wasm"]`
+  with _both_ `rustc_flags` and `cfgs`, but convenient. Example: `features = ["unstable_wasm"]`
 
 ---
 
-- **`omit_features`** — Features to forcibly omit. Example: `omit_features =
-  ["proc-macro-crate"]`
+- **`omit_features`** — Features to forcibly omit. Example: `omit_features = ["proc-macro-crate"]`
 
 ---
 
 - **`extra_deps`** — List of extra dependencies to add. Often other C/C++
-  libraries if this is a -sys binding package. Example: `extra_deps =
-  ["//third-party/zstd:zstd"]`
+  libraries if this is a `-sys` binding package. Example: `extra_deps = ["//third-party/zstd:zstd"]`
 
 ---
 
@@ -383,8 +415,7 @@ ENVNAME = "..."
 ---
 
 - **`cargo_env`** — List of a subset of Cargo's supported environment variables
-  to make available to the build. Example: `cargo_env = ["CARGO_PKG_VERSION",
-  "CARGO_PKG_AUTHORS"]`
+  to make available to the build. Example: `cargo_env = ["CARGO_PKG_VERSION", "CARGO_PKG_AUTHORS"]`
 
 ---
 
@@ -425,9 +456,12 @@ ENVNAME = "..."
 
 ---
 
+The exhaustive list of configuration options in a `fixups.toml` file can be
+found in the source code at `src/fixups/config.rs` (see `FixupConfig`).
+
 ## Included files
 
-(When not using vendoring _or_ not using `precise_srcs = true` in reindeer.toml,
+(When not using vendoring _or_ not using `precise_srcs = true` in `reindeer.toml`,
 this section is not relevant to you.)
 
 Some crates include non-Rust sources with `include_str!()` or `include_bytes!()`
@@ -612,7 +646,7 @@ static_libs = ["lib/windows.lib"]
 ---
 
 - **`static_libs`** — list of globs of the prebuilt static libraries. For each
-  file  `prebuilt_cxx_library` rule will be created
+  file `prebuilt_cxx_library` rule will be created
 
 ---
 
@@ -642,9 +676,9 @@ Such sections take the same parameters as the top-level of the file, except
 they're only applied to platforms for which the `cfg` predicate evaluates to
 true according to the Reindeer platform's target information.
 
-In the case of the example above, this fixup would apply to all x86\_64 Linux
+In the case of the example above, this fixup would apply to all x86_64 Linux
 platforms, in Meta's case including among them platform010 (datacenter Linux)
-and centos-x86\_64 (Linux with dependencies from Antlir CentOS toolchains), but
+and centos-x86_64 (Linux with dependencies from Antlir CentOS toolchains), but
 would not apply to Windows, macOS, AArch64 Linux, Android, iOS, etc.
 
 A platform-specific C++ library would look like this:
