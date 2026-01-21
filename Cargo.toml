@@ -40,7 +40,7 @@ spdx = "0.13"
 strum = { version = "0.27.1", features = ["derive"] }
 syn = { version = "2.0.110", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 termcolor = "1.0"
-toml = { version = "0.9.8", features = ["preserve_order"] }
+toml = { version = "0.9.11", features = ["preserve_order"] }
 unicode-ident = "1.0.12"
 url = "2.5.4"
 walkdir = "2.3"
