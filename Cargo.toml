@@ -22,7 +22,7 @@ fnv = "1.0"
 foldhash = "0.1.5"
 globset = { version = "0.4.13", features = ["serde1"] }
 ignore = "0.4"
-indexmap = { version = "2.9.0", features = ["arbitrary", "rayon", "serde"] }
+indexmap = { version = "2.13.0", features = ["arbitrary", "rayon", "serde"] }
 indoc = "2.0.2"
 itertools = "0.14.0"
 log = { version = "0.4.27", features = ["kv_unstable", "kv_unstable_std"] }
