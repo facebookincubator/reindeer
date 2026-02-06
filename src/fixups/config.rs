@@ -94,6 +94,7 @@ impl FixupConfigFile {
                     export_sources: None,
                     compatible_with: None,
                     target_compatible_with: None,
+                    target_compatible_with_select: None,
                     // Fields that are allowed to be platform-specific:
                     extra_srcs: _,
                     omit_srcs: _,
@@ -125,7 +126,8 @@ impl FixupConfigFile {
                             python_ext, \
                             export_sources, \
                             compatible_with, \
-                            target_compatible_with",
+                            target_compatible_with, \
+                            target_compatible_with_select",
                         ));
                     }
                 }
@@ -250,6 +252,9 @@ pub struct FixupConfig {
     /// binary targets contained in the same package.
     pub compatible_with: Option<Vec<RuleRef>>,
     pub target_compatible_with: Option<Vec<RuleRef>>,
+
+    /// Select logic for target_compatible_with
+    pub target_compatible_with_select: Option<Vec<BTreeMap<String, Vec<RuleRef>>>>,
 
     /// Extra src globs, rooted in manifest dir for package
     #[serde(default)]

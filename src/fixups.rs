@@ -51,6 +51,7 @@ use crate::cargo::ManifestTarget;
 use crate::cargo::NodeDepKind;
 use crate::cargo::Source;
 use crate::cargo::TargetKind;
+use crate::collection::Select;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
@@ -328,6 +329,18 @@ impl<'meta> Fixups<'meta> {
         target_compatible_with.unwrap_or(const { &Vec::new() })
     }
 
+    pub fn compute_target_compatible_with_select(&self) -> Vec<BTreeMap<String, Vec<RuleRef>>> {
+        let mut target_compatible_with_select = Vec::new();
+
+        for config in self.platform_independent_configs() {
+            if let Some(select) = &config.target_compatible_with_select {
+                target_compatible_with_select.extend_from_slice(select);
+            }
+        }
+
+        target_compatible_with_select
+    }
+
     pub fn precise_srcs(&self) -> bool {
         let mut precise_srcs = None;
 
@@ -488,7 +501,10 @@ impl<'meta> Fixups<'meta> {
                         licenses: Default::default(),
                         metadata: buildscript_build.common.common.metadata.clone(),
                         compatible_with: compatible_with.clone(),
-                        target_compatible_with: target_compatible_with.clone(),
+                        target_compatible_with: Select {
+                            common: target_compatible_with.clone(),
+                            selects: vec![],
+                        },
                     },
                     srcs: Globs::new(srcs, exclude)
                         .walk(self.manifest_dir)
@@ -573,7 +589,10 @@ impl<'meta> Fixups<'meta> {
                         licenses: Default::default(),
                         metadata: buildscript_build.common.common.metadata.clone(),
                         compatible_with: compatible_with.clone(),
-                        target_compatible_with: target_compatible_with.clone(),
+                        target_compatible_with: Select {
+                            common: target_compatible_with.clone(),
+                            selects: vec![],
+                        },
                     },
                     // Just collect the sources, excluding things in the exclude list
                     srcs: Globs::new(srcs, exclude)
@@ -695,7 +714,10 @@ impl<'meta> Fixups<'meta> {
                             licenses: Default::default(),
                             metadata: buildscript_build.common.common.metadata.clone(),
                             compatible_with: compatible_with.clone(),
-                            target_compatible_with: target_compatible_with.clone(),
+                            target_compatible_with: Select {
+                                common: target_compatible_with.clone(),
+                                selects: vec![],
+                            },
                         },
                         static_lib: SubtargetOrPath::Path(BuckPath(static_lib.to_owned())),
                         preferred_linkage: preferred_linkage.clone(),
@@ -729,7 +751,10 @@ impl<'meta> Fixups<'meta> {
                             licenses: Default::default(),
                             metadata: buildscript_build.common.common.metadata.clone(),
                             compatible_with: compatible_with.clone(),
-                            target_compatible_with: target_compatible_with.clone(),
+                            target_compatible_with: Select {
+                                common: target_compatible_with.clone(),
+                                selects: vec![],
+                            },
                         },
                         static_lib: self.subtarget_or_path(&static_lib)?,
                         preferred_linkage: preferred_linkage.clone(),

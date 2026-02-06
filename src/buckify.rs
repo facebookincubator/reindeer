@@ -73,6 +73,7 @@ use crate::cargo::ManifestTarget;
 use crate::cargo::Source;
 use crate::cargo::TargetReq;
 use crate::cargo::cargo_get_lockfile_and_metadata;
+use crate::collection::Select;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
@@ -828,7 +829,10 @@ fn generate_target_rules<'a>(
                     licenses: Default::default(),
                     metadata,
                     compatible_with: vec![],
-                    target_compatible_with: vec![],
+                    target_compatible_with: Select {
+                        common: vec![],
+                        selects: vec![],
+                    },
                 },
                 krate: tgt.name.replace('-', "_"),
                 srcs_filegroup: None,
@@ -1036,7 +1040,10 @@ fn generate_target_rules<'a>(
                     licenses,
                     metadata,
                     compatible_with: fixups.compatible_with().clone(),
-                    target_compatible_with: fixups.target_compatible_with().clone(),
+                    target_compatible_with: Select {
+                        common: fixups.target_compatible_with().clone(),
+                        selects: fixups.compute_target_compatible_with_select(),
+                    },
                 },
                 krate: tgt.name.replace('-', "_"),
                 srcs_filegroup: None,
@@ -1202,7 +1209,10 @@ fn generate_target_rules<'a>(
                     licenses,
                     metadata,
                     compatible_with: fixups.compatible_with().clone(),
-                    target_compatible_with: fixups.target_compatible_with().clone(),
+                    target_compatible_with: Select {
+                        common: fixups.target_compatible_with().clone(),
+                        selects: fixups.compute_target_compatible_with_select(),
+                    },
                 },
                 krate: tgt.name.replace('-', "_"),
                 srcs_filegroup: None,

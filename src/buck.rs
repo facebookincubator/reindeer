@@ -480,7 +480,7 @@ pub struct Common {
     pub licenses: BTreeSet<BuckPath>,
     pub metadata: BTreeMap<String, Box<dyn Metadata>>,
     pub compatible_with: Vec<RuleRef>,
-    pub target_compatible_with: Vec<RuleRef>,
+    pub target_compatible_with: Select<Vec<RuleRef>>,
 }
 
 impl Debug for Common {
