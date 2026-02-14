@@ -23,12 +23,12 @@
 use std::path::Path;
 use std::path::PathBuf;
 
-use anyhow::Context;
 use clap::Parser;
 use clap::Subcommand;
 
 use crate::config::VendorConfig;
 use crate::path::buck_package;
+use crate::path::ensure_third_party_dir_exists;
 
 #[cfg(fbcode_build)]
 mod audit_sec;
@@ -142,6 +142,8 @@ fn try_main() -> anyhow::Result<()> {
         let third_party_dir = dunce::canonicalize(from_args)?;
         config = config::read_config(&third_party_dir.join("reindeer.toml"), &args)?;
 
+        ensure_third_party_dir_exists(&third_party_dir)?;
+
         let manifest_path = args
             .manifest_path
             .clone()
@@ -170,6 +172,9 @@ fn try_main() -> anyhow::Result<()> {
             .clone()
             .or_else(|| Some(config.config_dir.join(config.third_party_dir.as_deref()?)))
             .unwrap_or_else(|| ".".into());
+
+        ensure_third_party_dir_exists(&third_party_dir)?;
+
         let third_party_dir = dunce::canonicalize(&third_party_dir)?;
 
         let manifest_path = args
@@ -192,16 +197,6 @@ fn try_main() -> anyhow::Result<()> {
     if !paths.manifest_path.is_file() {
         return Err(anyhow::anyhow!(
             "Path {} is not a file",
-            paths.manifest_path.display()
-        ));
-    }
-
-    if !paths.third_party_dir.exists() {
-        std::fs::create_dir_all(&paths.third_party_dir)
-            .with_context(|| format!("Creating directory {}", paths.third_party_dir.display()))?;
-    } else if !paths.third_party_dir.is_dir() {
-        return Err(anyhow::anyhow!(
-            "Path {} must be a directory",
             paths.manifest_path.display()
         ));
     }
