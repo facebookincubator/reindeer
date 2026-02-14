@@ -10,6 +10,7 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
+use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 
@@ -92,4 +93,18 @@ pub fn buck_package(third_party_dir: &Path) -> Result<String> {
             return Ok(String::new());
         }
     }
+}
+
+pub fn ensure_third_party_dir_exists(third_party_dir: &Path) -> anyhow::Result<()> {
+    if !third_party_dir.exists() {
+        std::fs::create_dir_all(third_party_dir)
+            .with_context(|| format!("Creating directory {}", third_party_dir.display()))?;
+    } else if !third_party_dir.is_dir() {
+        return Err(anyhow::anyhow!(
+            "Path {} must be a directory",
+            third_party_dir.display()
+        ));
+    }
+
+    Ok(())
 }
