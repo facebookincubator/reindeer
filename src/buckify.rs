@@ -191,6 +191,39 @@ fn generate_rules<'scope, 'env>(
         }
         return;
     }
+
+    // If this crate is mapped to an external target, generate alias(es)
+    // instead of building from vendored sources. A crate gets an external
+    // target when:
+    //   1. extern_crates config is present, AND
+    //   2. the crate is NOT a local/path dependency (Source::Local), AND
+    //   3. the crate is NOT in the explicit `vendored` set.
+    if let Some(extern_config) = &context.config.extern_crates {
+        if !matches!(pkg.source, Source::Local) && !extern_config.vendored.contains(&pkg.name) {
+            // Only generate aliases for library target requests.
+            // Build scripts, binaries, etc. are not needed for extern crates.
+            if matches!(target_req, TargetReq::Lib) {
+                let extern_target = extern_config.target.replace("{name}", &pkg.name);
+
+                // Alias from versioned name (e.g. "serde-1.0.228") to external target.
+                // This makes all existing `:serde-1.0.228` dep references resolve.
+                let _ = rule_tx.send(Ok(Rule::Alias(Alias {
+                    owner: PackageVersion {
+                        name: pkg.name.clone(),
+                        version: pkg.version.clone(),
+                    },
+                    name: Name(pkg.to_string()),
+                    actual: RuleRef::new(extern_target),
+                    platforms: None,
+                    visibility: Visibility::Private,
+                    sort_key: Name(pkg.to_string()),
+                })));
+            }
+            // Don't recurse into dependencies - the external target handles them.
+            return;
+        }
+    }
+
     for tgt in &pkg.targets {
         let matching_kind = match target_req {
             TargetReq::Lib => tgt.kind_lib() || tgt.kind_proc_macro() || tgt.kind_cdylib(),

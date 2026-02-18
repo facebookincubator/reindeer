@@ -358,3 +358,83 @@ fn write_excluded_build_scripts(third_party_dir: &Path, vendordir: &Path) -> any
 
     Ok(())
 }
+
+/// Extract crate name from a versioned directory
+fn extract_crate_name(dir_name: &str) -> &str {
+    let dot_pos = dir_name.find('.').unwrap_or(dir_name.len());
+    match dir_name[..dot_pos].rfind('-') {
+        Some(i) => &dir_name[..i],
+        None => dir_name,
+    }
+}
+
+/// Delete vendored directories for crates not in the `vendored` list (extern_crates).
+/// Crates not in the vendored set are expected to be resolved by external Buck
+/// targets, so their vendored sources are unnecessary.
+pub(crate) fn cleanup_extern_crates(config: &Config, paths: &Paths) -> anyhow::Result<()> {
+    let Some(extern_config) = &config.extern_crates else {
+        log::info!("No extern_crates configured, nothing to clean up");
+        return Ok(());
+    };
+
+    let vendor_path = paths.third_party_dir.join("vendor");
+    if !vendor_path.try_exists()? {
+        log::info!("No vendor directory found at {}", vendor_path.display());
+        return Ok(());
+    }
+
+    let mut removed = 0;
+    for entry in fs::read_dir(&vendor_path)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let dir_name = entry.file_name();
+        let dir_name = dir_name.to_string_lossy();
+        let crate_name = extract_crate_name(&dir_name);
+
+        if !extern_config.vendored.contains(crate_name) {
+            let path = entry.path();
+            log::info!("Removing non-vendored crate dir: {}", path.display());
+            fs::remove_dir_all(&path)
+                .with_context(|| format!("failed to remove {}", path.display()))?;
+            removed += 1;
+        }
+    }
+
+    log::info!("Removed {} non-vendored crate directories", removed);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_crate_name() {
+        assert_eq!(extract_crate_name("serde-1.0.228"), "serde");
+        assert_eq!(extract_crate_name("aes-gcm-siv-0.11.1"), "aes-gcm-siv");
+        assert_eq!(extract_crate_name("asn1-rs-derive-0.6.0"), "asn1-rs-derive");
+        assert_eq!(
+            extract_crate_name("curve25519-dalek-derive-0.1.0"),
+            "curve25519-dalek-derive"
+        );
+        assert_eq!(extract_crate_name("ed25519-dalek-2.2.0"), "ed25519-dalek");
+        assert_eq!(extract_crate_name("base64-url-2.0.2"), "base64-url");
+        assert_eq!(extract_crate_name("lz4-sys-1.11.1+lz4-1.10.0"), "lz4-sys");
+        assert_eq!(extract_crate_name("x86_64-0.15.2"), "x86_64");
+        assert_eq!(extract_crate_name("aarch64-0.1.0"), "aarch64");
+        assert_eq!(extract_crate_name("base64-0.22.1"), "base64");
+        assert_eq!(extract_crate_name("sha2-0.10.9"), "sha2");
+        assert_eq!(extract_crate_name("sha3-0.10.8"), "sha3");
+        assert_eq!(extract_crate_name("p256-0.13.2"), "p256");
+        assert_eq!(extract_crate_name("p384-0.13.1"), "p384");
+        assert_eq!(extract_crate_name("h2-0.4.13"), "h2");
+        assert_eq!(extract_crate_name("md-5-0.10.6"), "md-5");
+        assert_eq!(extract_crate_name("blake3-1.8.2"), "blake3");
+        assert_eq!(extract_crate_name("adler32-1.2.0"), "adler32");
+        assert_eq!(extract_crate_name("anymap3-1.0.1"), "anymap3");
+        assert_eq!(extract_crate_name("akd-0.12.0-pre.11"), "akd");
+        assert_eq!(extract_crate_name("sha2-0.11.0-pre.4"), "sha2");
+    }
+}

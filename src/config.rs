@@ -116,6 +116,14 @@ pub struct Config {
     #[serde(default, deserialize_with = "deserialize_vendor_config")]
     pub vendor: VendorConfig,
 
+    /// Configuration for external Buck targets. When present, all crates
+    /// except workspace members (`Source::Local`) and those listed in
+    /// `vendored` get alias targets pointing to the external target pattern.
+    /// Dependencies of extern crates are not recursively processed since
+    /// the external target handles its own dependency graph.
+    #[serde(default)]
+    pub extern_crates: Option<ExternCratesConfig>,
+
     #[serde(
         default = "default_platforms",
         deserialize_with = "deserialize_platforms"
@@ -213,6 +221,16 @@ pub struct VendorSourceConfig {
     /// Set of globs to remove from Cargo's checksun files in vendored dirs
     #[serde(default)]
     pub checksum_exclude: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternCratesConfig {
+    /// Pattern for Buck targets. `{name}` is replaced with the crate name.
+    pub target: String,
+    /// Crates to build from vendored source (not aliased to external targets).
+    #[serde(default)]
+    pub vendored: BTreeSet<String>,
 }
 
 impl Default for VendorConfig {

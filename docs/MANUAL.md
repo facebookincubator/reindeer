@@ -108,6 +108,92 @@ the source code at `src/config.rs` (see `Config`).
   `BUCK` file.
 - `buck.buckfile_imports` (string): Front matter for the generated `BUCK` file.
 - `platform`: See the "Custom platforms" section.
+- `extern_crates`: See the "External Crates" section.
+
+## External Crates
+
+When using Reindeer for a project that has its own vendored third-party
+directory but shares many dependencies with a larger third-party tree, you can
+use `[extern_crates]` to avoid duplicating crate sources. Instead of building
+common crates like `serde` or `libc` from vendored source, Reindeer generates
+alias targets that point to pre-existing external Buck targets.
+
+This is useful when:
+
+- Your project vendors its own Rust dependencies in a separate directory from
+  the main third-party tree.
+- Most of your dependencies already have Buck targets in the main third-party
+  tree.
+- Only a handful of crates are unique to your project and need to be built from
+  vendored source.
+
+Without `extern_crates`, every transitive dependency would need to be vendored
+and built locally, even if an identical version is already available elsewhere in
+the repository. With `extern_crates`, only the crates you explicitly list as
+`vendored` are built from local source; everything else gets a lightweight alias
+to the external target.
+
+### Configuration
+
+Add an `[extern_crates]` section to your `reindeer.toml`:
+
+```toml
+[extern_crates]
+target = "//third-party/rust:{name}"
+vendored = [
+    "my-custom-crate",
+    "another-local-crate",
+]
+```
+
+- **`target`** — A Buck target pattern where `{name}` is replaced with the
+  crate name. Every crate not in the `vendored` list and not a workspace member
+  gets an alias pointing to this target.
+
+- **`vendored`** — A list of crate names that should be built from vendored
+  source. These crates will get full `rust_library` targets as usual. All other
+  non-workspace crates are assumed to be available at the external target and
+  receive only alias targets.
+
+### How it works
+
+During buckification, Reindeer checks each crate against three criteria:
+
+1. **Workspace members** (crates with `Source::Local`, including path
+   dependencies) are always built from source automatically. They do not need to
+   be listed in `vendored`.
+
+2. **Vendored crates** listed in the `vendored` set are built from the local
+   `vendor/` directory with full `rust_library` targets, just as they would be
+   without `extern_crates`.
+
+3. **All other crates** get a versioned alias target (e.g. `serde-1.0.228`)
+   pointing to the external target (e.g. `//third-party/rust:serde`).
+   Their dependencies are not recursively processed since the external target
+   handles its own dependency graph.
+
+### Vendor cleanup
+
+After buckification, vendored source directories for crates that are not in the
+`vendored` list are unnecessary — they were needed by `cargo metadata` during
+buckification but are not used at build time. You can remove them with:
+
+```console
+reindeer buckify --vendor-cleanup
+```
+
+This deletes all directories under `vendor/` whose crate name is not in the
+`vendored` list. Note that you will need to re-run `reindeer vendor` before the
+next `reindeer buckify` since `cargo metadata` requires all crates to be present.
+
+### Adding a crate to vendored
+
+If the build fails because a crate does not exist at the external target
+location, you need to either:
+
+- Add the crate to the `vendored` list in `reindeer.toml` so it is built from
+  local source, or
+- Add the crate to the external third-party tree so the alias resolves.
 
 ## Cargo.toml syntax
 

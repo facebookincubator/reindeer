@@ -111,6 +111,9 @@ enum SubCommand {
         /// to load the lockfile and manifests.
         #[arg(long)]
         fast: bool,
+        /// Remove vendored sources for crates not in the vendored list (extern_crates)
+        #[arg(long)]
+        vendor_cleanup: bool,
     },
     /// Show security report for vendored crates
     #[cfg(fbcode_build)]
@@ -223,6 +226,26 @@ fn try_main() -> anyhow::Result<()> {
             )?;
         }
 
+        SubCommand::Buckify {
+            stdout,
+            fast,
+            vendor_cleanup,
+        } => {
+            if matches!(
+                config.vendor,
+                VendorConfig::LocalRegistry | VendorConfig::Source(_)
+            ) && !vendor::is_vendored(&config, &paths)?
+            {
+                // If you ran `reindeer buckify` without `reindeer vendor`, then
+                // default to generating non-vendored targets.
+                config.vendor = VendorConfig::Off;
+            }
+            buckify::buckify(&config, &args, &paths, *stdout, *fast)?;
+            if *vendor_cleanup {
+                vendor::cleanup_extern_crates(&config, &paths)?;
+            }
+        }
+
         #[cfg(fbcode_build)]
         SubCommand::Auditsec { no_fetch } => {
             audit_sec::audit_sec(&paths, *no_fetch)?;
@@ -240,19 +263,6 @@ fn try_main() -> anyhow::Result<()> {
                     paths.manifest_path.to_str().unwrap(),
                 ],
             )?;
-        }
-
-        SubCommand::Buckify { stdout, fast } => {
-            if matches!(
-                config.vendor,
-                VendorConfig::LocalRegistry | VendorConfig::Source(_)
-            ) && !vendor::is_vendored(&config, &paths)?
-            {
-                // If you ran `reindeer buckify` without `reindeer vendor`, then
-                // default to generating non-vendored targets.
-                config.vendor = VendorConfig::Off;
-            }
-            buckify::buckify(&config, &args, &paths, *stdout, *fast)?;
         }
     }
 
