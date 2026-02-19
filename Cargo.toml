@@ -9,7 +9,7 @@ repository = "https://github.com/facebookincubator/reindeer"
 license = "MIT"
 
 [dependencies]
-anyhow = "1.0.98"
+anyhow = "1.0.100"
 cached = { version = "0.55.1", features = ["async", "disk_store"] }
 cargo = "0.92"
 cargo_toml = "0.22.1"
@@ -25,7 +25,7 @@ ignore = "0.4"
 indexmap = { version = "2.13.0", features = ["arbitrary", "rayon", "serde"] }
 indoc = "2.0.2"
 itertools = "0.14.0"
-log = { version = "0.4.27", features = ["kv_unstable", "kv_unstable_std"] }
+log = { version = "0.4.28", features = ["kv_unstable", "kv_unstable_std"] }
 measure_time = "0.9"
 monostate = "1"
 nom = "8"
@@ -33,7 +33,7 @@ nom-language = "0.1"
 proc-macro2 = { version = "1.0.106", features = ["span-locations"] }
 semver = { version = "1.0.26", features = ["serde"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
-serde_json = { version = "1.0.140", features = ["alloc", "float_roundtrip", "raw_value", "unbounded_depth"] }
+serde_json = { version = "1.0.145", features = ["alloc", "float_roundtrip", "raw_value", "unbounded_depth"] }
 serde_starlark = "0.1.19"
 serde_with = { version = "3", features = ["hex", "json"] }
 spdx = "0.13"
