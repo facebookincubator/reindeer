@@ -73,6 +73,7 @@ use crate::index::ResolvedDep;
 use crate::path::normalize_path;
 use crate::path::normalized_extend_path;
 use crate::path::relative_path;
+use crate::platform::PlatformExpr;
 use crate::platform::PlatformName;
 use crate::subtarget::Subtarget;
 
@@ -385,6 +386,32 @@ impl<'meta> Fixups<'meta> {
         }))
     }
 
+    fn check_duplicate_cxx_targets<'a>(
+        &self,
+        emitted_target_names: &mut BTreeMap<String, &'a PlatformExpr>,
+        target_name: &str,
+        platform_expr: &'a PlatformExpr,
+    ) -> anyhow::Result<()> {
+        if let Some(first_platform_expr) =
+            emitted_target_names.insert(target_name.to_owned(), platform_expr)
+        {
+            // Assume only the base fixup is the trivially true.
+            // You are allowed to override the base fixup. Otherwise the user has written two
+            // [[cfg(xxx).cxx_library]] name = "yyy" and expected us to merge these and put
+            // select()s in a single cxx_library(name = "yyy"). We don't do that.
+            if *first_platform_expr != PlatformExpr::default() {
+                bail!(
+                    "Multiple cxx_library targets named '{}' in package {}. The first was emitted for platform {}, the second for platform {}. Cxx library names must be unique per-package, except to override the base fixup with a cfg().",
+                    target_name,
+                    self.package,
+                    first_platform_expr,
+                    platform_expr,
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Return buildscript-related rules
     /// The rules may be platform specific, but they're emitted unconditionally. (The
     /// dependencies referencing them are conditional).
@@ -447,8 +474,13 @@ impl<'meta> Fixups<'meta> {
         for &platform_name in compatible_platforms {
             for fixup in self.configs(platform_name) {
                 if library_fixups.insert(&raw const *fixup) {
-                    cxx_library.extend(&fixup.cxx_library);
-                    prebuilt_cxx_library.extend(&fixup.prebuilt_cxx_library);
+                    cxx_library.extend(fixup.cxx_library.iter().map(|cxx| (&fixup.platform, cxx)));
+                    prebuilt_cxx_library.extend(
+                        fixup
+                            .prebuilt_cxx_library
+                            .iter()
+                            .map(|prebuilt| (&fixup.platform, prebuilt)),
+                    );
                 }
             }
 
@@ -457,27 +489,33 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
+        let mut emitted_target_names = BTreeMap::new();
+
         // Emit a C++ library build rule (elsewhere - add a dependency to it)
-        for CxxLibraryFixup {
-            name,
-            srcs,
-            headers,
-            exported_headers,
-            public,
-            include_paths,
-            fixup_include_paths,
-            exclude,
-            compiler_flags,
-            preprocessor_flags,
-            header_namespace,
-            deps,
-            compatible_with,
-            target_compatible_with,
-            preferred_linkage,
-            undefined_symbols,
-            ..
-        } in cxx_library
+        for (
+            platform_expr,
+            CxxLibraryFixup {
+                name,
+                srcs,
+                headers,
+                exported_headers,
+                public,
+                include_paths,
+                fixup_include_paths,
+                exclude,
+                compiler_flags,
+                preprocessor_flags,
+                header_namespace,
+                deps,
+                compatible_with,
+                target_compatible_with,
+                preferred_linkage,
+                undefined_symbols,
+                ..
+            },
+        ) in cxx_library
         {
+            self.check_duplicate_cxx_targets(&mut emitted_target_names, name, platform_expr)?;
             let cxx_library_target = if self.config.buck.split {
                 res.push(Rule::CxxLibrary(CxxLibrary {
                     owner: PackageVersion {
@@ -677,21 +715,29 @@ impl<'meta> Fixups<'meta> {
         }
 
         // Emit a prebuilt C++ library rule for each static library (elsewhere - add dependencies to them)
-        for PrebuiltCxxLibraryFixup {
-            name,
-            static_libs,
-            public,
-            compatible_with,
-            target_compatible_with,
-            preferred_linkage,
-            ..
-        } in prebuilt_cxx_library
+        for (
+            platform_expr,
+            PrebuiltCxxLibraryFixup {
+                name,
+                static_libs,
+                public,
+                compatible_with,
+                target_compatible_with,
+                preferred_linkage,
+                ..
+            },
+        ) in prebuilt_cxx_library
         {
             let static_lib_globs = Globs::new(static_libs, NO_EXCLUDE);
             for static_lib in static_lib_globs.walk(self.manifest_dir) {
                 let static_lib_file_name = static_lib.file_name().unwrap().to_string_lossy();
                 let prebuilt_cxx_library_target = if self.config.buck.split {
                     let target_name = Name(format!("{}-{}", name, static_lib_file_name));
+                    self.check_duplicate_cxx_targets(
+                        &mut emitted_target_names,
+                        &target_name.0,
+                        platform_expr,
+                    )?;
                     res.push(Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
                         owner: PackageVersion {
                             name: self.package.name.clone(),
@@ -740,6 +786,11 @@ impl<'meta> Fixups<'meta> {
                         name,
                         static_lib.file_name().unwrap().to_string_lossy(),
                     ));
+                    self.check_duplicate_cxx_targets(
+                        &mut emitted_target_names,
+                        &target_name.0,
+                        platform_expr,
+                    )?;
                     res.push(Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
                         owner: PackageVersion {
                             name: self.package.name.clone(),
