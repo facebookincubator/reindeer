@@ -9,7 +9,7 @@ repository = "https://github.com/facebookincubator/reindeer"
 license = "MIT"
 
 [dependencies]
-anyhow = "1.0.98"
+anyhow = "1.0.101"
 cached = { version = "0.55.1", features = ["async", "disk_store"] }
 cargo = "0.92"
 cargo_toml = "0.22.1"
