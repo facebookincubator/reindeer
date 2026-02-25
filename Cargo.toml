@@ -16,7 +16,7 @@ cargo_toml = "0.22.1"
 clap = { version = "4.5.42", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 dunce = "1.0.5"
 dyn-clone = "1.0.20"
-env_logger = { version = "0.11.8", features = ["color"] }
+env_logger = { version = "0.11.9", features = ["color"] }
 erased-serde = "0.4.9"
 fnv = "1.0"
 foldhash = "0.1.5"
