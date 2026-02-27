@@ -12,7 +12,7 @@ license = "MIT"
 anyhow = "1.0.101"
 cached = { version = "0.55.1", features = ["async", "disk_store"] }
 cargo = "0.92"
-cargo_toml = "0.22.1"
+cargo_toml = "0.22.3"
 clap = { version = "4.5.42", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 dunce = "1.0.5"
 dyn-clone = "1.0.20"
