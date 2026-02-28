@@ -244,6 +244,57 @@ impl Default for PlatformExpr {
     }
 }
 
+impl Display for PlatformExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        return Cfg(self).fmt(f);
+
+        struct Cfg<'a>(&'a PlatformExpr);
+        struct Expr<'a>(&'a PlatformExpr);
+        impl Display for Cfg<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "cfg({})", Expr(self.0))
+            }
+        }
+        impl Display for Expr<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                match self.0 {
+                    PlatformExpr::Any(preds) => {
+                        write!(f, "any(")?;
+                        for (i, pred) in preds.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ", ")?;
+                            }
+                            write!(f, "{}", Expr(pred))?;
+                        }
+                        write!(f, ")")
+                    }
+                    PlatformExpr::All(preds) => {
+                        write!(f, "all(")?;
+                        for (i, pred) in preds.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ", ")?;
+                            }
+                            write!(f, "{}", Expr(pred))?;
+                        }
+                        write!(f, ")")
+                    }
+                    PlatformExpr::Not(pred) => {
+                        write!(f, "not({})", Expr(pred))
+                    }
+                    PlatformExpr::Value { key, value } => write!(f, "{} = {:?}", key, value),
+                    PlatformExpr::Bool { key } => write!(f, "{}", key),
+                    PlatformExpr::Version(version_req) => {
+                        write!(f, "version = \"{}\"", version_req)
+                    }
+                    PlatformExpr::Target(target) => write!(f, "{}", *target),
+                    PlatformExpr::Unix => write!(f, "unix"),
+                    PlatformExpr::Windows => write!(f, "windows"),
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum PredicateParseError {
     TrailingJunk(String),
