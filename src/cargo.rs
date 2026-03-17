@@ -63,7 +63,7 @@ pub fn cargo_get_lockfile_and_metadata(
     if let VendorConfig::Source(_) = config.vendor {
         let lockfile = Lockfile::load(paths)?;
         let metadata = if fast {
-            fast_metadata(config, paths)?
+            fast_metadata(config, args, paths)?
         } else {
             slow_metadata(config, args, paths)?
         };
@@ -104,7 +104,7 @@ fn slow_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<
     run_cargo_json(config, cargo_home, None, args, &cargo_flags).context("parsing metadata")
 }
 
-fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
+fn fast_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<Metadata> {
     // Configure Cargo global context.
     let shell = cargo::core::Shell::new();
     let cwd = paths.third_party_dir.clone();
@@ -116,6 +116,17 @@ fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
         unstable_flags.push("bindeps".to_owned());
     }
 
+    let mut cli_config = Vec::new();
+    if let Some(rustc_path) = get_rustc(config, args) {
+        let rustc_path = rustc_path
+            .to_str()
+            .context("Failed to set cargo's build.rustc config")?;
+        cli_config.push(format!(
+            "build.rustc={}",
+            toml::Value::String(rustc_path.to_owned()),
+        ));
+    }
+
     let verbose = 0;
     let quiet = false;
     let color = None;
@@ -123,7 +134,6 @@ fn fast_metadata(config: &Config, paths: &Paths) -> anyhow::Result<Metadata> {
     let locked = true;
     let offline = true;
     let target_dir = None;
-    let cli_config = [];
     gctx.configure(
         verbose,
         quiet,
@@ -511,6 +521,36 @@ fn match_artifacts_kind_with_targets<'a>(
     Ok(out)
 }
 
+fn get_rustc(config: &Config, args: &Args) -> Option<PathBuf> {
+    // Priority:
+    // 1. `--rustc-path` arg.
+    // 2. `RUSTC` env.
+    // 3. `reindeer.toml` config value.
+
+    if let Some(rustc_path) = args.rustc_path.as_ref() {
+        return Some(rustc_path.clone());
+    }
+
+    if let Some(rustc_path) = env::var_os("RUSTC") {
+        // Any relative RUSTC path in Reindeer's env is meant to be interpreted
+        // relative to the directory Reindeer is running in, which is different
+        // from the one we are about to invoke Cargo in. Patch up the RUSTC in
+        // the env.
+        if Path::new(&rustc_path).components().nth(1).is_some() {
+            if let Ok(current_dir) = env::current_dir() {
+                let rustc_path = current_dir.join(rustc_path);
+                return Some(rustc_path);
+            }
+        }
+    }
+
+    if let Some(bin) = config.cargo.rustc.as_ref() {
+        return Some(config.config_dir.join(bin));
+    }
+
+    None
+}
+
 // Run a cargo command
 pub(crate) fn run_cargo(
     config: &Config,
@@ -545,25 +585,8 @@ pub(crate) fn run_cargo(
         Command::new("cargo")
     };
 
-    // Priority:
-    // 1. `--rustc-path` arg.
-    // 2. `RUSTC` env.
-    // 3. `reindeer.toml` config value.
-    if let Some(rustc_path) = args.rustc_path.as_ref() {
+    if let Some(rustc_path) = get_rustc(config, args) {
         cargo_command.env("RUSTC", rustc_path);
-    } else if let Some(rustc_path) = env::var_os("RUSTC") {
-        // Any relative RUSTC path in Reindeer's env is meant to be interpreted
-        // relative to the directory Reindeer is running in, which is different
-        // from the one we are about to invoke Cargo in. Patch up the RUSTC
-        // in the env.
-        if Path::new(&rustc_path).components().nth(1).is_some() {
-            if let Ok(current_dir) = env::current_dir() {
-                let rustc_path = current_dir.join(rustc_path);
-                cargo_command.env("RUSTC", rustc_path);
-            }
-        }
-    } else if let Some(bin) = config.cargo.rustc.as_ref() {
-        cargo_command.env("RUSTC", config.config_dir.join(bin));
     }
 
     if let Some(cargo_home) = cargo_home {
