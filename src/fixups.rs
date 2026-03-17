@@ -75,6 +75,7 @@ use crate::path::normalized_extend_path;
 use crate::path::relative_path;
 use crate::platform::PlatformName;
 use crate::subtarget::Subtarget;
+use crate::version_naming::CollisionInfo;
 
 mod buildscript;
 mod config;
@@ -360,8 +361,10 @@ impl<'meta> Fixups<'meta> {
             .find(|tgt| tgt.kind_custom_build())
     }
 
-    pub fn buildscript_genrule_name(&self) -> Name {
-        let mut name = self.buildscript_rule_name().expect("no buildscript");
+    pub fn buildscript_genrule_name(&self, collision_info: &CollisionInfo) -> Name {
+        let mut name = self
+            .buildscript_rule_name(collision_info)
+            .expect("no buildscript");
         // Cargo names the build script target after the filename of the build
         // script's crate root. In the overwhelmingly common case of a build
         // script located in build.rs, this is build-script-build, and we name
@@ -376,12 +379,20 @@ impl<'meta> Fixups<'meta> {
         name
     }
 
-    fn buildscript_rule_name(&self) -> Option<Name> {
+    fn buildscript_rule_name(&self, collision_info: &CollisionInfo) -> Option<Name> {
         let buildscript_target = self.buildscript_target()?;
         Some(Name(if self.config.buck.split {
-            format!("{}-{}", self.package.version, buildscript_target.name)
+            format!(
+                "{}-{}",
+                collision_info.target_version(self.package),
+                buildscript_target.name,
+            )
         } else {
-            format!("{}-{}", self.package, buildscript_target.name)
+            format!(
+                "{}-{}",
+                collision_info.target_display(self.package),
+                buildscript_target.name,
+            )
         }))
     }
 
@@ -396,12 +407,13 @@ impl<'meta> Fixups<'meta> {
         index: &Index,
         target: &ManifestTarget,
         compatible_platforms: &BTreeSet<&PlatformName>,
+        collision_info: &CollisionInfo,
     ) -> anyhow::Result<Vec<Rule>> {
         let mut res = Vec::new();
 
         let rel_fixup = relative_path(self.third_party_dir, &self.fixup_config.fixup_dir);
 
-        let buildscript_rule_name = match self.buildscript_rule_name() {
+        let buildscript_rule_name = match self.buildscript_rule_name(collision_info) {
             None => {
                 log::warn!(
                     "Package {} doesn't have a build script to fix up",
@@ -577,7 +589,8 @@ impl<'meta> Fixups<'meta> {
                     name,
                 ))
             } else {
-                let target_name = Name(format!("{}-{}", self.package, name));
+                let disp = collision_info.target_display(self.package);
+                let target_name = Name(format!("{}-{}", disp, name));
                 res.push(Rule::CxxLibrary(CxxLibrary {
                     owner: PackageVersion {
                         name: self.package.name.clone(),
@@ -734,9 +747,10 @@ impl<'meta> Fixups<'meta> {
                         target_name,
                     ))
                 } else {
+                    let disp = collision_info.target_display(self.package);
                     let target_name = Name(format!(
                         "{}-{}-{}",
-                        self.package,
+                        disp,
                         name,
                         static_lib.file_name().unwrap().to_string_lossy(),
                     ));
@@ -854,7 +868,7 @@ impl<'meta> Fixups<'meta> {
                     name: self.package.name.clone(),
                     version: self.package.version.clone(),
                 },
-                name: self.buildscript_genrule_name(),
+                name: self.buildscript_genrule_name(collision_info),
                 buildscript_rule: buildscript_rule_name.clone(),
                 manifest_dir,
                 base: PlatformBuildscriptGenrule {
@@ -1092,6 +1106,7 @@ impl<'meta> Fixups<'meta> {
         platform_name: &PlatformName,
         index: &'meta Index<'meta>,
         target: &'meta ManifestTarget,
+        collision_info: &CollisionInfo,
     ) -> HashMap<(RuleRef, Option<&'meta str>, &'meta NodeDepKind), Option<&'meta Manifest>> {
         let mut ret = HashMap::new();
 
@@ -1145,7 +1160,8 @@ impl<'meta> Fixups<'meta> {
                                 name,
                             )
                         } else {
-                            format!(":{}-{}", self.package, name)
+                            let disp = collision_info.target_display(self.package);
+                            format!(":{}-{}", disp, name)
                         }),
                         None,
                         &NodeDepKind::ORDINARY,
@@ -1183,9 +1199,10 @@ impl<'meta> Fixups<'meta> {
                                     static_lib.file_name().unwrap().to_string_lossy(),
                                 )
                             } else {
+                                let disp = collision_info.target_display(self.package);
                                 format!(
                                     ":{}-{}-{}",
-                                    self.package,
+                                    disp,
                                     name,
                                     static_lib.file_name().unwrap().to_string_lossy(),
                                 )
@@ -1234,11 +1251,11 @@ impl<'meta> Fixups<'meta> {
                                     "/"
                                 },
                                 package.name,
-                                package.version,
+                                collision_info.target_version(package),
                             )
                         }
                     } else {
-                        format!(":{}", package)
+                        format!(":{}", collision_info.target_display(package),)
                     }),
                     // Only use the rename if it isn't the same as the target anyway.
                     match package.dependency_target() {

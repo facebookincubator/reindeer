@@ -50,6 +50,7 @@ mod subtarget;
 mod tp_metadata;
 mod unused;
 mod vendor;
+mod version_naming;
 
 #[derive(Debug, Parser)]
 #[command(bin_name = "reindeer")]

@@ -94,6 +94,7 @@ use crate::subtarget::CollectSubtargets;
 use crate::subtarget::Subtarget;
 use crate::tp_metadata::TpMetadata;
 use crate::unused::UnusedFixups;
+use crate::version_naming::CollisionInfo;
 
 pub fn evaluate_for_platforms<Rule, Collection, R>(
     common: &mut Rule,
@@ -152,6 +153,7 @@ struct RuleContext<'meta> {
     index: Index<'meta>,
     lockfile: &'meta Lockfile,
     fixups: FixupsCache<'meta>,
+    collision_info: CollisionInfo,
     done: Mutex<HashSet<(PackageId, TargetReq<'meta>)>>,
 }
 
@@ -204,15 +206,15 @@ fn generate_rules<'scope, 'env>(
             // Build scripts, binaries, etc. are not needed for extern crates.
             if matches!(target_req, TargetReq::Lib) {
                 let extern_target = extern_config.target.replace("{name}", &pkg.name);
+                let extern_disp = context.collision_info.target_display(pkg);
 
-                // Alias from versioned name (e.g. "serde-1.0.228") to external target.
-                // This makes all existing `:serde-1.0.228` dep references resolve.
+                // Alias from versioned name (e.g. "rand-0.9") to external target.
                 let _ = rule_tx.send(Ok(Rule::Alias(Alias {
                     owner: PackageVersion {
                         name: pkg.name.clone(),
                         version: pkg.version.clone(),
                     },
-                    name: Name(pkg.to_string()),
+                    name: Name(extern_disp),
                     actual: RuleRef::new(extern_target),
                     platforms: None,
                     visibility: Visibility::Private,
@@ -608,8 +610,14 @@ fn generate_target_rules<'a>(
         config,
         paths,
         index,
+        collision_info,
         ..
     } = context;
+
+    // Version string for target names (e.g. "0.9")
+    let tgt_ver = collision_info.target_version(pkg);
+    // "name-version" string for target names (e.g. "rand-0.9")
+    let tgt_disp = collision_info.target_display(pkg);
 
     log::debug!("Generating rules for package {} target {}", pkg, tgt.name);
 
@@ -777,7 +785,7 @@ fn generate_target_rules<'a>(
     // be emitted if we actually emit some rules below.
     let mut platform_deps = Vec::new();
     for &platform_name in &compatible_platforms {
-        let deps = fixups.compute_deps(platform_name, index, tgt);
+        let deps = fixups.compute_deps(platform_name, index, tgt, collision_info);
         platform_deps.push((platform_name, deps));
     }
 
@@ -854,9 +862,9 @@ fn generate_target_rules<'a>(
             common: RustCommon {
                 common: Common {
                     name: Name(if config.buck.split {
-                        format!("{}-{}", pkg.version, tgt.name)
+                        format!("{}-{}", tgt_ver, tgt.name)
                     } else {
-                        format!("{}-{}", pkg, tgt.name)
+                        format!("{}-{}", tgt_disp, tgt.name)
                     }),
                     visibility: Visibility::Private,
                     licenses: Default::default(),
@@ -882,6 +890,7 @@ fn generate_target_rules<'a>(
             index,
             tgt,
             &compatible_platforms,
+            collision_info,
         )?;
         return Ok((rules, dep_pkgs));
     }
@@ -922,7 +931,7 @@ fn generate_target_rules<'a>(
             })
         },
         |rule, ()| {
-            let genrule = fixups.buildscript_genrule_name();
+            let genrule = fixups.buildscript_genrule_name(collision_info);
             rule.rustc_flags
                 .common
                 .push(format!("@$(location :{genrule}[rustc_flags])"));
@@ -978,9 +987,9 @@ fn generate_target_rules<'a>(
     // if there is one
     if let Some(true) = pkg.dependency_target().map(ManifestTarget::kind_lib) {
         bin_base.deps.insert(RuleRef::new(if config.buck.split {
-            format!(":{}", pkg.version)
+            format!(":{}", tgt_ver)
         } else {
-            format!(":{}", pkg)
+            format!(":{}", tgt_disp)
         }));
     }
 
@@ -1027,14 +1036,14 @@ fn generate_target_rules<'a>(
                             "/"
                         },
                         pkg.name,
-                        pkg.version,
+                        tgt_ver,
                     )
                 } else {
-                    format!(":{}", pkg)
+                    format!(":{}", tgt_disp)
                 }),
                 platforms,
                 visibility: fixups.visibility(index),
-                sort_key: Name(pkg.to_string()),
+                sort_key: Name(tgt_disp.clone()),
             }));
         }
 
@@ -1048,9 +1057,9 @@ fn generate_target_rules<'a>(
                     name: if index.is_root_package(pkg) {
                         index.public_rule_name(pkg)
                     } else if config.buck.split {
-                        Name(pkg.version.to_string())
+                        Name(tgt_ver.clone())
                     } else {
-                        Name(pkg.to_string())
+                        Name(tgt_disp.clone())
                     },
                     visibility: if index.is_root_package(pkg) {
                         fixups.visibility(index)
@@ -1199,15 +1208,15 @@ fn generate_target_rules<'a>(
                             "/"
                         },
                         pkg.name,
-                        pkg.version,
+                        tgt_ver,
                         tgt.name,
                     )
                 } else {
-                    format!(":{}-{}", pkg, tgt.name)
+                    format!(":{}-{}", tgt_disp, tgt.name)
                 }),
                 platforms,
                 visibility: fixups.visibility(index),
-                sort_key: Name(format!("{}-{}", pkg, tgt.name)),
+                sort_key: Name(format!("{}-{}", tgt_disp, tgt.name)),
             }));
         }
 
@@ -1219,9 +1228,9 @@ fn generate_target_rules<'a>(
             common: RustCommon {
                 common: Common {
                     name: Name(if config.buck.split {
-                        format!("{}-{}", pkg.version, tgt.name)
+                        format!("{}-{}", tgt_ver, tgt.name)
                     } else {
-                        format!("{}-{}", pkg, tgt.name)
+                        format!("{}-{}", tgt_disp, tgt.name)
                     }),
                     visibility: if config.buck.split {
                         Visibility::Custom(vec![
@@ -1365,7 +1374,7 @@ fn generate_target_rules<'a>(
                     name: pkg.name.clone(),
                     version: pkg.version.clone(),
                 },
-                name: Name(format!("{}-{}", pkg, name)),
+                name: Name(format!("{}-{}", tgt_disp, name)),
                 actual: RuleRef::new(format!(
                     "//{}{}vendor/{}:filegroup-{}",
                     paths.buck_package,
@@ -1374,12 +1383,12 @@ fn generate_target_rules<'a>(
                     } else {
                         "/"
                     },
-                    pkg,
+                    pkg.name,
                     name,
                 )),
                 platforms: None,
                 visibility: visibility.clone(),
-                sort_key: Name(format!("{}-{}", pkg, name)),
+                sort_key: Name(format!("{}-{}", tgt_disp, name)),
             }));
         } else {
             rules.push(Rule::Filegroup(Filegroup {
@@ -1387,7 +1396,7 @@ fn generate_target_rules<'a>(
                     name: pkg.name.clone(),
                     version: pkg.version.clone(),
                 },
-                name: Name(format!("{}-{}", pkg, name)),
+                name: Name(format!("{}-{}", tgt_disp, name)),
                 srcs,
                 visibility: visibility.clone(),
             }));
@@ -1516,12 +1525,14 @@ pub(crate) fn buckify(
 
     let fixups = FixupsCache::new(config, paths);
     let index = Index::new(config, &metadata, &fixups)?;
+    let collision_info = CollisionInfo::new(&metadata.packages.iter().collect::<Vec<_>>());
     let context = RuleContext {
         config,
         paths,
         index,
         lockfile: &lockfile,
         fixups,
+        collision_info,
         done: Mutex::new(HashSet::default()),
     };
     let rules = do_buckify(&context)?;
