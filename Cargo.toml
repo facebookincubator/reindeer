@@ -17,7 +17,7 @@ clap = { version = "4.5.42", features = ["derive", "env", "string", "unicode", "
 dunce = "1.0.5"
 dyn-clone = "1.0.20"
 env_logger = { version = "0.11.9", features = ["color"] }
-erased-serde = "0.4.9"
+erased-serde = "0.4.10"
 fnv = "1.0"
 foldhash = "0.1.5"
 globset = { version = "0.4.13", features = ["serde1"] }
