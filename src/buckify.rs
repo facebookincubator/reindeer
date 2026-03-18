@@ -1383,7 +1383,7 @@ fn generate_target_rules<'a>(
                     } else {
                         "/"
                     },
-                    pkg.name,
+                    pkg,
                     name,
                 )),
                 platforms: None,
