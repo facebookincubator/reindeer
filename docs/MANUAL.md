@@ -572,6 +572,7 @@ sets. You can resolve these with a fixups.toml containing:
 
 ```toml
 cargo_env = [
+    "CARGO_BIN_NAME",
     "CARGO_CRATE_NAME",
     "CARGO_MANIFEST_DIR",
     "CARGO_MANIFEST_LINKS",

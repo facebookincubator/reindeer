@@ -1302,7 +1302,8 @@ impl<'meta> Fixups<'meta> {
             match cargo_env {
                 // Not set for builds, only build script execution
                 CargoEnv::CARGO_MANIFEST_LINKS => continue,
-                CargoEnv::CARGO_CRATE_NAME
+                CargoEnv::CARGO_BIN_NAME
+                | CargoEnv::CARGO_CRATE_NAME
                 | CargoEnv::CARGO_MANIFEST_DIR
                 | CargoEnv::CARGO_PKG_AUTHORS
                 | CargoEnv::CARGO_PKG_DESCRIPTION
@@ -1355,6 +1356,7 @@ impl<'meta> Fixups<'meta> {
         target: &ManifestTarget,
     ) -> anyhow::Result<Option<StringOrPath>> {
         let value = match cargo_env {
+            CargoEnv::CARGO_BIN_NAME => StringOrPath::String(target.name.clone()),
             CargoEnv::CARGO_CRATE_NAME => StringOrPath::String(target.name.replace('-', "_")),
             CargoEnv::CARGO_MANIFEST_DIR => {
                 if matches!(self.config.vendor, VendorConfig::Source(_))

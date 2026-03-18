@@ -385,6 +385,7 @@ impl Default for CargoEnvs {
 )]
 #[allow(non_camel_case_types)]
 pub enum CargoEnv {
+    CARGO_BIN_NAME,
     CARGO_CRATE_NAME,
     CARGO_MANIFEST_DIR,
     CARGO_MANIFEST_LINKS,
@@ -409,7 +410,7 @@ impl CargoEnv {
     pub fn purpose(&self) -> CargoEnvPurpose {
         match self {
             // Set for compilation only, not build script execution
-            CargoEnv::CARGO_CRATE_NAME => CargoEnvPurpose::BuildOnly,
+            CargoEnv::CARGO_BIN_NAME | CargoEnv::CARGO_CRATE_NAME => CargoEnvPurpose::BuildOnly,
             // For execution, controlled by prelude//rust/tools/buildscript_run.py
             CargoEnv::CARGO_MANIFEST_DIR => CargoEnvPurpose::BuildOnly,
             // Controlled by prelude//rust/cargo_buildscript.bzl
