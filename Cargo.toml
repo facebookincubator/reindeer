@@ -18,6 +18,7 @@ dunce = "1.0.5"
 dyn-clone = "1.0.20"
 env_logger = { version = "0.11.9", features = ["color"] }
 erased-serde = "0.4.10"
+flate2 = { version = "1.0.33", features = ["rust_backend"], default-features = false }
 fnv = "1.0"
 foldhash = "0.1.5"
 globset = { version = "0.4.13", features = ["serde1"] }
@@ -39,6 +40,7 @@ serde_with = { version = "3.17.0", features = ["hex", "json"] }
 spdx = "0.13.4"
 strum = { version = "0.27.1", features = ["derive"] }
 syn = { version = "2.0.117", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+tar = "0.4.44"
 termcolor = "1.0"
 toml = { version = "0.9.12", features = ["preserve_order"] }
 unicode-ident = "1.0.24"

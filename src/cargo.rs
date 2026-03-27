@@ -19,8 +19,11 @@ use std::env;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::fs;
+use std::io;
 use std::io::BufRead;
 use std::io::BufReader;
+use std::io::Read;
 use std::iter;
 use std::path::Path;
 use std::path::PathBuf;
@@ -1223,6 +1226,83 @@ impl<'de> DeserializeAs<'de, PackageId> for PackageIdFromSpec {
         D: Deserializer<'de>,
     {
         deserializer.deserialize_str(PackageIdFromSpec)
+    }
+}
+
+/// Unpacks a `.crate` archive into `dst`, applying `include` to each entry
+/// relative to the crate root. Replicates cargo's zip-bomb and path-traversal
+/// protections. Size limit: 512 MiB minimum, or 20x the compressed archive
+/// size (matching cargo's defaults).
+pub(crate) fn unpack_package_archive(
+    archive: &Path,
+    dst: &Path,
+    include: &dyn Fn(&Path) -> bool,
+) -> anyhow::Result<()> {
+    let tarball =
+        fs::File::open(archive).with_context(|| format!("failed to open {}", archive.display()))?;
+    let archive_size = tarball.metadata()?.len();
+    let size_limit = u64::max(512 * 1024 * 1024, archive_size * 20);
+
+    let gz = flate2::read::GzDecoder::new(LimitReader::new(tarball, size_limit));
+    let mut tar = tar::Archive::new(gz);
+
+    let prefix = dst.file_name().expect("dst must have a file name");
+    let parent = dst.parent().expect("dst must have a parent directory");
+
+    for entry in tar.entries().context("failed to read archive entries")? {
+        let mut entry = entry.context("failed to read archive entry")?;
+        let entry_path = entry
+            .path()
+            .context("failed to read entry path")?
+            .into_owned();
+
+        let relative = match entry_path.strip_prefix(prefix) {
+            Ok(rel) => rel.to_owned(),
+            Err(_) => {
+                anyhow::bail!("invalid tarball: entry at {entry_path:?} is not under {prefix:?}",)
+            }
+        };
+
+        if !include(&relative) {
+            continue;
+        }
+
+        // Skip `.cargo-ok` -- cargo's unpack-success marker file.
+        if entry_path.file_name().is_some_and(|n| n == ".cargo-ok") {
+            continue;
+        }
+
+        entry
+            .unpack_in(parent)
+            .with_context(|| format!("failed to unpack `{}`", entry_path.display()))?;
+    }
+
+    Ok(())
+}
+
+/// A [`Read`] wrapper that enforces a byte-count limit and returns an error
+/// when exceeded. Guards against zip-bomb attacks in compressed archives.
+/// Matches the behavior of cargo's internal `LimitErrorReader`.
+struct LimitReader<R> {
+    inner: io::Take<R>,
+}
+
+impl<R: Read> LimitReader<R> {
+    fn new(r: R, limit: u64) -> Self {
+        LimitReader {
+            inner: r.take(limit),
+        }
+    }
+}
+
+impl<R: Read> Read for LimitReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self.inner.read(buf) {
+            Ok(0) if self.inner.limit() == 0 => {
+                Err(io::Error::other("maximum limit reached when reading"))
+            }
+            e => e,
+        }
     }
 }
 

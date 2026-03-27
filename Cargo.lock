@@ -1171,6 +1171,7 @@ version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
+ "crc32fast",
  "miniz_oxide",
  "zlib-rs 0.6.2",
 ]
@@ -3589,6 +3590,7 @@ dependencies = [
  "dyn-clone",
  "env_logger",
  "erased-serde",
+ "flate2",
  "fnv",
  "foldhash 0.1.5",
  "globset",
@@ -3610,6 +3612,7 @@ dependencies = [
  "spdx",
  "strum",
  "syn 2.0.117",
+ "tar",
  "tempfile",
  "termcolor",
  "toml",
@@ -4247,6 +4250,7 @@ checksum = "1d863878d212c87a19c1a610eb53bb01fe12951c0501cf5a0d65f724914a667a"
 dependencies = [
  "filetime",
  "libc",
+ "xattr",
 ]
 
 [[package]]
@@ -5206,6 +5210,16 @@ name = "writeable"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e9df38ee2d2c3c5948ea468a8406ff0db0b29ae1ffde1bcf20ef305bcc95c51"
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix",
+]
 
 [[package]]
 name = "yoke"
