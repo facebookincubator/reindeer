@@ -13,7 +13,7 @@ anyhow = "1.0.102"
 cached = { version = "0.55.1", features = ["async", "disk_store"] }
 cargo = "0.94"
 cargo_toml = "0.22.3"
-clap = { version = "4.5.42", features = ["derive", "env", "string", "unicode", "wrap_help"] }
+clap = { version = "4.6.0", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 dunce = "1.0.5"
 dyn-clone = "1.0.20"
 env_logger = { version = "0.11.9", features = ["color"] }
