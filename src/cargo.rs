@@ -580,7 +580,7 @@ pub(crate) fn fast_vendor(
     args: &Args,
     paths: &Paths,
 ) -> anyhow::Result<()> {
-    let gctx = make_gctx(config, args, paths, false, true, false, true)?;
+    let gctx = make_gctx(config, args, paths, false, false, false, true)?;
 
     let source_config = cargo::sources::SourceConfigMap::new(&gctx)?;
 
@@ -953,15 +953,15 @@ fn generate_vendor_config(
         remap.sources.insert(name, source);
     }
 
-    if !remap.sources.is_empty() {
-        remap.sources.insert(
-            merged.to_owned(),
-            RemapSource {
-                directory: Some(PathBuf::from("vendor")),
-                ..RemapSource::default()
-            },
-        );
-    }
+    // Always write [source.vendored-sources] so that is_vendored() returns true
+    // even for workspaces with only path dependencies (where sources is empty).
+    remap.sources.insert(
+        merged.to_owned(),
+        RemapSource {
+            directory: Some(PathBuf::from("vendor")),
+            ..RemapSource::default()
+        },
+    );
 
     toml::to_string(&remap).context("failed to serialize vendor config")
 }
@@ -1778,6 +1778,19 @@ mod test {
         assert!(
             !config.contains("/tmp/absolute/path/vendor"),
             "config should not embed an absolute vendor path: {config}"
+        );
+    }
+
+    fn test_generate_vendor_config_path_only_workspace() {
+        // A workspace with only path dependencies has an empty sources set.
+        // generate_vendor_config must still emit [source.vendored-sources] so
+        // that is_vendored() returns true after fast_vendor() runs.
+        let sources = BTreeSet::new();
+        let vendor_dir = Path::new("/jellyfish-cove/vendor");
+        let config = generate_vendor_config(&sources, vendor_dir).unwrap();
+        assert!(
+            config.contains("vendored-sources"),
+            "config must contain vendored-sources even for path-only workspaces: {config}",
         );
     }
 

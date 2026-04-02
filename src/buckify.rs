@@ -644,7 +644,8 @@ fn generate_target_rules<'a>(
             Err(_) if !will_use_rules => Path::new("__unused__"),
             res => res?,
         };
-        if !matches!(config.vendor, VendorConfig::Source(_)) {
+        if !matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local)
+        {
             manifest_dir_subtarget = Some(SubtargetOrPath::Path(BuckPath(
                 relative_manifest_dir.to_owned(),
             )));
