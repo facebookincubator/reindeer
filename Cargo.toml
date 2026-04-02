@@ -41,7 +41,7 @@ sha2 = "0.10.6"
 spdx = "0.13.4"
 strum = { version = "0.27.1", features = ["derive"] }
 syn = { version = "2.0.117", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
-tar = "0.4.44"
+tar = "0.4.45"
 termcolor = "1.0"
 toml = { version = "0.9.12", features = ["preserve_order"] }
 unicode-ident = "1.0.24"
