@@ -30,12 +30,17 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 use std::rc::Rc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::task::Poll;
 use std::thread;
 
 use anyhow::Context;
 use anyhow::bail;
+use cargo::core::GitReference;
 use cargo::core::PackageId;
+use cargo::core::SourceId;
+use cargo::sources::CRATES_IO_REGISTRY;
 use cargo::util::interning::InternedString;
 use foldhash::HashMap;
 use foldhash::HashSet;
@@ -49,6 +54,8 @@ use serde::de::Unexpected;
 use serde::de::Visitor;
 use serde_with::As;
 use serde_with::DeserializeAs;
+use sha2::Digest;
+use walkdir::WalkDir;
 
 use crate::Args;
 use crate::Paths;
@@ -56,6 +63,10 @@ use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::lockfile::Lockfile;
 use crate::platform::PlatformExpr;
+use crate::remap::RemapConfig;
+use crate::remap::RemapSource;
+
+static STAGING_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 pub fn cargo_get_lockfile_and_metadata(
     config: &Config,
@@ -107,8 +118,19 @@ fn slow_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<
     run_cargo_json(config, cargo_home, None, args, &cargo_flags).context("parsing metadata")
 }
 
-fn fast_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<Metadata> {
-    // Configure Cargo global context.
+/// Build a cargo `GlobalContext` configured for the third-party directory.
+///
+/// Shared by `fast_metadata` and `fast_vendor` so the cargo-as-a-library setup
+/// is consistent across both code paths.
+fn make_gctx(
+    config: &Config,
+    args: &Args,
+    paths: &Paths,
+    frozen: bool,
+    locked: bool,
+    offline: bool,
+    quiet: bool,
+) -> anyhow::Result<cargo::GlobalContext> {
     let shell = cargo::core::Shell::new();
     let cwd = paths.third_party_dir.clone();
     let cargo_home = paths.cargo_home.clone();
@@ -131,11 +153,7 @@ fn fast_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<
     }
 
     let verbose = 0;
-    let quiet = false;
     let color = None;
-    let frozen = true;
-    let locked = true;
-    let offline = true;
     let target_dir = None;
     gctx.configure(
         verbose,
@@ -148,6 +166,12 @@ fn fast_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<
         &unstable_flags,
         &cli_config,
     )?;
+
+    Ok(gctx)
+}
+
+fn fast_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<Metadata> {
+    let gctx = make_gctx(config, args, paths, true, true, true, false)?;
 
     // Load .cargo/config.toml (source replacements).
     let source_config = cargo::sources::SourceConfigMap::new(&gctx)?;
@@ -522,6 +546,424 @@ fn match_artifacts_kind_with_targets<'a>(
         }
     }
     Ok(out)
+}
+
+/// A unit of work for parallel vendor extraction.
+///
+/// Registry crates are extracted from `.crate` archives. Git/other crates
+/// need their source files copied individually.
+enum VendorWork {
+    /// Extract a `.crate` archive into the vendor directory.
+    RegistryArchive {
+        archive: PathBuf,
+        dst: PathBuf,
+        pkg_cksum: Option<String>,
+    },
+    /// Copy individual source files for non-registry packages (git, etc.).
+    CopyFiles {
+        src_root: PathBuf,
+        file_paths: Vec<PathBuf>,
+        dst: PathBuf,
+        pkg_cksum: Option<String>,
+    },
+}
+
+/// Vendor crates using cargo-as-a-library, with parallel archive extraction.
+///
+/// This replaces the `cargo vendor` subprocess call with direct API usage,
+/// enabling parallel extraction of `.crate` archives via `thread::scope`.
+/// The result is a populated `vendor/` directory and a `.cargo/config.toml`
+/// with source replacement entries.
+pub(crate) fn fast_vendor(
+    config: &Config,
+    no_delete: bool,
+    args: &Args,
+    paths: &Paths,
+) -> anyhow::Result<()> {
+    let gctx = make_gctx(config, args, paths, false, true, false, true)?;
+
+    let source_config = cargo::sources::SourceConfigMap::new(&gctx)?;
+
+    let manifest_path = paths.manifest_path.clone();
+    let ws = cargo::core::Workspace::new(&manifest_path, &gctx)?;
+
+    // Resolve deps and download all packages.
+    let (package_set, resolve) =
+        cargo::ops::resolve_ws(&ws, false).context("failed to resolve workspace")?;
+
+    package_set
+        .get_many(resolve.iter())
+        .context("failed to download packages")?;
+
+    let vendor_dir = paths.third_party_dir.join("vendor");
+    fs::create_dir_all(&vendor_dir)?;
+
+    // Collect existing directories for cleanup (unless --no-delete).
+    let mut to_remove: BTreeSet<PathBuf> = if no_delete {
+        BTreeSet::new()
+    } else {
+        fs::read_dir(&vendor_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_str().is_some_and(|s| !s.starts_with('.')))
+            .map(|e| e.path())
+            .collect()
+    };
+
+    // Collect packages to vendor and build work items.
+    let mut work_items = Vec::new();
+    let mut sources: BTreeSet<SourceId> = BTreeSet::new();
+
+    for pkg_id in resolve.iter() {
+        let replaced_sid = source_config
+            .load(pkg_id.source_id(), &Default::default())?
+            .replaced_source_id();
+
+        // Skip path dependencies -- they're already in the repo.
+        if replaced_sid.is_path() {
+            if let Ok(file_path) = replaced_sid.url().to_file_path() {
+                to_remove.remove(&file_path);
+            }
+            continue;
+        }
+
+        let pkg = package_set
+            .get_one(pkg_id)
+            .context("failed to fetch package")?;
+        let dst_name = format!("{}-{}", pkg_id.name(), pkg_id.version());
+        let dst = vendor_dir.join(&dst_name);
+        to_remove.remove(&dst);
+        sources.insert(pkg_id.source_id());
+
+        // If this is an immutable registry source and we already have it, skip.
+        let cksum_path = dst.join(".cargo-checksum.json");
+        if replaced_sid.is_registry() && cksum_path.exists() {
+            continue;
+        }
+
+        let pkg_cksum = resolve.checksums().get(&pkg_id).and_then(|c| c.clone());
+
+        if replaced_sid.is_registry() {
+            // Derive archive path from the package root that cargo downloaded to.
+            // After get_many(), pkg.root() is at:
+            //   <cargo_home>/registry/src/<encoded>/<name>-<version>
+            // We need: <cargo_home>/registry/cache/<encoded>/<tarball_name>
+            let src_dir = pkg.root();
+            let encoded = src_dir
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .context("cannot derive encoded registry dir from package root")?;
+            let archive = paths
+                .cargo_home
+                .join("registry")
+                .join("cache")
+                .join(encoded)
+                .join(pkg_id.tarball_name());
+
+            work_items.push(VendorWork::RegistryArchive {
+                archive,
+                dst,
+                pkg_cksum,
+            });
+        } else {
+            // Git or other non-registry sources: list files and copy them.
+            let src_root = pkg.root().to_path_buf();
+            let file_paths = cargo::sources::PathSource::new(pkg.root(), replaced_sid, &gctx)
+                .list_files(pkg)?
+                .into_iter()
+                .map(|entry| entry.into_path_buf())
+                .collect::<Vec<_>>();
+
+            work_items.push(VendorWork::CopyFiles {
+                src_root,
+                file_paths,
+                dst,
+                pkg_cksum,
+            });
+        }
+    }
+
+    // Remove stale vendor directories.
+    for stale in &to_remove {
+        if stale.is_dir() {
+            fs::remove_dir_all(stale).with_context(|| {
+                format!("failed to remove stale vendor dir {}", stale.display())
+            })?;
+        }
+    }
+
+    // Extract/copy in parallel using thread::scope with static chunking.
+    // unpack_package_archive takes only &Path args so it is Send-safe.
+    let num_threads = std::thread::available_parallelism().map_or(8, |n| n.get());
+    let chunk_size = work_items.len().div_ceil(num_threads.max(1));
+
+    thread::scope(|s| {
+        let handles: Vec<_> = work_items
+            .chunks(chunk_size.max(1))
+            .map(|chunk| {
+                s.spawn(move || {
+                    for item in chunk {
+                        match item {
+                            VendorWork::RegistryArchive {
+                                archive,
+                                dst,
+                                pkg_cksum,
+                            } => {
+                                let (staging_root, staging_dst) = make_staging_destination(dst)?;
+                                let result = (|| -> anyhow::Result<()> {
+                                    unpack_package_archive(archive, &staging_dst, &vendor_this)
+                                        .with_context(|| {
+                                            format!(
+                                                "failed to unpack {} into {}",
+                                                archive.display(),
+                                                staging_dst.display(),
+                                            )
+                                        })?;
+
+                                    let file_cksums = compute_dir_checksums(&staging_dst)?;
+                                    write_checksum_json(
+                                        &staging_dst,
+                                        pkg_cksum.as_deref(),
+                                        &file_cksums,
+                                    )?;
+                                    replace_vendor_dir(&staging_dst, dst)?;
+                                    Ok(())
+                                })();
+                                let _ = fs::remove_dir_all(&staging_root);
+                                result?;
+                            }
+                            VendorWork::CopyFiles {
+                                src_root,
+                                file_paths,
+                                dst,
+                                pkg_cksum,
+                            } => {
+                                let (staging_root, staging_dst) = make_staging_destination(dst)?;
+                                let result = (|| -> anyhow::Result<()> {
+                                    let file_cksums =
+                                        copy_vendor_sources(src_root, file_paths, &staging_dst)?;
+                                    write_checksum_json(
+                                        &staging_dst,
+                                        pkg_cksum.as_deref(),
+                                        &file_cksums,
+                                    )?;
+                                    replace_vendor_dir(&staging_dst, dst)?;
+                                    Ok(())
+                                })();
+                                let _ = fs::remove_dir_all(&staging_root);
+                                result?;
+                            }
+                        }
+                    }
+                    Ok::<_, anyhow::Error>(())
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("vendor thread panicked")?;
+        }
+        Ok::<_, anyhow::Error>(())
+    })?;
+
+    // Generate .cargo/config.toml with source replacements.
+    let vendor_config = generate_vendor_config(&sources, &vendor_dir)?;
+    fs::create_dir_all(&paths.cargo_home)?;
+    fs::write(paths.cargo_home.join("config.toml"), &vendor_config)?;
+
+    Ok(())
+}
+
+/// Returns `true` if this relative path should be included in the vendor dir.
+///
+/// Mirrors cargo's `vendor_this()`: excludes `.gitattributes`, `.gitignore`,
+/// `.git`, and `.cargo-ok`.
+fn vendor_this(relative: &Path) -> bool {
+    match relative.to_str() {
+        Some(".gitattributes" | ".gitignore" | ".git") => false,
+        Some(".cargo-ok") => false,
+        _ => true,
+    }
+}
+
+fn make_staging_destination(dst: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
+    let parent = dst
+        .parent()
+        .context("vendor destination must have a parent")?;
+    let leaf = dst
+        .file_name()
+        .context("vendor destination must have a file name")?;
+    let suffix = STAGING_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let staging_root = parent.join(format!(
+        ".reindeer-staging-{}-{}",
+        std::process::id(),
+        suffix,
+    ));
+    let _ = fs::remove_dir_all(&staging_root);
+    fs::create_dir_all(&staging_root)
+        .with_context(|| format!("failed to create {}", staging_root.display()))?;
+    Ok((staging_root.clone(), staging_root.join(leaf)))
+}
+
+fn replace_vendor_dir(staged_dst: &Path, dst: &Path) -> anyhow::Result<()> {
+    let _ = fs::remove_dir_all(dst);
+    fs::rename(staged_dst, dst).with_context(|| {
+        format!(
+            "failed to move staged vendor dir {} into {}",
+            staged_dst.display(),
+            dst.display(),
+        )
+    })?;
+    Ok(())
+}
+
+/// Walk a directory and compute SHA256 checksums for all regular files.
+fn compute_dir_checksums(root: &Path) -> anyhow::Result<BTreeMap<String, String>> {
+    let mut cksums = BTreeMap::new();
+
+    for entry in WalkDir::new(root) {
+        let entry = entry?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .expect("walkdir entry must be under root");
+        let contents =
+            fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+        let hash = sha2::Sha256::digest(&contents);
+        cksums.insert(
+            relative.to_str().expect("non-UTF8 path").replace('\\', "/"),
+            format!("{:x}", hash),
+        );
+    }
+
+    Ok(cksums)
+}
+
+/// Copy source files from a non-registry package into the vendor directory,
+/// computing per-file SHA256 checksums along the way.
+fn copy_vendor_sources(
+    src_root: &Path,
+    file_paths: &[PathBuf],
+    dst: &Path,
+) -> anyhow::Result<BTreeMap<String, String>> {
+    let mut cksums = BTreeMap::new();
+
+    for src_path in file_paths {
+        let relative = src_path.strip_prefix(src_root).with_context(|| {
+            format!("{} is not under {}", src_path.display(), src_root.display(),)
+        })?;
+
+        if !vendor_this(relative) {
+            continue;
+        }
+
+        // Build destination preserving directory structure.
+        let dst_path = relative
+            .iter()
+            .fold(dst.to_path_buf(), |acc, component| acc.join(component));
+
+        if let Some(parent) = dst_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let contents =
+            fs::read(src_path).with_context(|| format!("failed to read {}", src_path.display()))?;
+        let hash = sha2::Sha256::digest(&contents);
+        fs::write(&dst_path, &contents)
+            .with_context(|| format!("failed to write {}", dst_path.display()))?;
+
+        cksums.insert(
+            relative.to_str().expect("non-UTF8 path").replace('\\', "/"),
+            format!("{:x}", hash),
+        );
+    }
+
+    Ok(cksums)
+}
+
+/// Write `.cargo-checksum.json` into a vendored crate directory.
+fn write_checksum_json(
+    dst: &Path,
+    pkg_cksum: Option<&str>,
+    file_cksums: &BTreeMap<String, String>,
+) -> anyhow::Result<()> {
+    let json = serde_json::json!({
+        "package": pkg_cksum,
+        "files": file_cksums,
+    });
+    let cksum_path = dst.join(".cargo-checksum.json");
+    fs::write(&cksum_path, json.to_string())
+        .with_context(|| format!("failed to write {}", cksum_path.display()))
+}
+
+/// Generate a `.cargo/config.toml` string with source replacement entries
+/// that point all resolved sources to the `vendored-sources` directory.
+fn generate_vendor_config(
+    sources: &BTreeSet<SourceId>,
+    vendor_dir: &Path,
+) -> anyhow::Result<String> {
+    let mut remap = RemapConfig::default();
+    let merged = "vendored-sources";
+
+    for sid in sources {
+        let name = if sid.is_crates_io() {
+            CRATES_IO_REGISTRY.to_string()
+        } else {
+            sid.without_precise().as_url().to_string()
+        };
+
+        let source = if sid.is_crates_io() {
+            RemapSource {
+                replace_with: Some(merged.to_owned()),
+                ..RemapSource::default()
+            }
+        } else if sid.is_remote_registry() {
+            RemapSource {
+                registry: Some(sid.url().to_string()),
+                replace_with: Some(merged.to_owned()),
+                ..RemapSource::default()
+            }
+        } else if sid.is_git() {
+            let mut branch = None;
+            let mut tag = None;
+            let mut rev = None;
+            if let Some(reference) = sid.git_reference() {
+                match reference {
+                    GitReference::Branch(b) => branch = Some(b.clone()),
+                    GitReference::Tag(t) => tag = Some(t.clone()),
+                    GitReference::Rev(r) => rev = Some(r.clone()),
+                    GitReference::DefaultBranch => {}
+                }
+            }
+            RemapSource {
+                git: Some(sid.url().to_string()),
+                branch,
+                tag,
+                rev,
+                replace_with: Some(merged.to_owned()),
+                ..RemapSource::default()
+            }
+        } else {
+            anyhow::bail!("unsupported source type: {}", sid);
+        };
+
+        remap.sources.insert(name, source);
+    }
+
+    if !remap.sources.is_empty() {
+        remap.sources.insert(
+            merged.to_owned(),
+            RemapSource {
+                directory: Some(PathBuf::from("vendor")),
+                ..RemapSource::default()
+            },
+        );
+    }
+
+    toml::to_string(&remap).context("failed to serialize vendor config")
 }
 
 fn get_rustc(config: &Config, args: &Args) -> Option<PathBuf> {
@@ -1308,8 +1750,36 @@ impl<R: Read> Read for LimitReader<R> {
 
 #[cfg(test)]
 mod test {
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::path::Path;
+
     use super::Source;
+    use super::generate_vendor_config;
     use super::parse_source;
+
+    #[test]
+    fn test_generate_vendor_config_uses_relative_vendor_dir() {
+        let mut sources = BTreeSet::new();
+        sources.insert(
+            cargo::core::SourceId::from_url(
+                "registry+https://github.com/rust-lang/crates.io-index",
+            )
+            .expect("valid registry URL"),
+        );
+
+        let config =
+            generate_vendor_config(&sources, Path::new("/tmp/absolute/path/vendor")).unwrap();
+
+        assert!(
+            config.contains("directory = \"vendor\""),
+            "config should write a relative vendor directory: {config}"
+        );
+        assert!(
+            !config.contains("/tmp/absolute/path/vendor"),
+            "config should not embed an absolute vendor path: {config}"
+        );
+    }
 
     #[test]
     fn test_parses_source_git() {

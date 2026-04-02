@@ -3632,6 +3632,7 @@ dependencies = [
  "serde_json",
  "serde_starlark",
  "serde_with",
+ "sha2",
  "spdx",
  "strum",
  "syn 2.0.117",
