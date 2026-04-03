@@ -118,6 +118,14 @@ fn slow_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<
     run_cargo_json(config, cargo_home, None, args, &cargo_flags).context("parsing metadata")
 }
 
+/// Named flags for [`make_gctx`] so call sites are self-documenting.
+struct GctxProperties {
+    frozen: bool,
+    locked: bool,
+    offline: bool,
+    quiet: bool,
+}
+
 /// Build a cargo `GlobalContext` configured for the third-party directory.
 ///
 /// Shared by `fast_metadata` and `fast_vendor` so the cargo-as-a-library setup
@@ -126,10 +134,7 @@ fn make_gctx(
     config: &Config,
     args: &Args,
     paths: &Paths,
-    frozen: bool,
-    locked: bool,
-    offline: bool,
-    quiet: bool,
+    props: GctxProperties,
 ) -> anyhow::Result<cargo::GlobalContext> {
     let shell = cargo::core::Shell::new();
     let cwd = paths.third_party_dir.clone();
@@ -157,11 +162,11 @@ fn make_gctx(
     let target_dir = None;
     gctx.configure(
         verbose,
-        quiet,
+        props.quiet,
         color,
-        frozen,
-        locked,
-        offline,
+        props.frozen,
+        props.locked,
+        props.offline,
         &target_dir,
         &unstable_flags,
         &cli_config,
@@ -171,7 +176,17 @@ fn make_gctx(
 }
 
 fn fast_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<Metadata> {
-    let gctx = make_gctx(config, args, paths, true, true, true, false)?;
+    let gctx = make_gctx(
+        config,
+        args,
+        paths,
+        GctxProperties {
+            frozen: true,
+            locked: true,
+            offline: true,
+            quiet: false,
+        },
+    )?;
 
     // Load .cargo/config.toml (source replacements).
     let source_config = cargo::sources::SourceConfigMap::new(&gctx)?;
@@ -580,7 +595,17 @@ pub(crate) fn fast_vendor(
     args: &Args,
     paths: &Paths,
 ) -> anyhow::Result<()> {
-    let gctx = make_gctx(config, args, paths, false, false, false, true)?;
+    let gctx = make_gctx(
+        config,
+        args,
+        paths,
+        GctxProperties {
+            frozen: false,
+            locked: false,
+            offline: false,
+            quiet: true,
+        },
+    )?;
 
     let source_config = cargo::sources::SourceConfigMap::new(&gctx)?;
 
