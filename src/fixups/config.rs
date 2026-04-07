@@ -392,6 +392,7 @@ pub enum CargoEnv {
     CARGO_PKG_AUTHORS,
     CARGO_PKG_DESCRIPTION,
     CARGO_PKG_NAME,
+    CARGO_PKG_README,
     CARGO_PKG_REPOSITORY,
     CARGO_PKG_VERSION,
     CARGO_PKG_VERSION_MAJOR,
@@ -420,6 +421,7 @@ impl CargoEnv {
             // Set for both
             CargoEnv::CARGO_PKG_AUTHORS
             | CargoEnv::CARGO_PKG_DESCRIPTION
+            | CargoEnv::CARGO_PKG_README
             | CargoEnv::CARGO_PKG_REPOSITORY
             | CargoEnv::CARGO_PKG_VERSION_MAJOR
             | CargoEnv::CARGO_PKG_VERSION_MINOR

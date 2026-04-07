@@ -928,7 +928,7 @@ fn write_checksum_json(
 /// that point all resolved sources to the `vendored-sources` directory.
 fn generate_vendor_config(
     sources: &BTreeSet<SourceId>,
-    vendor_dir: &Path,
+    _vendor_dir: &Path,
 ) -> anyhow::Result<String> {
     let mut remap = RemapConfig::default();
     let merged = "vendored-sources";
@@ -1182,6 +1182,8 @@ pub struct Manifest {
     pub authors: Vec<String>,
     /// Source repository
     pub repository: Option<String>,
+    /// Path to README file
+    pub readme: Option<String>,
     /// Default edition for the package (if targets don't have it)
     pub edition: Edition,
     /// Name of a native library that the build script links
@@ -1776,7 +1778,6 @@ impl<R: Read> Read for LimitReader<R> {
 #[cfg(test)]
 mod test {
     use std::collections::BTreeSet;
-    use std::fs;
     use std::path::Path;
 
     use super::Source;
@@ -1806,6 +1807,7 @@ mod test {
         );
     }
 
+    #[test]
     fn test_generate_vendor_config_path_only_workspace() {
         // A workspace with only path dependencies has an empty sources set.
         // generate_vendor_config must still emit [source.vendored-sources] so

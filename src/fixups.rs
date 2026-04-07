@@ -1308,6 +1308,7 @@ impl<'meta> Fixups<'meta> {
                 | CargoEnv::CARGO_PKG_AUTHORS
                 | CargoEnv::CARGO_PKG_DESCRIPTION
                 | CargoEnv::CARGO_PKG_NAME
+                | CargoEnv::CARGO_PKG_README
                 | CargoEnv::CARGO_PKG_REPOSITORY
                 | CargoEnv::CARGO_PKG_VERSION
                 | CargoEnv::CARGO_PKG_VERSION_MAJOR
@@ -1403,6 +1404,10 @@ impl<'meta> Fixups<'meta> {
                 // Cargo provides "" if there is no `description` in Cargo.toml
                 StringOrPath::String(self.package.description.clone().unwrap_or_default())
             }
+            CargoEnv::CARGO_PKG_README => StringOrPath::String(resolve_readme(
+                self.package.readme.as_deref(),
+                self.manifest_dir,
+            )),
             CargoEnv::CARGO_PKG_REPOSITORY => {
                 // Cargo provides "" if there is no `repository` in Cargo.toml
                 StringOrPath::String(self.package.repository.clone().unwrap_or_default())
@@ -1641,5 +1646,68 @@ impl<'meta> Fixups<'meta> {
         }
 
         linker_flags
+    }
+}
+
+/// Resolve the CARGO_PKG_README value for a crate.
+///
+/// When `readme` is provided (from cargo metadata), absolute paths are made
+/// relative to `manifest_dir`. When absent, auto-infer `README.md` if it
+/// exists in the crate root, matching Cargo's default behavior.
+fn resolve_readme(readme: Option<&str>, manifest_dir: &Path) -> String {
+    match readme {
+        Some(readme_path) => {
+            // cargo metadata may provide an absolute path; make it
+            // relative to the crate root to match Cargo's behavior.
+            let p = Path::new(readme_path);
+            p.strip_prefix(manifest_dir)
+                .map(|r| r.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| readme_path.to_owned())
+        }
+        None => {
+            // Auto-infer README.md if present in the crate root.
+            if manifest_dir.join("README.md").exists() {
+                "README.md".to_owned()
+            } else {
+                String::new()
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::resolve_readme;
+
+    #[test]
+    fn readme_absolute_path_made_relative() {
+        let dir = tempfile::tempdir().unwrap();
+        let abs = dir.path().join("README.md");
+        let result = resolve_readme(Some(&abs.to_string_lossy()), dir.path());
+        assert_eq!(result, "README.md");
+    }
+
+    #[test]
+    fn readme_relative_path_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = resolve_readme(Some("docs/README.md"), dir.path());
+        assert_eq!(result, "docs/README.md");
+    }
+
+    #[test]
+    fn readme_none_auto_infers_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("README.md"), "# hello").unwrap();
+        let result = resolve_readme(None, dir.path());
+        assert_eq!(result, "README.md");
+    }
+
+    #[test]
+    fn readme_none_returns_empty_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = resolve_readme(None, dir.path());
+        assert_eq!(result, "");
     }
 }

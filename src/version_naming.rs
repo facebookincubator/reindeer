@@ -121,6 +121,7 @@ mod tests {
             manifest_path: Default::default(),
             authors: vec![],
             repository: None,
+            readme: None,
             edition: crate::cargo::Edition::Rust2021,
             links: None,
         }
