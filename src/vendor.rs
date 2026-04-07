@@ -49,6 +49,7 @@ pub(crate) fn cargo_vendor(
     #[cfg(fbcode_build)] no_fetch: bool,
     args: &Args,
     paths: &Paths,
+    fast: bool,
 ) -> anyhow::Result<()> {
     let vendordir = Path::new("vendor"); // relative to third_party_dir
     let full_vendor_dir = paths.third_party_dir.join("vendor");
@@ -86,9 +87,43 @@ pub(crate) fn cargo_vendor(
         fs::write(paths.cargo_home.join("config.toml"), config_toml)?;
         assert!(is_vendored(config, paths)?);
     } else {
-        log::info!("Running fast vendor (library mode)");
-        fast_vendor(config, no_delete, args, paths)?;
-        assert!(is_vendored(config, paths)?);
+        if fast {
+            log::info!("Running fast vendor (library mode)");
+            fast_vendor(config, no_delete, args, paths)?;
+            assert!(is_vendored(config, paths)?);
+        } else {
+            let mut cmdline = vec![
+                "vendor",
+                "--manifest-path",
+                paths.manifest_path.to_str().unwrap(),
+                full_vendor_dir.to_str().unwrap(),
+                "--versioned-dirs",
+            ];
+            if no_delete {
+                cmdline.push("--no-delete");
+            }
+
+            fs::create_dir_all(&paths.cargo_home)?;
+
+            log::info!("Running cargo {:?}", cmdline);
+            let mut cargoconfig =
+                cargo::run_cargo(config, Some(&paths.cargo_home), None, args, &cmdline)?;
+
+            // .cargo/config.toml will contain a section like this, in which we do
+            // not want an absolute path:
+            //
+            //     [source.vendored-sources]
+            //     directory = "vendor"
+            cargoconfig = cargoconfig.replace(
+                &*full_vendor_dir.to_string_lossy(),
+                &vendordir.to_string_lossy(),
+            );
+
+            fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
+            if !cargoconfig.is_empty() {
+                assert!(is_vendored(config, paths)?);
+            }
+        }
 
         if let VendorConfig::Source(source_config) = &config.vendor {
             post_process_vendor(&paths.third_party_dir, source_config, &config.buck)?;
