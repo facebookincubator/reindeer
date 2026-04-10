@@ -15,12 +15,14 @@ use serde::ser::SerializeMap as _;
 use serde::ser::SerializeSeq as _;
 
 use crate::cargo::Manifest;
+use crate::cargo::Source;
 
 #[derive(Clone)]
 pub struct TpMetadata {
     pub name: String,
     pub version: semver::Version,
     pub licenses: Vec<License>,
+    pub namespace: Option<String>,
 }
 
 impl Serialize for TpMetadata {
@@ -32,17 +34,42 @@ impl Serialize for TpMetadata {
             name,
             version,
             licenses,
+            namespace,
         } = self;
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("name", name)?;
+        if let Some(ns) = namespace {
+            map.serialize_entry("namespace", ns)?;
+        }
         map.serialize_entry("version", version)?;
         map.serialize_entry("licenses", &OneLineList(licenses))?;
         map.end()
     }
 }
 
+/// Extract the namespace (user/org) from a GitHub/GitLab/Bitbucket URL.
+///
+/// Per purl-spec, for github type packages, namespace is the user or organization.
+/// See: third-party/purl-spec/main/src/types-doc/github-definition.md
+fn extract_namespace_from_url(url: &str) -> Option<String> {
+    for host in ["github.com/", "gitlab.com/", "bitbucket.org/"] {
+        if let Some(after_host) = url.split(host).nth(1) {
+            if let Some(namespace) = after_host.split('/').next() {
+                if !namespace.is_empty() {
+                    return Some(namespace.to_lowercase());
+                }
+            }
+        }
+    }
+    None
+}
+
 impl TpMetadata {
     pub fn new(pkg: &Manifest) -> Self {
+        let namespace = match &pkg.source {
+            Source::Git { repo, .. } => extract_namespace_from_url(repo),
+            _ => None,
+        };
         TpMetadata {
             name: pkg.name.clone(),
             version: pkg.version.clone(),
@@ -50,6 +77,7 @@ impl TpMetadata {
                 None => Vec::new(),
                 Some(expr) => vec![format_spdx_license(expr)],
             },
+            namespace,
         }
     }
 }
