@@ -1188,6 +1188,8 @@ pub struct Manifest {
     pub edition: Edition,
     /// Name of a native library that the build script links
     pub links: Option<String>,
+    /// Minimum supported rustc version
+    pub rust_version: Option<String>,
 }
 
 impl Manifest {

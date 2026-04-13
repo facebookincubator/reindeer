@@ -124,6 +124,7 @@ mod tests {
             repository: None,
             edition: crate::cargo::Edition::Rust2021,
             links: None,
+            rust_version: None,
         }
     }
 

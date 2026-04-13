@@ -394,6 +394,7 @@ pub enum CargoEnv {
     CARGO_PKG_NAME,
     CARGO_PKG_README,
     CARGO_PKG_REPOSITORY,
+    CARGO_PKG_RUST_VERSION,
     CARGO_PKG_VERSION,
     CARGO_PKG_VERSION_MAJOR,
     CARGO_PKG_VERSION_MINOR,
@@ -423,6 +424,7 @@ impl CargoEnv {
             | CargoEnv::CARGO_PKG_DESCRIPTION
             | CargoEnv::CARGO_PKG_README
             | CargoEnv::CARGO_PKG_REPOSITORY
+            | CargoEnv::CARGO_PKG_RUST_VERSION
             | CargoEnv::CARGO_PKG_VERSION_MAJOR
             | CargoEnv::CARGO_PKG_VERSION_MINOR
             | CargoEnv::CARGO_PKG_VERSION_PATCH

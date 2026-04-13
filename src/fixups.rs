@@ -1310,6 +1310,7 @@ impl<'meta> Fixups<'meta> {
                 | CargoEnv::CARGO_PKG_NAME
                 | CargoEnv::CARGO_PKG_README
                 | CargoEnv::CARGO_PKG_REPOSITORY
+                | CargoEnv::CARGO_PKG_RUST_VERSION
                 | CargoEnv::CARGO_PKG_VERSION
                 | CargoEnv::CARGO_PKG_VERSION_MAJOR
                 | CargoEnv::CARGO_PKG_VERSION_MINOR
@@ -1411,6 +1412,10 @@ impl<'meta> Fixups<'meta> {
             CargoEnv::CARGO_PKG_REPOSITORY => {
                 // Cargo provides "" if there is no `repository` in Cargo.toml
                 StringOrPath::String(self.package.repository.clone().unwrap_or_default())
+            }
+            CargoEnv::CARGO_PKG_RUST_VERSION => {
+                // Cargo provides "" if there is no `rust_version` in Cargo.toml
+                StringOrPath::String(self.package.rust_version.clone().unwrap_or_default())
             }
             CargoEnv::CARGO_PKG_VERSION => StringOrPath::String(self.package.version.to_string()),
             CargoEnv::CARGO_PKG_VERSION_MAJOR => {
