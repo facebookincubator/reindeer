@@ -1180,10 +1180,10 @@ pub struct Manifest {
     /// List of authors
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub authors: Vec<String>,
-    /// Source repository
-    pub repository: Option<String>,
     /// Path to README file
     pub readme: Option<String>,
+    /// Source repository
+    pub repository: Option<String>,
     /// Default edition for the package (if targets don't have it)
     pub edition: Edition,
     /// Name of a native library that the build script links

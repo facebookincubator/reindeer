@@ -120,8 +120,8 @@ mod tests {
             features: Default::default(),
             manifest_path: Default::default(),
             authors: vec![],
-            repository: None,
             readme: None,
+            repository: None,
             edition: crate::cargo::Edition::Rust2021,
             links: None,
         }
