@@ -1184,6 +1184,8 @@ pub struct Manifest {
     pub readme: Option<String>,
     /// Source repository
     pub repository: Option<String>,
+    /// Crate's dedicated website that is not just the source repository or docs
+    pub homepage: Option<String>,
     /// Default edition for the package (if targets don't have it)
     pub edition: Edition,
     /// Name of a native library that the build script links

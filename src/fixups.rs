@@ -1307,6 +1307,7 @@ impl<'meta> Fixups<'meta> {
                 | CargoEnv::CARGO_MANIFEST_DIR
                 | CargoEnv::CARGO_PKG_AUTHORS
                 | CargoEnv::CARGO_PKG_DESCRIPTION
+                | CargoEnv::CARGO_PKG_HOMEPAGE
                 | CargoEnv::CARGO_PKG_NAME
                 | CargoEnv::CARGO_PKG_README
                 | CargoEnv::CARGO_PKG_REPOSITORY
@@ -1404,6 +1405,10 @@ impl<'meta> Fixups<'meta> {
             CargoEnv::CARGO_PKG_DESCRIPTION => {
                 // Cargo provides "" if there is no `description` in Cargo.toml
                 StringOrPath::String(self.package.description.clone().unwrap_or_default())
+            }
+            CargoEnv::CARGO_PKG_HOMEPAGE => {
+                // Cargo provides "" if there is no `homepage` in Cargo.toml
+                StringOrPath::String(self.package.homepage.clone().unwrap_or_default())
             }
             CargoEnv::CARGO_PKG_README => StringOrPath::String(resolve_readme(
                 self.package.readme.as_deref(),

@@ -122,6 +122,7 @@ mod tests {
             authors: vec![],
             readme: None,
             repository: None,
+            homepage: None,
             edition: crate::cargo::Edition::Rust2021,
             links: None,
             rust_version: None,
