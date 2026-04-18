@@ -1226,7 +1226,10 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
         // Git_fetch targets go above all other targets. In general a single
         // repository can be used as the source of multiple crates.
         GitFetch(&'a Name),
-        Owned(&'a PackageVersion, &'a Name, usize),
+        // Due to how PartialOrd is generated it will compare
+        // the fields of the tuple in order. This means the priority
+        // must come before the name in this defintion.
+        Owned(&'a PackageVersion, usize, &'a Name),
         // Root package goes last since it's an uninteresting list of
         // deps that looks awkward anywhere else.
         RootPackage,
@@ -1237,13 +1240,13 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
         // emitted by reindeer are always to a target within the same package.
         Rule::Alias(Alias {
             owner, sort_key, ..
-        }) => RuleSortKey::Owned(owner, sort_key, 0),
+        }) => RuleSortKey::Owned(owner, 0, sort_key),
         Rule::ExtractArchive(ExtractArchive {
             owner, sort_key, ..
         })
         | Rule::HttpArchive(HttpArchive {
             owner, sort_key, ..
-        }) => RuleSortKey::Owned(owner, sort_key, 1),
+        }) => RuleSortKey::Owned(owner, 1, sort_key),
         Rule::GitFetch(GitFetch { name, .. }) => RuleSortKey::GitFetch(name),
         Rule::Sources(Sources { owner, name, .. })
         | Rule::Filegroup(Filegroup { owner, name, .. })
@@ -1284,7 +1287,7 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
             owner,
             common: Common { name, .. },
             ..
-        }) => RuleSortKey::Owned(owner, name, 2),
+        }) => RuleSortKey::Owned(owner, 2, name),
         Rule::RootPackage(_) => RuleSortKey::RootPackage,
     }
 }
