@@ -1226,7 +1226,10 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
         // Git_fetch targets go above all other targets. In general a single
         // repository can be used as the source of multiple crates.
         GitFetch(&'a Name),
-        Owned(&'a PackageVersion, &'a Name, usize),
+        // Due to how PartialOrd is generated it will compare
+        // the fields of the tuple in order. This means the priority
+        // must come before the name in this defintion.
+        Owned(&'a PackageVersion, usize, &'a Name),
         // Root package goes last since it's an uninteresting list of
         // deps that looks awkward anywhere else.
         RootPackage,
@@ -1237,13 +1240,13 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
         // emitted by reindeer are always to a target within the same package.
         Rule::Alias(Alias {
             owner, sort_key, ..
-        }) => RuleSortKey::Owned(owner, sort_key, 0),
+        }) => RuleSortKey::Owned(owner, 0, sort_key),
         Rule::ExtractArchive(ExtractArchive {
             owner, sort_key, ..
         })
         | Rule::HttpArchive(HttpArchive {
             owner, sort_key, ..
-        }) => RuleSortKey::Owned(owner, sort_key, 1),
+        }) => RuleSortKey::Owned(owner, 1, sort_key),
         Rule::GitFetch(GitFetch { name, .. }) => RuleSortKey::GitFetch(name),
         Rule::Sources(Sources { owner, name, .. })
         | Rule::Filegroup(Filegroup { owner, name, .. })
@@ -1284,7 +1287,7 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
             owner,
             common: Common { name, .. },
             ..
-        }) => RuleSortKey::Owned(owner, name, 2),
+        }) => RuleSortKey::Owned(owner, 2, name),
         Rule::RootPackage(_) => RuleSortKey::RootPackage,
     }
 }
@@ -1391,4 +1394,111 @@ pub fn write_buckfile<'a>(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::collections::BTreeSet;
+
+    use semver::Version;
+
+    use super::Alias;
+    use super::BuildscriptGenrule;
+    use super::BuildscriptGenruleManifestDir;
+    use super::HttpArchive;
+    use super::Name;
+    use super::PackageVersion;
+    use super::PlatformBuildscriptGenrule;
+    use super::Rule;
+    use super::RuleRef;
+    use super::Visibility;
+
+    fn aws_lc_sys_owner() -> PackageVersion {
+        PackageVersion {
+            name: "aws-lc-sys".to_owned(),
+            version: Version::new(0, 40, 0),
+        }
+    }
+
+    fn http_archive(owner: PackageVersion, name: &str) -> Rule {
+        Rule::HttpArchive(HttpArchive {
+            owner,
+            name: Name(name.to_owned()),
+            sha256: String::new(),
+            strip_prefix: String::new(),
+            sub_targets: BTreeSet::new(),
+            urls: Vec::new(),
+            visibility: Visibility::Private,
+            sort_key: Name(name.to_owned()),
+        })
+    }
+
+    fn buildscript_genrule(owner: PackageVersion, name: &str) -> Rule {
+        Rule::BuildscriptGenrule(BuildscriptGenrule {
+            owner,
+            name: Name(name.to_owned()),
+            buildscript_rule: Name(format!("{name}-build")),
+            manifest_dir: BuildscriptGenruleManifestDir::None,
+            base: PlatformBuildscriptGenrule::default(),
+            platform: BTreeMap::new(),
+        })
+    }
+
+    // Regression test: within a package, the `http_archive` (priority 1)
+    // must sort before the `buildscript_run` genrule (priority 2), so the
+    // prelude's `buildscript_run` can see the archive via `rule_exists` and
+    // auto-detect `manifest_dir`. Previously the sort key was
+    // (owner, name, priority), so lexicographic name comparison ran before
+    // priority. For `aws-lc-sys 0.40.0` the build-script name
+    // `aws-lc-sys-0.40-build-script-main-run` sorted before
+    // `aws-lc-sys-0.40.0.crate` which put the genrule first
+    // in the generated BUCK file.
+    #[test]
+    fn http_archive_sorts_before_buildscript_run_within_package() {
+        let archive_name = "aws-lc-sys-0.40.0.crate";
+        let run_name = "aws-lc-sys-0.40-build-script-main-run";
+
+        // Confirm the premise of the bug: by pure name comparison, the
+        // build-script run would come first.
+        assert!(run_name < archive_name);
+
+        let owner = aws_lc_sys_owner();
+        let archive = http_archive(owner.clone(), archive_name);
+        let run = buildscript_genrule(owner, run_name);
+
+        let mut rules = [&run, &archive];
+        rules.sort();
+
+        assert!(matches!(rules[0], Rule::HttpArchive(_)));
+        assert!(matches!(rules[1], Rule::BuildscriptGenrule(_)));
+    }
+
+    // Priority ordering must also put `alias` (priority 0) ahead of the
+    // `http_archive` (priority 1) regardless of name.
+    #[test]
+    fn alias_sorts_before_http_archive_within_package() {
+        let owner = aws_lc_sys_owner();
+        let archive_name = "aws-lc-sys-0.40.0.crate";
+        // Pick an alias name that sorts after the archive name so only the
+        // priority can produce the correct order.
+        let alias_name = "aws-lc-sys-zzz";
+        assert!(alias_name > archive_name);
+
+        let archive = http_archive(owner.clone(), archive_name);
+        let alias = Rule::Alias(Alias {
+            owner,
+            name: Name(alias_name.to_owned()),
+            actual: RuleRef::new(format!(":{archive_name}")),
+            platforms: None,
+            visibility: Visibility::Private,
+            sort_key: Name(alias_name.to_owned()),
+        });
+
+        let mut rules = [&archive, &alias];
+        rules.sort();
+
+        assert!(matches!(rules[0], Rule::Alias(_)));
+        assert!(matches!(rules[1], Rule::HttpArchive(_)));
+    }
 }
