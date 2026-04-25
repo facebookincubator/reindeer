@@ -2742,7 +2742,7 @@ dependencies = [
 [[package]]
 name = "libssh2-sys"
 version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+https://github.com/alexcrichton/ssh2-rs?rev=5219ffbaa5b0a170376d6d1896c5cb5367bdedb8#5219ffbaa5b0a170376d6d1896c5cb5367bdedb8"
 dependencies = [
  "cc",
  "libc",
