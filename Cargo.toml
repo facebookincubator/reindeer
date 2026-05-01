@@ -32,6 +32,7 @@ monostate = "1"
 nom = "8"
 nom-language = "0.1"
 proc-macro2 = { version = "1.0.106", features = ["span-locations"] }
+rlimit = "0.11"
 semver = { version = "1.0.28", features = ["serde"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 serde_json = { version = "1.0.140", features = ["alloc", "float_roundtrip", "raw_value", "unbounded_depth"] }

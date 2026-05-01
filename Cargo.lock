@@ -3608,6 +3608,7 @@ dependencies = [
  "nom 8.0.0",
  "nom-language",
  "proc-macro2",
+ "rlimit",
  "semver",
  "serde",
  "serde_json",
@@ -3634,6 +3635,15 @@ checksum = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2"
 dependencies = [
  "hmac",
  "subtle",
+]
+
+[[package]]
+name = "rlimit"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f35ee2729c56bb610f6dba436bf78135f728b7373bdffae2ec815b2d3eb98cc3"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
