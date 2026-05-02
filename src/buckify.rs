@@ -691,10 +691,10 @@ fn generate_target_rules<'a>(
         // individual contained files.
         //
         // But we validate globs anyway.
-        for _ in license_globs.walk(manifest_dir) {}
+        license_globs.walk(manifest_dir)?;
     } else {
         let rel_manifest = relative_path(&paths.third_party_dir, manifest_dir);
-        for path in license_globs.walk(manifest_dir) {
+        for path in license_globs.walk(manifest_dir)? {
             licenses.insert(BuckPath(rel_manifest.join(path)));
         }
         if let Some(license_file) = &pkg.license_file {
@@ -733,7 +733,7 @@ fn generate_target_rules<'a>(
             let dir_containing_src = tgt.src_path.parent().unwrap();
             let pattern = relative_path(manifest_dir, dir_containing_src).join("**/*.rs");
             let glob = Globs::new(GlobSetKind::from_iter([pattern]).unwrap(), NO_EXCLUDE);
-            srcs.extend(glob.walk(manifest_dir));
+            srcs.extend(glob.walk(manifest_dir)?);
         }
 
         evaluate_for_platforms(
@@ -749,7 +749,7 @@ fn generate_target_rules<'a>(
             // when we are not producing a srcs list, still evaluate globs in
             // the fixup against the contents of the manifest directory so that
             // unmatched globs are accurately reported.
-            fixups.validate_srcs_fixups(tgt, platform);
+            fixups.validate_srcs_fixups(tgt, platform)?;
         }
         if let VendorConfig::LocalRegistry = config.vendor {
             let extract_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
@@ -786,7 +786,7 @@ fn generate_target_rules<'a>(
     // be emitted if we actually emit some rules below.
     let mut platform_deps = Vec::new();
     for &platform_name in &compatible_platforms {
-        let deps = fixups.compute_deps(platform_name, index, tgt, collision_info);
+        let deps = fixups.compute_deps(platform_name, index, tgt, collision_info)?;
         platform_deps.push((platform_name, deps));
     }
 
@@ -1321,20 +1321,20 @@ fn generate_target_rules<'a>(
             if config.buck.split {
                 // e.g. ["src/lib.rs"]
                 FilegroupSources::Set(BTreeSet::from_iter(
-                    export_globs.walk(manifest_dir).map(BuckPath),
+                    export_globs.walk(manifest_dir)?.into_iter().map(BuckPath),
                 ))
             } else {
                 // e.g. {"src/lib.rs": "vendor/foo-1.0.0/src/lib.rs"}
-                FilegroupSources::Map(BTreeMap::from_iter(export_globs.walk(manifest_dir).map(
-                    |path| {
+                FilegroupSources::Map(BTreeMap::from_iter(
+                    export_globs.walk(manifest_dir)?.into_iter().map(|path| {
                         let source = mapped_manifest_dir.join(&path);
                         (BuckPath(path), SubtargetOrPath::Path(BuckPath(source)))
-                    },
-                )))
+                    }),
+                ))
             }
         } else {
             // Validate the globs anyway
-            for _ in export_globs.walk(manifest_dir) {}
+            export_globs.walk(manifest_dir)?;
 
             if let VendorConfig::LocalRegistry = config.vendor {
                 // e.g. {":foo-1.0.0.git": "foo-1.0.0"}

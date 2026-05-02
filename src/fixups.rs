@@ -519,18 +519,21 @@ impl<'meta> Fixups<'meta> {
                         },
                     },
                     srcs: Globs::new(srcs, exclude)
-                        .walk(self.manifest_dir)
+                        .walk(self.manifest_dir)?
+                        .into_iter()
                         .map(|path| SubtargetOrPath::Path(BuckPath(path)))
                         .collect(),
                     headers: Globs::new(headers, exclude)
-                        .walk(self.manifest_dir)
+                        .walk(self.manifest_dir)?
+                        .into_iter()
                         .map(|path| SubtargetOrPath::Path(BuckPath(path)))
                         .collect(),
                     exported_headers: match exported_headers {
                         ExportedHeaders::Set(exported_headers) => {
                             let exported_header_globs = Globs::new(exported_headers, exclude);
                             let exported_headers = exported_header_globs
-                                .walk(self.manifest_dir)
+                                .walk(self.manifest_dir)?
+                                .into_iter()
                                 .map(|path| SubtargetOrPath::Path(BuckPath(path)))
                                 .collect();
                             SetOrMap::Set(exported_headers)
@@ -609,7 +612,8 @@ impl<'meta> Fixups<'meta> {
                     },
                     // Just collect the sources, excluding things in the exclude list
                     srcs: Globs::new(srcs, exclude)
-                        .walk(self.manifest_dir)
+                        .walk(self.manifest_dir)?
+                        .into_iter()
                         .map(|path| self.subtarget_or_path(&path))
                         .collect::<anyhow::Result<_>>()?,
                     // Collect the nominated headers, plus everything in the fixup include
@@ -617,7 +621,7 @@ impl<'meta> Fixups<'meta> {
                     headers: {
                         let globs = Globs::new(headers, exclude);
                         let mut headers = BTreeSet::new();
-                        for path in globs.walk(self.manifest_dir) {
+                        for path in globs.walk(self.manifest_dir)? {
                             headers.insert(self.subtarget_or_path(&path)?);
                         }
 
@@ -627,7 +631,7 @@ impl<'meta> Fixups<'meta> {
                         );
                         for fixup_include_path in fixup_include_paths {
                             for path in
-                                globs.walk(self.fixup_config.fixup_dir.join(fixup_include_path))
+                                globs.walk(self.fixup_config.fixup_dir.join(fixup_include_path))?
                             {
                                 headers.insert(SubtargetOrPath::Path(BuckPath(
                                     rel_fixup.join(fixup_include_path).join(path),
@@ -641,7 +645,8 @@ impl<'meta> Fixups<'meta> {
                         ExportedHeaders::Set(exported_headers) => {
                             let exported_header_globs = Globs::new(exported_headers, exclude);
                             let exported_headers = exported_header_globs
-                                .walk(self.manifest_dir)
+                                .walk(self.manifest_dir)?
+                                .into_iter()
                                 .map(|path| self.subtarget_or_path(&path))
                                 .collect::<anyhow::Result<_>>()?;
                             SetOrMap::Set(exported_headers)
@@ -701,7 +706,7 @@ impl<'meta> Fixups<'meta> {
         } in prebuilt_cxx_library
         {
             let static_lib_globs = Globs::new(static_libs, NO_EXCLUDE);
-            for static_lib in static_lib_globs.walk(self.manifest_dir) {
+            for static_lib in static_lib_globs.walk(self.manifest_dir)? {
                 let static_lib_file_name = static_lib.file_name().unwrap().to_string_lossy();
                 let prebuilt_cxx_library_target = if self.config.buck.split {
                     let target_name = Name(format!("{}-{}", name, static_lib_file_name));
@@ -1107,7 +1112,9 @@ impl<'meta> Fixups<'meta> {
         index: &'meta Index<'meta>,
         target: &'meta ManifestTarget,
         collision_info: &CollisionInfo,
-    ) -> HashMap<(RuleRef, Option<&'meta str>, &'meta NodeDepKind), Option<&'meta Manifest>> {
+    ) -> anyhow::Result<
+        HashMap<(RuleRef, Option<&'meta str>, &'meta NodeDepKind), Option<&'meta Manifest>>,
+    > {
         let mut ret = HashMap::new();
 
         // Get dependencies according to Cargo.
@@ -1182,7 +1189,7 @@ impl<'meta> Fixups<'meta> {
                     continue;
                 }
                 let static_lib_globs = Globs::new(static_libs, NO_EXCLUDE);
-                for static_lib in static_lib_globs.walk(self.manifest_dir) {
+                for static_lib in static_lib_globs.walk(self.manifest_dir)? {
                     ret.insert(
                         (
                             RuleRef::new(if self.config.buck.split {
@@ -1268,7 +1275,7 @@ impl<'meta> Fixups<'meta> {
             );
         }
 
-        ret
+        Ok(ret)
     }
 
     pub fn omit_dep(&self, platform_name: &PlatformName, dep: &str) -> bool {
@@ -1531,7 +1538,7 @@ impl<'meta> Fixups<'meta> {
                 }
             } else {
                 let globs = Globs::new(GlobSetKind::from_iter([rest_of_glob])?, NO_EXCLUDE);
-                for path in globs.walk(&dir_containing_extra_srcs) {
+                for path in globs.walk(&dir_containing_extra_srcs)? {
                     insert(&dir_containing_extra_srcs.join(path));
                 }
             }
@@ -1540,7 +1547,11 @@ impl<'meta> Fixups<'meta> {
         Ok(extra_srcs)
     }
 
-    pub fn validate_srcs_fixups(&self, target: &ManifestTarget, platform_name: &PlatformName) {
+    pub fn validate_srcs_fixups(
+        &self,
+        target: &ManifestTarget,
+        platform_name: &PlatformName,
+    ) -> anyhow::Result<()> {
         let buildscript = target.crate_bin() && target.kind_custom_build();
 
         for fixup in self.configs(platform_name) {
@@ -1549,9 +1560,10 @@ impl<'meta> Fixups<'meta> {
             } else {
                 &fixup.extra_srcs
             };
-            for _ in Globs::new(extra_srcs, NO_EXCLUDE).walk(self.manifest_dir) {}
-            for _ in Globs::new(&fixup.omit_srcs, NO_EXCLUDE).walk(self.manifest_dir) {}
+            Globs::new(extra_srcs, NO_EXCLUDE).walk(self.manifest_dir)?;
+            Globs::new(&fixup.omit_srcs, NO_EXCLUDE).walk(self.manifest_dir)?;
         }
+        Ok(())
     }
 
     pub fn compute_mapped_srcs(
