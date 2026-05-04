@@ -6,6 +6,7 @@
  */
 
 use std::fmt;
+use std::io::ErrorKind;
 use std::ops::Range;
 use std::path;
 use std::path::Path;
@@ -13,7 +14,6 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
-use anyhow::Context;
 use globset::GlobBuilder;
 use globset::GlobMatcher;
 use globset::GlobSet;
@@ -183,7 +183,25 @@ impl<'a> Globs<'a> {
         let dir = dir.as_ref();
         let mut result = Vec::new();
         for entry in WalkDir::new(dir) {
-            let entry = entry.with_context(|| format!("failed to walk {}", dir.display()))?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(walkdir_error) => {
+                    if let Some(io_error) = walkdir_error.io_error()
+                        && io_error.kind() == ErrorKind::NotFound
+                    {
+                        // This can happen in a correctly-written fixup that applies
+                        // to multiple library versions, with `extra_srcs` containing
+                        // some globs referring to directories that only exist within
+                        // a subset of the versions.
+                        //
+                        // If a glob does not match any file in any library version,
+                        // that gets reported as an error by a different codepath.
+                        continue;
+                    }
+                    return Err(anyhow::Error::new(walkdir_error)
+                        .context(format!("failed to walk {}", dir.display())));
+                }
+            };
             if entry.file_type().is_dir() {
                 continue;
             }
