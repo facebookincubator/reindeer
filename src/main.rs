@@ -45,6 +45,8 @@ mod lockfile;
 mod path;
 mod platform;
 mod remap;
+#[cfg(unix)]
+mod rlimit;
 mod srcfiles;
 mod subtarget;
 mod tp_metadata;
@@ -280,6 +282,9 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
         .format_timestamp(None)
         .init();
+
+    #[cfg(unix)]
+    rlimit::raise_nofile_limit();
 
     if let Err(err) = try_main() {
         log::error!("{:?}", err);

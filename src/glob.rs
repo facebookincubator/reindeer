@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
+use anyhow::Context;
 use globset::GlobBuilder;
 use globset::GlobMatcher;
 use globset::GlobSet;
@@ -174,25 +175,27 @@ impl<'a> Globs<'a> {
     }
 
     /// Returns relative paths (relative to `dir`) of all the matching files.
-    pub fn walk(&self, dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
+    ///
+    /// Any error from `WalkDir` (a missing directory, EMFILE, permission
+    /// failures, etc.) is surfaced. We may need to add some deliberate
+    /// error-swallowing for actually-irrelevant errors in the future.
+    pub fn walk(&self, dir: impl AsRef<Path>) -> anyhow::Result<Vec<PathBuf>> {
         let dir = dir.as_ref();
-        WalkDir::new(dir)
-            .into_iter()
-            .filter_map(Result::ok)
-            .filter(|entry| !entry.file_type().is_dir())
-            .filter_map(move |entry| {
-                let path = entry
-                    .path()
-                    .strip_prefix(dir)
-                    .expect("walkdir produced paths not inside intended dir");
-                if self.globset.is_match(path) && !self.exceptset.is_match(path) {
-                    Some(path.to_owned())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
+        let mut result = Vec::new();
+        for entry in WalkDir::new(dir) {
+            let entry = entry.with_context(|| format!("failed to walk {}", dir.display()))?;
+            if entry.file_type().is_dir() {
+                continue;
+            }
+            let path = entry
+                .path()
+                .strip_prefix(dir)
+                .expect("walkdir produced paths not inside intended dir");
+            if self.globset.is_match(path) && !self.exceptset.is_match(path) {
+                result.push(path.to_owned());
+            }
+        }
+        Ok(result)
     }
 }
 
