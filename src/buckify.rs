@@ -1526,7 +1526,15 @@ pub(crate) fn buckify(
 
     let fixups = FixupsCache::new(config, paths);
     let index = Index::new(config, &metadata, &fixups)?;
-    let collision_info = CollisionInfo::new(&metadata.packages.iter().collect::<Vec<_>>());
+    let packages = metadata.packages.iter().collect::<Vec<_>>();
+    let collision_info = if config.buck.split {
+        CollisionInfo::new(&packages)
+    } else {
+        CollisionInfo::new_with_reserved(
+            &packages,
+            index.public_packages.values().flatten().copied(),
+        )
+    };
     let context = RuleContext {
         config,
         paths,

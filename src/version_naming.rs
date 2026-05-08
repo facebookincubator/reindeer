@@ -43,6 +43,8 @@ fn short_version(version: &semver::Version) -> String {
 pub struct CollisionInfo {
     /// Set of (crate_name, short_version) keys that have more than one package.
     collisions: HashSet<(String, String)>,
+    /// Auto-generated target displays must not use any of these names.
+    reserved_target_displays: HashSet<String>,
 }
 
 impl CollisionInfo {
@@ -59,7 +61,23 @@ impl CollisionInfo {
             .filter(|(_, count)| *count > 1)
             .map(|(key, _)| key)
             .collect();
-        CollisionInfo { collisions }
+        CollisionInfo {
+            collisions,
+            reserved_target_displays: HashSet::default(),
+        }
+    }
+
+    /// Build collision info with additional target display names to avoid.
+    pub fn new_with_reserved<'a>(
+        packages: &[&Manifest],
+        reserved_target_displays: impl IntoIterator<Item = &'a str>,
+    ) -> Self {
+        let mut collision_info = Self::new(packages);
+        collision_info.reserved_target_displays = reserved_target_displays
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        collision_info
     }
 
     /// Returns the version string for use in target names.
@@ -76,16 +94,20 @@ impl CollisionInfo {
     /// - Unrecognized falls back to full semver (matches vendored dir name)
     pub fn target_version(&self, pkg: &Manifest) -> String {
         let short = short_version(&pkg.version);
+        let reserved_collision = self
+            .reserved_target_displays
+            .contains(&format!("{}-{}", pkg.name, short));
 
-        let needs_suffix = !matches!(pkg.source, Source::CratesIo)
-            && self.collisions.contains(&(pkg.name.clone(), short.clone()));
+        let needs_suffix = reserved_collision
+            || (!matches!(pkg.source, Source::CratesIo)
+                && self.collisions.contains(&(pkg.name.clone(), short.clone())));
 
         if !needs_suffix {
             return short;
         }
 
         let suffix = match &pkg.source {
-            Source::CratesIo => unreachable!(),
+            Source::CratesIo => return pkg.version.to_string(),
             Source::Git { commit_hash, .. } => commit_hash.chars().take(8).collect(),
             Source::Local => "local".to_owned(),
             Source::Unrecognized(_) => return pkg.version.to_string(),
@@ -365,5 +387,48 @@ mod tests {
         let info = CollisionInfo::new(&[&m_crates, &m_git]);
 
         assert_eq!(info.target_version(&m_git), "1-5ee5tar5");
+    }
+
+    #[test]
+    fn rename_collides_with_cratesio_short_name() {
+        let m = make_manifest("bincode", "2.0.1", Source::CratesIo);
+        let info = CollisionInfo::new_with_reserved(&[&m], ["bincode-2"]);
+
+        assert_eq!(info.target_version(&m), "2.0.1");
+        assert_eq!(info.target_display(&m), "bincode-2.0.1");
+    }
+
+    #[test]
+    fn rename_collides_with_zero_major_short_name() {
+        let m = make_manifest("winnow", "0.7.3", Source::CratesIo);
+        let info = CollisionInfo::new_with_reserved(&[&m], ["winnow-0.7"]);
+
+        assert_eq!(info.target_version(&m), "0.7.3");
+        assert_eq!(info.target_display(&m), "winnow-0.7.3");
+    }
+
+    #[test]
+    fn rename_with_no_collision_is_no_op() {
+        let m = make_manifest("bincode", "2.0.1", Source::CratesIo);
+        let info = CollisionInfo::new_with_reserved(&[&m], ["bincode-two"]);
+
+        assert_eq!(info.target_version(&m), "2");
+        assert_eq!(info.target_display(&m), "bincode-2");
+    }
+
+    #[test]
+    fn rename_collides_with_git_short_name() {
+        let m = make_manifest(
+            "bincode",
+            "2.0.1",
+            Source::Git {
+                repo: "https://github.com/example/bincode".to_owned(),
+                commit_hash: "abcdef0123456789abcdef0123456789abcdef01".to_owned(),
+            },
+        );
+        let info = CollisionInfo::new_with_reserved(&[&m], ["bincode-2"]);
+
+        assert_eq!(info.target_version(&m), "2-abcdef01");
+        assert_eq!(info.target_display(&m), "bincode-2-abcdef01");
     }
 }
