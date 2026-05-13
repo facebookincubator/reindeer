@@ -1781,12 +1781,30 @@ impl<R: Read> Read for LimitReader<R> {
 
 #[cfg(test)]
 mod test {
+    use std::collections::BTreeMap;
     use std::collections::BTreeSet;
+    use std::io::Cursor;
+    use std::io::Read;
     use std::path::Path;
+    use std::path::PathBuf;
 
+    use sha2::Digest;
+
+    use super::ArtifactKind;
+    use super::CrateType;
+    use super::DepKind;
+    use super::LimitReader;
+    use super::ManifestTarget;
+    use super::NodeDepKind;
     use super::Source;
+    use super::TargetKind;
+    use super::compute_dir_checksums;
+    use super::copy_vendor_sources;
     use super::generate_vendor_config;
+    use super::make_staging_destination;
     use super::parse_source;
+    use super::vendor_this;
+    use super::write_checksum_json;
 
     #[test]
     fn test_generate_vendor_config_uses_relative_vendor_dir() {
@@ -1841,5 +1859,393 @@ mod test {
                 }),
             );
         }
+    }
+
+    // Invariant: parse_source recognizes the canonical crates.io registry URL
+    #[test]
+    fn test_parse_source_crates_io() {
+        assert_eq!(
+            parse_source("registry+https://github.com/rust-lang/crates.io-index"),
+            Some(Source::CratesIo),
+        );
+    }
+
+    // Invariant: parse_source returns None for unrecognized source formats
+    #[test]
+    fn test_parse_source_unrecognized() {
+        assert_eq!(parse_source(""), None);
+        assert_eq!(parse_source("path+file:///local/crate"), None);
+        assert_eq!(
+            parse_source("registry+https://example.com/custom-registry"),
+            None,
+        );
+    }
+
+    // Invariant: parse_source returns None for git URL with no commit hash anywhere
+    #[test]
+    fn test_parse_source_git_no_hash() {
+        assert_eq!(parse_source("git+https://github.com/owner/repo.git"), None,);
+    }
+
+    // Invariant: vendor_this excludes .gitattributes, .gitignore, .git, .cargo-ok
+    #[test]
+    fn test_vendor_this_excludes_dotfiles() {
+        assert!(!vendor_this(Path::new(".gitattributes")));
+        assert!(!vendor_this(Path::new(".gitignore")));
+        assert!(!vendor_this(Path::new(".git")));
+        assert!(!vendor_this(Path::new(".cargo-ok")));
+    }
+
+    // Invariant: vendor_this includes normal source files and nested paths
+    #[test]
+    fn test_vendor_this_includes_normal_files() {
+        assert!(vendor_this(Path::new("src/lib.rs")));
+        assert!(vendor_this(Path::new("Cargo.toml")));
+        assert!(vendor_this(Path::new("README.md")));
+        assert!(vendor_this(Path::new("build.rs")));
+        assert!(vendor_this(Path::new(".cargo/config.toml")));
+    }
+
+    // Invariant: generate_vendor_config emits git source replacement with branch/tag/rev fields
+    #[test]
+    fn test_generate_vendor_config_git_source() {
+        let mut sources = BTreeSet::new();
+        let sid =
+            cargo::core::SourceId::from_url("git+https://github.com/example/crate.git?branch=main")
+                .expect("valid git URL");
+        sources.insert(sid);
+
+        let config = generate_vendor_config(&sources, Path::new("/vendor")).unwrap();
+        assert!(
+            config.contains("git = \"https://github.com/example/crate.git\""),
+            "config must contain git URL: {config}",
+        );
+        assert!(
+            config.contains("branch = \"main\""),
+            "config must contain branch: {config}",
+        );
+        assert!(
+            config.contains("replace-with = \"vendored-sources\""),
+            "config must redirect to vendored-sources: {config}",
+        );
+    }
+
+    // Invariant: ArtifactKind deserializes "bin" as EveryBin, not Bin("bin")
+    #[test]
+    fn test_artifact_kind_deserialize_bin() {
+        let kind: ArtifactKind = serde_json::from_str("\"bin\"").unwrap();
+        assert_eq!(kind, ArtifactKind::EveryBin);
+    }
+
+    // Invariant: ArtifactKind deserializes "staticlib" and "cdylib" as named variants
+    #[test]
+    fn test_artifact_kind_deserialize_staticlib_cdylib() {
+        let kind: ArtifactKind = serde_json::from_str("\"staticlib\"").unwrap();
+        assert_eq!(kind, ArtifactKind::Staticlib);
+
+        let kind: ArtifactKind = serde_json::from_str("\"cdylib\"").unwrap();
+        assert_eq!(kind, ArtifactKind::Cdylib);
+    }
+
+    // Invariant: ArtifactKind deserializes "bin:<name>" as Bin(name)
+    #[test]
+    fn test_artifact_kind_deserialize_named_bin() {
+        let kind: ArtifactKind = serde_json::from_str("\"bin:my-tool\"").unwrap();
+        assert_eq!(kind, ArtifactKind::Bin("my-tool".to_owned()));
+    }
+
+    // Invariant: ArtifactKind deserialization rejects unknown strings
+    #[test]
+    fn test_artifact_kind_deserialize_invalid() {
+        let result = serde_json::from_str::<ArtifactKind>("\"dylib\"");
+        assert!(result.is_err());
+
+        let result = serde_json::from_str::<ArtifactKind>("\"unknown\"");
+        assert!(result.is_err());
+    }
+
+    // Invariant: deserialize_empty_string_as_none maps "" to None and non-empty to Some
+    #[test]
+    fn test_deserialize_empty_string_as_none() {
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            #[serde(deserialize_with = "super::deserialize_empty_string_as_none")]
+            value: Option<String>,
+        }
+
+        let w: Wrapper = serde_json::from_str(r#"{"value": ""}"#).unwrap();
+        assert_eq!(w.value, None);
+
+        let w: Wrapper = serde_json::from_str(r#"{"value": "hello"}"#).unwrap();
+        assert_eq!(w.value, Some("hello".to_owned()));
+    }
+
+    // Invariant: deserialize_default_from_null maps null to Default::default()
+    #[test]
+    fn test_deserialize_default_from_null() {
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            #[serde(deserialize_with = "super::deserialize_default_from_null")]
+            items: Vec<String>,
+        }
+
+        let w: Wrapper = serde_json::from_str(r#"{"items": null}"#).unwrap();
+        assert!(w.items.is_empty());
+
+        let w: Wrapper = serde_json::from_str(r#"{"items": ["a", "b"]}"#).unwrap();
+        assert_eq!(w.items, vec!["a", "b"]);
+    }
+
+    // Invariant: kind_lib returns true for both Rlib and Lib target kinds
+    #[test]
+    fn test_manifest_target_kind_lib() {
+        let target = ManifestTarget {
+            name: "foo".to_owned(),
+            kind: BTreeSet::from([TargetKind::Rlib]),
+            crate_types: BTreeSet::new(),
+            src_path: PathBuf::from("src/lib.rs"),
+            edition: None,
+            required_features: BTreeSet::new(),
+            doctest: false,
+        };
+        assert!(target.kind_lib());
+        assert!(!target.kind_proc_macro());
+
+        let target = ManifestTarget {
+            name: "bar".to_owned(),
+            kind: BTreeSet::from([TargetKind::Lib]),
+            crate_types: BTreeSet::new(),
+            src_path: PathBuf::from("src/lib.rs"),
+            edition: None,
+            required_features: BTreeSet::new(),
+            doctest: false,
+        };
+        assert!(target.kind_lib());
+    }
+
+    // Invariant: kind_proc_macro only returns true for ProcMacro kind
+    #[test]
+    fn test_manifest_target_kind_proc_macro() {
+        let target = ManifestTarget {
+            name: "derive_foo".to_owned(),
+            kind: BTreeSet::from([TargetKind::ProcMacro]),
+            crate_types: BTreeSet::from([CrateType::ProcMacro]),
+            src_path: PathBuf::from("src/lib.rs"),
+            edition: None,
+            required_features: BTreeSet::new(),
+            doctest: false,
+        };
+        assert!(target.kind_proc_macro());
+        assert!(!target.kind_lib());
+    }
+
+    // Invariant: crate_lib returns true for Rlib, Dylib, or Lib crate types
+    #[test]
+    fn test_manifest_target_crate_lib() {
+        let target = ManifestTarget {
+            name: "foo".to_owned(),
+            kind: BTreeSet::from([TargetKind::Lib]),
+            crate_types: BTreeSet::from([CrateType::Rlib]),
+            src_path: PathBuf::from("src/lib.rs"),
+            edition: None,
+            required_features: BTreeSet::new(),
+            doctest: false,
+        };
+        assert!(target.crate_lib());
+
+        let target = ManifestTarget {
+            name: "bar".to_owned(),
+            kind: BTreeSet::from([TargetKind::Lib]),
+            crate_types: BTreeSet::from([CrateType::Dylib]),
+            src_path: PathBuf::from("src/lib.rs"),
+            edition: None,
+            required_features: BTreeSet::new(),
+            doctest: false,
+        };
+        assert!(target.crate_lib());
+
+        let bin_target = ManifestTarget {
+            name: "baz".to_owned(),
+            kind: BTreeSet::from([TargetKind::Bin]),
+            crate_types: BTreeSet::from([CrateType::Bin]),
+            src_path: PathBuf::from("src/main.rs"),
+            edition: None,
+            required_features: BTreeSet::new(),
+            doctest: false,
+        };
+        assert!(!bin_target.crate_lib());
+    }
+
+    // Invariant: target_req returns Lib when artifact is None
+    #[test]
+    fn test_node_dep_kind_target_req_lib() {
+        assert_eq!(NodeDepKind::ORDINARY.target_req(), super::TargetReq::Lib);
+    }
+
+    // Invariant: target_req returns Staticlib/Cdylib for those artifact kinds
+    #[test]
+    fn test_node_dep_kind_target_req_staticlib_cdylib() {
+        let dep = NodeDepKind {
+            kind: DepKind::Normal,
+            target: None,
+            artifact: Some(ArtifactKind::Staticlib),
+            extern_name: None,
+            compile_target: None,
+            bin_name: None,
+        };
+        assert_eq!(dep.target_req(), super::TargetReq::Staticlib);
+
+        let dep = NodeDepKind {
+            kind: DepKind::Normal,
+            target: None,
+            artifact: Some(ArtifactKind::Cdylib),
+            extern_name: None,
+            compile_target: None,
+            bin_name: None,
+        };
+        assert_eq!(dep.target_req(), super::TargetReq::Cdylib);
+    }
+
+    // Invariant: target_req returns Bin(name) when artifact is Bin/EveryBin with bin_name
+    #[test]
+    fn test_node_dep_kind_target_req_bin_with_name() {
+        let dep = NodeDepKind {
+            kind: DepKind::Normal,
+            target: None,
+            artifact: Some(ArtifactKind::EveryBin),
+            extern_name: None,
+            compile_target: None,
+            bin_name: Some("my-bin".to_owned()),
+        };
+        assert_eq!(dep.target_req(), super::TargetReq::Bin("my-bin"));
+    }
+
+    // Invariant: target_req panics for Bin/EveryBin without bin_name
+    #[test]
+    #[should_panic(expected = "missing bin_name")]
+    fn test_node_dep_kind_target_req_bin_panics_without_name() {
+        let dep = NodeDepKind {
+            kind: DepKind::Normal,
+            target: None,
+            artifact: Some(ArtifactKind::EveryBin),
+            extern_name: None,
+            compile_target: None,
+            bin_name: None,
+        };
+        dep.target_req();
+    }
+
+    // Invariant: LimitReader returns data normally when under the limit
+    #[test]
+    fn test_limit_reader_under_limit() {
+        let data = b"hello world";
+        let mut reader = LimitReader::new(Cursor::new(data), 100);
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf, data);
+    }
+
+    // Invariant: LimitReader returns an error when the byte limit is reached
+    #[test]
+    fn test_limit_reader_at_limit_errors() {
+        let data = b"hello world";
+        let mut reader = LimitReader::new(Cursor::new(data), 5);
+        let mut buf = [0u8; 32];
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 5);
+        let result = reader.read(&mut buf);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("maximum limit reached"),
+        );
+    }
+
+    // Invariant: make_staging_destination creates a unique directory under the parent
+    #[test]
+    fn test_make_staging_destination() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dst = tmp.path().join("my-crate-1.0.0");
+
+        let (staging_root, staging_dst) = make_staging_destination(&dst).unwrap();
+        assert!(staging_root.exists());
+        assert!(staging_root.starts_with(tmp.path()));
+        assert_eq!(staging_dst.file_name().unwrap(), "my-crate-1.0.0");
+        assert!(staging_dst.starts_with(&staging_root));
+
+        std::fs::remove_dir_all(&staging_root).unwrap();
+    }
+
+    // Invariant: compute_dir_checksums produces SHA256 hashes for all files in a tree
+    #[test]
+    fn test_compute_dir_checksums() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), b"hello").unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        std::fs::write(tmp.path().join("sub/b.txt"), b"world").unwrap();
+
+        let cksums = compute_dir_checksums(tmp.path()).unwrap();
+        assert_eq!(cksums.len(), 2);
+        assert!(cksums.contains_key("a.txt"));
+        assert!(cksums.contains_key("sub/b.txt"));
+
+        let expected_a = format!("{:x}", sha2::Sha256::digest(b"hello"));
+        assert_eq!(cksums["a.txt"], expected_a);
+    }
+
+    // Invariant: write_checksum_json creates .cargo-checksum.json with package and files fields
+    #[test]
+    fn test_write_checksum_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut files = BTreeMap::new();
+        files.insert("src/lib.rs".to_owned(), "abc123".to_owned());
+
+        write_checksum_json(tmp.path(), Some("pkg_hash_xyz"), &files).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join(".cargo-checksum.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["package"], "pkg_hash_xyz");
+        assert_eq!(parsed["files"]["src/lib.rs"], "abc123");
+    }
+
+    // Invariant: write_checksum_json handles None package checksum as JSON null
+    #[test]
+    fn test_write_checksum_json_null_package() {
+        let tmp = tempfile::tempdir().unwrap();
+        let files = BTreeMap::new();
+
+        write_checksum_json(tmp.path(), None, &files).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join(".cargo-checksum.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(parsed["package"].is_null());
+    }
+
+    // Invariant: copy_vendor_sources copies files while skipping excluded paths, computing checksums
+    #[test]
+    fn test_copy_vendor_sources() {
+        let src_dir = tempfile::tempdir().unwrap();
+        std::fs::write(src_dir.path().join("lib.rs"), b"fn main() {}").unwrap();
+        std::fs::write(src_dir.path().join(".gitignore"), b"/target").unwrap();
+        std::fs::write(src_dir.path().join("Cargo.toml"), b"[package]").unwrap();
+
+        let dst_dir = tempfile::tempdir().unwrap();
+        let file_paths = vec![
+            src_dir.path().join("lib.rs"),
+            src_dir.path().join(".gitignore"),
+            src_dir.path().join("Cargo.toml"),
+        ];
+
+        let cksums = copy_vendor_sources(src_dir.path(), &file_paths, dst_dir.path()).unwrap();
+
+        assert!(dst_dir.path().join("lib.rs").exists());
+        assert!(!dst_dir.path().join(".gitignore").exists());
+        assert!(dst_dir.path().join("Cargo.toml").exists());
+        assert_eq!(cksums.len(), 2);
+        assert!(cksums.contains_key("lib.rs"));
+        assert!(cksums.contains_key("Cargo.toml"));
+        assert!(!cksums.contains_key(".gitignore"));
     }
 }
