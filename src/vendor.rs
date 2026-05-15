@@ -6,41 +6,27 @@
  */
 
 use std::fs;
-use std::io;
 use std::io::ErrorKind;
 use std::path::Path;
-use std::thread;
+use std::path::PathBuf;
 
 use anyhow::Context;
-use anyhow::bail;
-use cargo_toml::OptionalFile;
 use globset::Glob;
 use globset::GlobBuilder;
-use globset::GlobSet;
 use globset::GlobSetBuilder;
-use ignore::gitignore::Gitignore;
 use ignore::gitignore::GitignoreBuilder;
-use indexmap::IndexMap;
-use serde::Deserialize;
-use serde::Serialize;
 
 use crate::Args;
 use crate::Paths;
 use crate::cargo;
+use crate::cargo::ChecksumFilter;
+use crate::cargo::VendorFilters;
 use crate::cargo::fast_vendor;
-use crate::config::BuckConfig;
+use crate::cargo::postprocess_vendored_directory;
 use crate::config::Config;
 use crate::config::VendorConfig;
-use crate::config::VendorSourceConfig;
-use crate::path::relative_path;
 use crate::remap::RemapConfig;
 use crate::remap::RemapSource;
-
-#[derive(Debug, Deserialize, Serialize)]
-struct CargoChecksums {
-    files: IndexMap<String, String>,
-    package: Option<String>,
-}
 
 pub(crate) fn cargo_vendor(
     config: &Config,
@@ -53,6 +39,9 @@ pub(crate) fn cargo_vendor(
 ) -> anyhow::Result<()> {
     let vendordir = Path::new("vendor"); // relative to third_party_dir
     let full_vendor_dir = paths.third_party_dir.join("vendor");
+    let source_filters = matches!(&config.vendor, VendorConfig::Source(_))
+        .then(|| build_filters(config, paths))
+        .transpose()?;
 
     if let VendorConfig::LocalRegistry = config.vendor {
         let mut cmdline = vec![
@@ -89,7 +78,12 @@ pub(crate) fn cargo_vendor(
     } else {
         if fast {
             log::info!("Running fast vendor (library mode)");
-            fast_vendor(config, no_delete, args, paths)?;
+            let filters = source_filters.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "`--fast` currently only works with `vendor = true` in reindeer.toml"
+                )
+            })?;
+            fast_vendor(config, no_delete, args, paths, filters)?;
             assert!(is_vendored(config, paths)?);
         } else {
             let mut cmdline = vec![
@@ -123,10 +117,9 @@ pub(crate) fn cargo_vendor(
             if !cargoconfig.is_empty() {
                 assert!(is_vendored(config, paths)?);
             }
-        }
-
-        if let VendorConfig::Source(source_config) = &config.vendor {
-            post_process_vendor(&paths.third_party_dir, source_config, &config.buck)?;
+            if let Some(filters) = source_filters {
+                postprocess_vendored_directory(&paths.third_party_dir, &filters)?;
+            }
         }
     }
 
@@ -182,230 +175,97 @@ pub(crate) fn is_vendored(config: &Config, paths: &Paths) -> anyhow::Result<bool
     }
 }
 
-struct ChecksumFilter {
-    remove_globs: GlobSet,
-    gitignore: Gitignore,
-}
-
-struct PostProcessState<'a> {
-    third_party_dir: &'a Path,
-    buck_file_name: Option<&'a str>,
-    checksum_filter: Option<&'a ChecksumFilter>,
-}
-
-fn post_process_vendor(
-    third_party_dir: &Path,
-    source_config: &VendorSourceConfig,
-    buck_config: &BuckConfig,
-) -> anyhow::Result<()> {
-    let vendordir = third_party_dir.join("vendor");
-    if !vendordir.try_exists()? {
-        return Ok(());
-    }
-
-    // Build checksum filter if configured.
-    let checksum_filter = if source_config.checksum_exclude.is_empty()
-        && source_config.gitignore_checksum_exclude.is_empty()
-    {
-        None
-    } else {
-        log::debug!(
-            "vendor.gitignore_checksum_exclude = {:?} vendor.checksum_exclude = {:?}",
-            source_config.gitignore_checksum_exclude,
-            source_config.checksum_exclude
-        );
-
-        let mut remove_globs = GlobSetBuilder::new();
-        for glob in &source_config.checksum_exclude {
-            let glob = GlobBuilder::new(glob)
-                .literal_separator(true)
-                .build()
-                .with_context(|| format!("Invalid checksum exclude glob `{}`", glob))?;
-            remove_globs.add(glob);
-        }
-        if let Ok(buck_glob) = Glob::new(&buck_config.file_name) {
-            remove_globs.add(buck_glob);
-        }
-        let remove_globs = remove_globs.build()?;
-
-        let mut gitignore = GitignoreBuilder::new(third_party_dir);
-        for ignore in &source_config.gitignore_checksum_exclude {
-            if let Some(err) = gitignore.add(third_party_dir.join(ignore)) {
-                log::warn!(
-                    "Failed to read ignore file {}: {}; skipping",
-                    ignore.display(),
-                    err
-                );
-            }
-        }
-        let gitignore = gitignore.build()?;
-
-        Some(ChecksumFilter {
-            remove_globs,
-            gitignore,
-        })
-    };
-
-    let buck_file_name = if buck_config.split {
-        Some(buck_config.file_name.as_str())
+fn build_filters(config: &Config, paths: &Paths) -> anyhow::Result<VendorFilters> {
+    let buck_file_name = if config.buck.split {
+        Some((*config.buck.file_name).clone())
     } else {
         None
     };
 
-    let state = PostProcessState {
-        third_party_dir,
+    let checksum_filter = if let VendorConfig::Source(source_config) = &config.vendor {
+        build_checksum_filter(
+            config.buck.split,
+            &config.buck.file_name,
+            &source_config.checksum_exclude,
+            &source_config.gitignore_checksum_exclude,
+            &paths.third_party_dir,
+        )?
+    } else {
+        None
+    };
+
+    Ok(VendorFilters {
         buck_file_name,
-        checksum_filter: checksum_filter.as_ref(),
-    };
-
-    let entries: Vec<fs::DirEntry> = fs::read_dir(&vendordir)?.collect::<io::Result<_>>()?;
-
-    let num_threads = thread::available_parallelism().map_or(8, |n| n.get());
-    let chunk_size = entries.len().div_ceil(num_threads.max(1));
-    let state = &state;
-
-    thread::scope(|s| -> anyhow::Result<()> {
-        let handles: Vec<_> = entries
-            .chunks(chunk_size.max(1))
-            .map(|chunk| {
-                s.spawn(move || -> anyhow::Result<()> {
-                    for entry in chunk {
-                        process_crate_dir(entry, state)?;
-                    }
-                    Ok(())
-                })
-            })
-            .collect();
-        for h in handles {
-            h.join()
-                .map_err(|_| anyhow::anyhow!("post-process thread panicked"))??;
-        }
-        Ok(())
-    })?;
-
-    Ok(())
+        checksum_filter,
+    })
 }
 
-fn process_crate_dir(entry: &fs::DirEntry, state: &PostProcessState<'_>) -> anyhow::Result<()> {
-    let manifest_dir = entry.path(); // full/path/to/vendor/foo-1.2.3
-
-    if !entry.file_type()?.is_dir() {
-        return Ok(());
+/// Build the checksum filter from primitive inputs.
+///
+/// Returns `None` when no filtering is needed. Extracted from `build_filters`
+/// so the logic can be tested without constructing `Config` or `Paths`.
+fn build_checksum_filter(
+    buck_split: bool,
+    buck_file_name: &str,
+    checksum_exclude: &[String],
+    gitignore_checksum_exclude: &[PathBuf],
+    third_party_dir: &Path,
+) -> anyhow::Result<Option<ChecksumFilter>> {
+    // Build a checksum filter when there are explicit excludes configured, or
+    // when split mode is enabled (BUCK files must be excluded from checksums to
+    // match the on-disk exclusion that split mode also applies).
+    let needs_filter =
+        !checksum_exclude.is_empty() || !gitignore_checksum_exclude.is_empty() || buck_split;
+    if !needs_filter {
+        return Ok(None);
     }
 
-    // Step 1: Delete top-level BUCK file from disk.
-    //
-    // Remove top-level BUCK files (vendor/*/BUCK). Almost all of these would be
-    // overwritten anyway by buckify, except in the case that a crate containing
-    // BUCK is vendored by `cargo vendor` and then not buckified, either because
-    // it is a platform-specific dependency for some platform that Reindeer is
-    // not configured for, or because of an omit_deps fixup.
-    //
-    // Assume you will use .gitignore to ignore nested ones (vendor/*/*/**/BUCK).
-    if let Some(buck_file_name) = state.buck_file_name {
-        let buck_file = manifest_dir.join(buck_file_name);
-        if let Err(err) = fs::remove_file(&buck_file)
-            && err.kind() != ErrorKind::NotFound
-        {
-            bail!("failed to remove {}: {}", buck_file.display(), err);
-        }
+    log::debug!(
+        "vendor.gitignore_checksum_exclude = {:?} vendor.checksum_exclude = {:?}",
+        gitignore_checksum_exclude,
+        checksum_exclude
+    );
+
+    let mut remove_globs = GlobSetBuilder::new();
+    for glob in checksum_exclude {
+        let glob = GlobBuilder::new(glob)
+            .literal_separator(true)
+            .build()
+            .with_context(|| format!("Invalid checksum exclude glob `{}`", glob))?;
+        remove_globs.add(glob);
     }
-
-    // Step 2: Rewrite .cargo-checksum.json to exclude filtered files.
-    if let Some(filter) = state.checksum_filter {
-        let checksum = manifest_dir.join(".cargo-checksum.json");
-
-        log::trace!("Reading checksum {}", checksum.display());
-
-        let maybe_checksums = match fs::read(&checksum) {
-            Err(err) => {
-                log::warn!("Failed to read {}: {}", checksum.display(), err);
-                None
-            }
-            Ok(file) => match serde_json::from_slice::<CargoChecksums>(&file) {
-                Err(err) => {
-                    log::warn!("Failed to deserialize {}: {}", checksum.display(), err);
-                    None
-                }
-                Ok(cs) => Some(cs),
-            },
-        };
-
-        if let Some(mut checksums) = maybe_checksums {
-            let pkgdir = relative_path(state.third_party_dir, &manifest_dir); // vendor/foo-1.2.3
-            let mut changed = false;
-
-            checksums.files.retain(|k, _| {
-                log::trace!("{}: checking {}", checksum.display(), k);
-                let del = filter.remove_globs.is_match(k)
-                    || filter
-                        .gitignore
-                        .matched_path_or_any_parents(pkgdir.join(k), false)
-                        .is_ignore();
-                if del {
-                    log::debug!("{}: removing {}", checksum.display(), k);
-                    changed = true;
-                }
-                !del
-            });
-
-            if changed {
-                log::info!("Rewriting checksum {}", checksum.display());
-                fs::write(checksum, serde_json::to_vec(&checksums)?)?;
-            }
-        }
+    // Exclude the BUCK file from checksums only when split mode is enabled.
+    // This keeps checksum exclusion aligned with on-disk exclusion: both are
+    // gated on the same split-mode condition.
+    if buck_split {
+        let buck_glob = Glob::new(buck_file_name)
+            .with_context(|| format!("Invalid buck.file_name glob `{}`", buck_file_name))?;
+        remove_globs.add(buck_glob);
     }
+    let remove_globs = remove_globs.build()?;
 
-    // Step 3: Synthesize missing build scripts. Work around
-    // https://github.com/rust-lang/cargo/issues/14348.
-    //
-    // This step can be deleted if that `cargo vendor` bug is fixed in a future
-    // version of Cargo.
-    {
-        type TomlManifest = cargo_toml::Manifest<serde::de::IgnoredAny>;
-
-        let cargo_toml_path = manifest_dir.join("Cargo.toml");
-
-        log::trace!("Reading manifest {}", cargo_toml_path.display());
-
-        let content = match fs::read_to_string(&cargo_toml_path) {
-            Ok(file) => file,
-            Err(err) => {
-                log::warn!("Failed to read {}: {}", cargo_toml_path.display(), err);
-                return Ok(());
-            }
-        };
-
-        let manifest: TomlManifest = match toml::from_str(&content) {
-            Ok(cs) => cs,
-            Err(err) => {
-                log::warn!(
-                    "Failed to deserialize {}: {}",
-                    cargo_toml_path.display(),
-                    err
-                );
-                return Ok(());
-            }
-        };
-
-        let Some(package) = &manifest.package else {
-            return Ok(());
-        };
-        let Some(OptionalFile::Path(build_script_path)) = &package.build else {
-            return Ok(());
-        };
-
-        let expected_build_script = manifest_dir.join(build_script_path);
-        if !expected_build_script.try_exists()? {
-            log::trace!(
-                "Synthesizing build script {}",
-                expected_build_script.display(),
+    let mut gitignore = GitignoreBuilder::new(third_party_dir);
+    for ignore in gitignore_checksum_exclude {
+        if let Some(err) = gitignore.add(third_party_dir.join(ignore)) {
+            log::warn!(
+                "Failed to read ignore file {}: {}; skipping",
+                ignore.display(),
+                err
             );
-            fs::write(expected_build_script, "fn main() {}\n")?;
         }
     }
+    let gitignore = gitignore.build()?;
 
-    Ok(())
+    log::debug!(
+        "remove_globs {:#?}, gitignore {:#?}",
+        remove_globs,
+        gitignore
+    );
+
+    Ok(Some(ChecksumFilter {
+        remove_globs,
+        gitignore,
+    }))
 }
 
 /// Extract crate name from a versioned directory
@@ -457,94 +317,133 @@ pub(crate) fn cleanup_extern_crates(config: &Config, paths: &Paths) -> anyhow::R
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+
     use super::*;
+    use crate::config::VendorSourceConfig;
 
-    #[test]
-    fn test_post_process_noop_on_empty_dir() {
-        let dir = tempfile::tempdir().expect("create tempdir");
-        let vendor = dir.path().join("vendor");
-        fs::create_dir_all(&vendor).expect("create vendor dir");
+    #[cfg(unix)]
+    fn write_fake_cargo_script(script: &Path) {
+        let script_body = r#"#!/bin/sh
+set -eu
+vendor_dir="$4"
+crate_dir="$vendor_dir/sourdough-starter-1.0.0"
+mkdir -p "$crate_dir"
+printf '# generated\n' > "$crate_dir/BUCK"
+printf 'pub fn sourdough() {}\n' > "$crate_dir/lib.rs"
+printf '// filtered header\n' > "$crate_dir/ignore.h"
+cat > "$crate_dir/Cargo.toml" <<'EOF'
+[package]
+name = "sourdough-starter"
+version = "1.0.0"
+build = "build.rs"
+EOF
+printf '{"files":{"BUCK":"abc123","ignore.h":"def456","lib.rs":"ghi789"},"package":null}' > "$crate_dir/.cargo-checksum.json"
+printf '[source.vendored-sources]\ndirectory = "%s"\n' "$vendor_dir"
+"#;
 
-        let source_config = VendorSourceConfig::default();
-        let buck_config = BuckConfig::default();
-
-        post_process_vendor(dir.path(), &source_config, &buck_config)
-            .expect("post_process_vendor should succeed on empty vendor dir");
+        fs::write(script, script_body).expect("write fake cargo script");
     }
 
-    #[test]
-    fn test_post_process_deletes_buck_file() {
-        let dir = tempfile::tempdir().expect("create tempdir");
-        let crate_dir = dir.path().join("vendor").join("sourdough-starter-1.0.0");
-        fs::create_dir_all(&crate_dir).expect("create crate dir");
-
-        let buck_file = crate_dir.join("BUCK");
-        fs::write(&buck_file, "# generated").expect("write BUCK");
-
-        // Checksum with a BUCK entry -- post_process should not touch it
-        // (no checksum_exclude configured), but the file itself must be deleted.
-        let checksum_file = crate_dir.join(".cargo-checksum.json");
-        fs::write(
-            &checksum_file,
-            r#"{"files":{"BUCK":"abc123"},"package":null}"#,
-        )
-        .expect("write checksum");
-
-        // Minimal Cargo.toml so the build-script synthesis step can parse it.
-        fs::write(
-            crate_dir.join("Cargo.toml"),
-            "[package]\nname = \"sourdough-starter\"\nversion = \"1.0.0\"\n",
-        )
-        .expect("write Cargo.toml");
-
-        let source_config = VendorSourceConfig::default();
-        let buck_config = BuckConfig {
-            split: true,
-            ..BuckConfig::default()
-        };
-
-        post_process_vendor(dir.path(), &source_config, &buck_config)
-            .expect("post_process_vendor should succeed");
-
-        assert!(
-            !buck_file.exists(),
-            "BUCK file should have been deleted by post_process_vendor"
-        );
-        assert!(
-            checksum_file.exists(),
-            "checksum file should still be present"
-        );
+    #[cfg(unix)]
+    fn fake_vendor_args(script: &Path) -> Args {
+        let script = script.to_string_lossy().into_owned();
+        Args::try_parse_from([
+            "reindeer".to_owned(),
+            "--cargo-path".to_owned(),
+            "sh".to_owned(),
+            "--cargo-options".to_owned(),
+            script,
+            "vendor".to_owned(),
+        ])
+        .expect("parse fake cargo args")
     }
 
+    #[cfg(unix)]
+    fn make_test_paths(third_party_dir: &Path) -> Paths {
+        Paths {
+            buck_package: "fbcode/common/rust/tools/reindeer".to_owned(),
+            third_party_dir: third_party_dir.to_path_buf(),
+            manifest_path: third_party_dir.join("Cargo.toml"),
+            lockfile_path: third_party_dir.join("Cargo.lock"),
+            cargo_home: third_party_dir.join(".cargo"),
+        }
+    }
+
+    #[cfg(unix)]
     #[test]
-    fn test_post_process_crate_failure_is_fatal() {
+    fn test_cargo_vendor_slow_path_runs_post_process_vendor() {
         let dir = tempfile::tempdir().expect("create tempdir");
-        let crate_dir = dir.path().join("vendor").join("dragon-breath-1.0.0");
-        fs::create_dir_all(&crate_dir).expect("create crate dir");
+        let third_party_dir = dir.path().join("third-party");
+        fs::create_dir_all(&third_party_dir).expect("create third_party_dir");
 
-        fs::create_dir(crate_dir.join("BUCK")).expect("create BUCK dir");
+        let script = third_party_dir.join("fake_cargo.sh");
+        write_fake_cargo_script(&script);
+
+        let args = fake_vendor_args(&script);
+
+        let reindeer_toml = third_party_dir.join("reindeer.toml");
+        fs::write(&reindeer_toml, "").expect("write reindeer.toml");
+
+        let mut config =
+            crate::config::read_config(&reindeer_toml, &args).expect("read test config");
+        config.buck.split = true;
+        config.vendor = VendorConfig::Source(VendorSourceConfig {
+            checksum_exclude: vec!["*.h".to_owned()],
+            ..VendorSourceConfig::default()
+        });
+
+        let paths = make_test_paths(&third_party_dir);
         fs::write(
-            crate_dir.join("Cargo.toml"),
-            "[package]\nname = \"dragon-breath\"\nversion = \"1.0.0\"\n",
+            &paths.manifest_path,
+            "[package]\nname = \"workspace\"\nversion = \"0.1.0\"\n",
         )
-        .expect("write Cargo.toml");
-        fs::write(
-            crate_dir.join(".cargo-checksum.json"),
-            r#"{"files":{},"package":null}"#,
+        .expect("write workspace manifest");
+
+        cargo_vendor(
+            &config,
+            false,
+            #[cfg(fbcode_build)]
+            false,
+            #[cfg(fbcode_build)]
+            false,
+            &args,
+            &paths,
+            false,
         )
-        .expect("write checksum");
+        .expect("slow cargo vendor should succeed");
 
-        let source_config = VendorSourceConfig::default();
-        let buck_config = BuckConfig {
-            split: true,
-            ..BuckConfig::default()
-        };
-
-        let result = post_process_vendor(dir.path(), &source_config, &buck_config);
+        let crate_dir = third_party_dir
+            .join("vendor")
+            .join("sourdough-starter-1.0.0");
+        let checksum: serde_json::Value = serde_json::from_slice(
+            &fs::read(crate_dir.join(".cargo-checksum.json")).expect("read checksum json"),
+        )
+        .expect("parse checksum json");
+        let files = checksum
+            .get("files")
+            .and_then(|value| value.as_object())
+            .expect("checksum json should contain object-valued files entry");
 
         assert!(
-            result.is_err(),
-            "post_process_vendor should fail when a crate dir cannot be processed"
+            !crate_dir.join("BUCK").exists(),
+            "slow source vendoring should still remove split BUCK files"
+        );
+        assert!(
+            crate_dir.join("build.rs").exists(),
+            "slow source vendoring should still synthesize missing build scripts"
+        );
+        assert!(
+            files.contains_key("lib.rs"),
+            "kept files should remain in the rewritten checksum map"
+        );
+        assert!(
+            !files.contains_key("BUCK"),
+            "split BUCK should be removed from the checksum map"
+        );
+        assert!(
+            !files.contains_key("ignore.h"),
+            "checksum-excluded files should be omitted from the checksum map"
         );
     }
 

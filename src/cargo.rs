@@ -42,8 +42,11 @@ use cargo::core::PackageId;
 use cargo::core::SourceId;
 use cargo::sources::CRATES_IO_REGISTRY;
 use cargo::util::interning::InternedString;
+use cargo_toml::OptionalFile;
 use foldhash::HashMap;
 use foldhash::HashSet;
+use globset::GlobSet;
+use ignore::gitignore::Gitignore;
 use indoc::indoc;
 use semver::VersionReq;
 use serde::Deserialize;
@@ -563,6 +566,32 @@ fn match_artifacts_kind_with_targets<'a>(
     Ok(out)
 }
 
+/// Glob and gitignore rules for files to omit from `.cargo-checksum.json`.
+///
+/// Both `GlobSet` and `Gitignore` are `Sync`, so this struct can be shared
+/// across threads via a shared reference.
+pub(crate) struct ChecksumFilter {
+    pub(crate) remove_globs: GlobSet,
+    pub(crate) gitignore: Gitignore,
+}
+
+/// Filtering parameters passed into `fast_vendor`.
+///
+/// Controls which files are excluded from the vendor directory and checksums.
+pub(crate) struct VendorFilters {
+    /// Name of the BUCK file to exclude from extraction and checksums (e.g. `"BUCK"`).
+    /// `None` means no exclusion (split mode is disabled).
+    pub(crate) buck_file_name: Option<String>,
+    /// Glob/gitignore rules for files to omit from `.cargo-checksum.json`.
+    pub(crate) checksum_filter: Option<ChecksumFilter>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoChecksumJson {
+    #[serde(default)]
+    package: Option<String>,
+}
+
 /// A unit of work for parallel vendor extraction.
 ///
 /// Registry crates are extracted from `.crate` archives. Git/other crates
@@ -594,6 +623,7 @@ pub(crate) fn fast_vendor(
     no_delete: bool,
     args: &Args,
     paths: &Paths,
+    filters: VendorFilters,
 ) -> anyhow::Result<()> {
     let gctx = make_gctx(
         config,
@@ -718,9 +748,10 @@ pub(crate) fn fast_vendor(
     }
 
     // Extract/copy in parallel using thread::scope with static chunking.
-    // unpack_package_archive takes only &Path args so it is Send-safe.
+    // Filters are shared by reference across threads; ChecksumFilter is Sync.
     let num_threads = std::thread::available_parallelism().map_or(8, |n| n.get());
     let chunk_size = work_items.len().div_ceil(num_threads.max(1));
+    let filters = &filters;
 
     thread::scope(|s| {
         let handles: Vec<_> = work_items
@@ -736,7 +767,12 @@ pub(crate) fn fast_vendor(
                             } => {
                                 let (staging_root, staging_dst) = make_staging_destination(dst)?;
                                 let result = (|| -> anyhow::Result<()> {
-                                    unpack_package_archive(archive, &staging_dst, &vendor_this)
+                                    let buck_file_name = filters.buck_file_name.as_deref();
+                                    let include = |rel: &Path| {
+                                        vendor_this(rel)
+                                            && buck_file_name.is_none_or(|n| rel != Path::new(n))
+                                    };
+                                    unpack_package_archive(archive, &staging_dst, &include)
                                         .with_context(|| {
                                             format!(
                                                 "failed to unpack {} into {}",
@@ -745,11 +781,14 @@ pub(crate) fn fast_vendor(
                                             )
                                         })?;
 
-                                    let file_cksums = compute_dir_checksums(&staging_dst)?;
-                                    write_checksum_json(
+                                    let pkgdir = dst
+                                        .strip_prefix(&paths.third_party_dir)
+                                        .expect("dst is always under third_party_dir");
+                                    postprocess_vendored_crate_dir(
                                         &staging_dst,
+                                        pkgdir,
+                                        filters,
                                         pkg_cksum.as_deref(),
-                                        &file_cksums,
                                     )?;
                                     replace_vendor_dir(&staging_dst, dst)?;
                                     Ok(())
@@ -765,12 +804,21 @@ pub(crate) fn fast_vendor(
                             } => {
                                 let (staging_root, staging_dst) = make_staging_destination(dst)?;
                                 let result = (|| -> anyhow::Result<()> {
-                                    let file_cksums =
-                                        copy_vendor_sources(src_root, file_paths, &staging_dst)?;
-                                    write_checksum_json(
+                                    let pkgdir = dst
+                                        .strip_prefix(&paths.third_party_dir)
+                                        .expect("dst is always under third_party_dir");
+                                    copy_vendor_sources(
+                                        src_root,
+                                        file_paths,
                                         &staging_dst,
+                                        filters,
+                                        pkgdir,
+                                    )?;
+                                    postprocess_vendored_crate_dir(
+                                        &staging_dst,
+                                        pkgdir,
+                                        filters,
                                         pkg_cksum.as_deref(),
-                                        &file_cksums,
                                     )?;
                                     replace_vendor_dir(&staging_dst, dst)?;
                                     Ok(())
@@ -843,36 +891,58 @@ fn replace_vendor_dir(staged_dst: &Path, dst: &Path) -> anyhow::Result<()> {
 }
 
 /// Walk a directory and compute SHA256 checksums for all regular files.
-fn compute_dir_checksums(root: &Path) -> anyhow::Result<BTreeMap<String, String>> {
-    let mut cksums = BTreeMap::new();
-
-    for entry in WalkDir::new(root) {
-        let entry = entry?;
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let path = entry.path();
-        let relative = path
-            .strip_prefix(root)
-            .expect("walkdir entry must be under root");
-        let contents =
-            fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
-        let hash = sha2::Sha256::digest(&contents);
-        cksums.insert(
-            relative.to_str().expect("non-UTF8 path").replace('\\', "/"),
-            format!("{:x}", hash),
-        );
-    }
-
-    Ok(cksums)
+///
+/// Files matched by `filter` are left on disk but omitted from the returned map,
+/// so the resulting `.cargo-checksum.json` never includes excluded entries.
+fn compute_dir_checksums_filtered(
+    root: &Path,
+    pkgdir: &Path,
+    filter: Option<&ChecksumFilter>,
+) -> anyhow::Result<BTreeMap<String, String>> {
+    WalkDir::new(root)
+        .into_iter()
+        .filter_map(|entry| match entry {
+            Ok(entry) if entry.file_type().is_file() => Some(Ok(entry)),
+            Ok(_) => None,
+            Err(err) => Some(Err(anyhow::Error::from(err))),
+        })
+        .map(|entry| {
+            let e = entry?;
+            let path = e.path();
+            let relative = path
+                .strip_prefix(root)
+                .expect("walkdir entry must be under root");
+            let key = relative.to_str().expect("non-UTF8 path").replace('\\', "/");
+            if let Some(f) = filter {
+                let excluded = f.remove_globs.is_match(&key)
+                    || f.gitignore
+                        .matched_path_or_any_parents(pkgdir.join(relative), false)
+                        .is_ignore();
+                if excluded {
+                    log::trace!("checksum: skipping excluded file {}", key);
+                    return Ok(None);
+                }
+            }
+            let contents = fs::read(path)?;
+            let hash = format!("{:x}", sha2::Sha256::digest(&contents));
+            Ok(Some((key, hash)))
+        })
+        .filter_map(|entry| entry.transpose())
+        .collect()
 }
 
 /// Copy source files from a non-registry package into the vendor directory,
 /// computing per-file SHA256 checksums along the way.
+///
+/// BUCK files (when `filters.buck_file_name` is set) are excluded from the
+/// copy entirely. Files matched by `filters.checksum_filter` are copied to
+/// disk but omitted from the returned checksum map.
 fn copy_vendor_sources(
     src_root: &Path,
     file_paths: &[PathBuf],
     dst: &Path,
+    filters: &VendorFilters,
+    pkgdir: &Path,
 ) -> anyhow::Result<BTreeMap<String, String>> {
     let mut cksums = BTreeMap::new();
 
@@ -882,6 +952,15 @@ fn copy_vendor_sources(
         })?;
 
         if !vendor_this(relative) {
+            continue;
+        }
+
+        // Exclude BUCK files from the copy entirely (not written to disk or checksum).
+        if filters
+            .buck_file_name
+            .as_deref()
+            .is_some_and(|n| relative == Path::new(n))
+        {
             continue;
         }
 
@@ -900,13 +979,162 @@ fn copy_vendor_sources(
         fs::write(&dst_path, &contents)
             .with_context(|| format!("failed to write {}", dst_path.display()))?;
 
-        cksums.insert(
-            relative.to_str().expect("non-UTF8 path").replace('\\', "/"),
-            format!("{:x}", hash),
-        );
+        let key = relative.to_str().expect("non-UTF8 path").replace('\\', "/");
+
+        // Skip checksum-excluded files: kept on disk, absent from checksum map.
+        if let Some(f) = &filters.checksum_filter {
+            let excluded = f.remove_globs.is_match(&key)
+                || f.gitignore
+                    .matched_path_or_any_parents(pkgdir.join(relative), false)
+                    .is_ignore();
+            if excluded {
+                log::trace!("checksum: skipping excluded file {}", key);
+                continue;
+            }
+        }
+
+        cksums.insert(key, format!("{:x}", hash));
     }
 
     Ok(cksums)
+}
+
+fn path_file_type_no_follow(path: &Path) -> anyhow::Result<Option<fs::FileType>> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata.file_type())),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("failed to stat {}", path.display())),
+    }
+}
+
+fn remove_existing_path(path: &Path) -> anyhow::Result<()> {
+    let Some(file_type) = path_file_type_no_follow(path)? else {
+        return Ok(());
+    };
+    if file_type.is_dir() {
+        fs::remove_dir_all(path)
+            .with_context(|| format!("failed to remove stale vendor dir {}", path.display()))?;
+    } else {
+        fs::remove_file(path)
+            .with_context(|| format!("failed to remove stale vendor file {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn prepare_regular_file_target(path: &Path) -> anyhow::Result<()> {
+    let Some(file_type) = path_file_type_no_follow(path)? else {
+        return Ok(());
+    };
+    if file_type.is_file() {
+        return Ok(());
+    }
+    remove_existing_path(path)
+}
+
+fn write_regular_file(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
+    prepare_regular_file_target(path)?;
+    fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))
+}
+
+fn remove_split_buck_file(crate_dir: &Path, buck_file_name: Option<&str>) -> anyhow::Result<()> {
+    let Some(buck_file_name) = buck_file_name else {
+        return Ok(());
+    };
+    let buck_path = crate_dir.join(buck_file_name);
+    remove_existing_path(&buck_path)
+}
+
+/// Synthesize a stub `build.rs` if the manifest declares a build script path
+/// that does not exist on disk.
+///
+/// Workaround for [cargo#14348]: some crates declare a non-standard build
+/// script path in `Cargo.toml` but omit the file from the published tarball.
+/// Without the stub, cargo refuses to compile the crate.
+fn synthesize_missing_build_rs(crate_dir: &Path) -> anyhow::Result<()> {
+    type TomlManifest = cargo_toml::Manifest<serde::de::IgnoredAny>;
+
+    let cargo_toml_path = crate_dir.join("Cargo.toml");
+    let content = match fs::read_to_string(&cargo_toml_path) {
+        Ok(s) => s,
+        Err(err) => {
+            log::warn!("Failed to read {}: {}", cargo_toml_path.display(), err);
+            return Ok(());
+        }
+    };
+
+    let manifest: TomlManifest = match toml::from_str(&content) {
+        Ok(m) => m,
+        Err(err) => {
+            log::warn!(
+                "Failed to deserialize {}: {}",
+                cargo_toml_path.display(),
+                err
+            );
+            return Ok(());
+        }
+    };
+
+    if let Some(package) = &manifest.package {
+        if let Some(OptionalFile::Path(build_script_path)) = &package.build {
+            let expected = crate_dir.join(build_script_path);
+            if !expected.try_exists()? {
+                log::trace!("Synthesizing build script {}", expected.display());
+                if let Some(parent) = expected.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(expected, "fn main() {}\n")?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn postprocess_vendored_crate_dir(
+    crate_dir: &Path,
+    pkgdir: &Path,
+    filters: &VendorFilters,
+    pkg_cksum: Option<&str>,
+) -> anyhow::Result<()> {
+    remove_split_buck_file(crate_dir, filters.buck_file_name.as_deref())?;
+    remove_existing_path(&crate_dir.join(".cargo-checksum.json"))?;
+    synthesize_missing_build_rs(crate_dir)?;
+    let file_cksums =
+        compute_dir_checksums_filtered(crate_dir, pkgdir, filters.checksum_filter.as_ref())?;
+    write_checksum_json(crate_dir, pkg_cksum, &file_cksums)
+}
+
+pub(crate) fn postprocess_vendored_directory(
+    third_party_dir: &Path,
+    filters: &VendorFilters,
+) -> anyhow::Result<()> {
+    let vendor_dir = third_party_dir.join("vendor");
+    if !vendor_dir.try_exists()? {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(&vendor_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        let crate_dir = entry.path();
+        let pkgdir = crate_dir.strip_prefix(third_party_dir).with_context(|| {
+            format!(
+                "vendored crate {} is not under {}",
+                crate_dir.display(),
+                third_party_dir.display(),
+            )
+        })?;
+        let package_checksum = read_existing_package_checksum(&crate_dir)
+            .with_context(|| format!("failed to read {}", crate_dir.display()))?;
+
+        postprocess_vendored_crate_dir(&crate_dir, pkgdir, filters, package_checksum.as_deref())
+            .with_context(|| format!("failed to post-process {}", crate_dir.display()))?;
+    }
+
+    Ok(())
 }
 
 /// Write `.cargo-checksum.json` into a vendored crate directory.
@@ -920,8 +1148,18 @@ fn write_checksum_json(
         "files": file_cksums,
     });
     let cksum_path = dst.join(".cargo-checksum.json");
-    fs::write(&cksum_path, json.to_string())
+    let contents = json.to_string();
+    write_regular_file(&cksum_path, contents.as_bytes())
         .with_context(|| format!("failed to write {}", cksum_path.display()))
+}
+
+pub(crate) fn read_existing_package_checksum(crate_dir: &Path) -> anyhow::Result<Option<String>> {
+    let cksum_path = crate_dir.join(".cargo-checksum.json");
+    let content = fs::read_to_string(&cksum_path)
+        .with_context(|| format!("missing or non-regular {}", cksum_path.display()))?;
+    let checksum_json: CargoChecksumJson = serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse {}", cksum_path.display()))?;
+    Ok(checksum_json.package)
 }
 
 /// Generate a `.cargo/config.toml` string with source replacement entries
@@ -1783,14 +2021,19 @@ impl<R: Read> Read for LimitReader<R> {
 mod test {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
+    use std::fs;
     use std::io::Cursor;
     use std::io::Read;
     use std::path::Path;
     use std::path::PathBuf;
 
+    use globset::GlobBuilder;
+    use globset::GlobSetBuilder;
+    use ignore::gitignore::GitignoreBuilder;
     use sha2::Digest;
 
     use super::ArtifactKind;
+    use super::ChecksumFilter;
     use super::CrateType;
     use super::DepKind;
     use super::LimitReader;
@@ -1798,13 +2041,436 @@ mod test {
     use super::NodeDepKind;
     use super::Source;
     use super::TargetKind;
-    use super::compute_dir_checksums;
+    use super::VendorFilters;
+    use super::compute_dir_checksums_filtered;
     use super::copy_vendor_sources;
     use super::generate_vendor_config;
     use super::make_staging_destination;
     use super::parse_source;
+    use super::postprocess_vendored_crate_dir;
+    use super::read_existing_package_checksum;
+    use super::synthesize_missing_build_rs;
     use super::vendor_this;
     use super::write_checksum_json;
+
+    // Build a ChecksumFilter that matches a single glob pattern.
+    fn glob_filter(pattern: &str) -> ChecksumFilter {
+        let mut builder = GlobSetBuilder::new();
+        builder.add(
+            GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .build()
+                .unwrap(),
+        );
+        let gitignore = GitignoreBuilder::new("/").build().unwrap();
+        ChecksumFilter {
+            remove_globs: builder.build().unwrap(),
+            gitignore,
+        }
+    }
+
+    fn gitignore_filter(pattern: &str) -> ChecksumFilter {
+        let remove_globs = GlobSetBuilder::new().build().unwrap();
+        let mut builder = GitignoreBuilder::new("/");
+        builder.add_line(None, pattern).unwrap();
+        let gitignore = builder.build().unwrap();
+        ChecksumFilter {
+            remove_globs,
+            gitignore,
+        }
+    }
+
+    #[test]
+    fn test_checksum_excludes_buck_entry() {
+        // A BUCK file present in the extracted directory should be excluded
+        // from the checksum map (it was skipped at extraction time by the
+        // include filter, so it won't be on disk here -- but even if it were,
+        // a glob on "BUCK" would exclude it).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+
+        fs::write(root.join("lib.rs"), b"fn main() {}").unwrap();
+        fs::write(root.join("Cargo.toml"), b"[package]").unwrap();
+
+        // Use a glob filter that matches the BUCK file name.
+        let filter = glob_filter("BUCK");
+        let pkgdir = std::path::Path::new("vendor/sourdough-starter-1.0.0");
+
+        let cksums = compute_dir_checksums_filtered(root, pkgdir, Some(&filter))
+            .expect("checksums computed");
+
+        // lib.rs and Cargo.toml should be present; BUCK should not be.
+        assert!(
+            cksums.contains_key("lib.rs"),
+            "lib.rs should be in checksum map"
+        );
+        assert!(
+            cksums.contains_key("Cargo.toml"),
+            "Cargo.toml should be in checksum map"
+        );
+        assert!(
+            !cksums.contains_key("BUCK"),
+            "BUCK should be excluded from checksum map"
+        );
+    }
+
+    #[test]
+    fn test_checksum_filter_glob_keeps_file_on_disk() {
+        // Files matched by checksum_exclude globs should remain on disk
+        // but be absent from the checksum map.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+
+        fs::write(root.join("pancake-stack.h"), b"// header").unwrap();
+        fs::write(root.join("lib.rs"), b"fn main() {}").unwrap();
+
+        // Filter that excludes all .h files.
+        let filter = glob_filter("*.h");
+        let pkgdir = std::path::Path::new("vendor/flux-capacitor-1.21.0");
+
+        let cksums = compute_dir_checksums_filtered(root, pkgdir, Some(&filter))
+            .expect("checksums computed");
+
+        assert!(
+            !cksums.contains_key("pancake-stack.h"),
+            ".h files should be excluded from checksum map"
+        );
+        assert!(
+            cksums.contains_key("lib.rs"),
+            "lib.rs should be in checksum map"
+        );
+
+        // File must still exist on disk (checksum_exclude only affects the map).
+        assert!(
+            root.join("pancake-stack.h").exists(),
+            ".h file should remain on disk"
+        );
+    }
+
+    #[test]
+    fn test_checksum_filter_gitignore_keeps_cargo_toml_orig_on_disk() {
+        // Files matched through gitignore rules should remain on disk while
+        // being omitted from the checksum map.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+
+        fs::write(
+            root.join("Cargo.toml.orig"),
+            b"[package]\nname = \"orig\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            b"[package]\nname = \"normalized\"\n",
+        )
+        .unwrap();
+
+        let filter = gitignore_filter("vendor/*/Cargo.toml.orig");
+        let pkgdir = std::path::Path::new("vendor/fb-procfs-0.9.0");
+
+        let cksums = compute_dir_checksums_filtered(root, pkgdir, Some(&filter))
+            .expect("checksums computed");
+
+        assert!(
+            !cksums.contains_key("Cargo.toml.orig"),
+            "gitignore-matched Cargo.toml.orig should be excluded from checksum map"
+        );
+        assert!(
+            cksums.contains_key("Cargo.toml"),
+            "Cargo.toml should remain in checksum map"
+        );
+        assert!(
+            root.join("Cargo.toml.orig").exists(),
+            "Cargo.toml.orig should remain on disk"
+        );
+    }
+
+    #[test]
+    fn test_synthesize_missing_build_rs_creates_stub() {
+        // When Cargo.toml declares a build script path that does not exist,
+        // synthesize_missing_build_rs should create a stub.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "dragon-breath"
+version = "0.1.0"
+build = "build.rs"
+"#,
+        )
+        .unwrap();
+
+        assert!(
+            !root.join("build.rs").exists(),
+            "build.rs should not exist before synthesis"
+        );
+
+        synthesize_missing_build_rs(root).expect("synthesis succeeded");
+
+        assert!(
+            root.join("build.rs").exists(),
+            "build.rs should be created by synthesis"
+        );
+        let stub = fs::read_to_string(root.join("build.rs")).unwrap();
+        assert_eq!(
+            stub, "fn main() {}\n",
+            "stub should contain only a main function"
+        );
+
+        let pkgdir = std::path::Path::new("vendor/dragon-breath-0.1.0");
+        let cksums =
+            compute_dir_checksums_filtered(root, pkgdir, None).expect("checksums computed");
+        assert!(
+            cksums.contains_key("build.rs"),
+            "synthesized build.rs must be included in .cargo-checksum.json"
+        );
+    }
+
+    #[test]
+    fn test_postprocess_vendored_crate_dir_preserves_package_checksum() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let crate_dir = dir.path().join("biscuit-1.0.0");
+        fs::create_dir_all(&crate_dir).unwrap();
+        fs::write(
+            crate_dir.join("Cargo.toml"),
+            r#"[package]
+name = "biscuit"
+version = "1.0.0"
+build = "build.rs"
+"#,
+        )
+        .unwrap();
+        fs::write(crate_dir.join("lib.rs"), "pub fn biscuit() {}\n").unwrap();
+        fs::write(crate_dir.join("ignore.h"), "// filtered header\n").unwrap();
+        fs::write(crate_dir.join("BUCK"), "rust_library(name=\"biscuit\")\n").unwrap();
+        fs::write(
+            crate_dir.join(".cargo-checksum.json"),
+            r#"{"package":"sha256abc","files":{"Cargo.toml":"old","lib.rs":"old","ignore.h":"old","BUCK":"old"}}"#,
+        )
+        .unwrap();
+
+        let filters = VendorFilters {
+            buck_file_name: Some("BUCK".to_owned()),
+            checksum_filter: Some(glob_filter("*.h")),
+        };
+        let package_checksum = read_existing_package_checksum(&crate_dir).unwrap();
+        let pkgdir = Path::new("vendor/biscuit-1.0.0");
+
+        postprocess_vendored_crate_dir(&crate_dir, pkgdir, &filters, package_checksum.as_deref())
+            .unwrap();
+
+        assert!(
+            !crate_dir.join("BUCK").exists(),
+            "split BUCK should be removed before checksums are recomputed"
+        );
+        assert!(
+            crate_dir.join("build.rs").exists(),
+            "post-process should synthesize missing build.rs"
+        );
+
+        let checksum: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(crate_dir.join(".cargo-checksum.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            checksum.get("package").and_then(|value| value.as_str()),
+            Some("sha256abc"),
+            "post-process should preserve the existing package checksum"
+        );
+        let files = checksum
+            .get("files")
+            .and_then(|value| value.as_object())
+            .unwrap();
+        assert!(
+            files.contains_key("Cargo.toml") && files.contains_key("lib.rs"),
+            "kept files should remain in the checksum map"
+        );
+        assert!(
+            files.contains_key("build.rs"),
+            "synthesized build.rs should be added to the checksum map"
+        );
+        assert!(
+            !files.contains_key("BUCK")
+                && !files.contains_key("ignore.h")
+                && !files.contains_key(".cargo-checksum.json"),
+            "split BUCK, filtered files, and the old checksum file should all be absent from the rewritten checksum map"
+        );
+    }
+
+    #[test]
+    fn test_synthesize_no_op_when_build_rs_present() {
+        // When build.rs already exists, synthesize_missing_build_rs should
+        // leave it unchanged.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+
+        let original = b"fn main() { println!(\"cargo:rustc-cfg=boomerang\"); }\n";
+        fs::write(root.join("build.rs"), original).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "always-comes-back"
+version = "1.0.0"
+build = "build.rs"
+"#,
+        )
+        .unwrap();
+
+        synthesize_missing_build_rs(root).expect("synthesis succeeded");
+
+        let after = fs::read(root.join("build.rs")).unwrap();
+        assert_eq!(
+            after, original,
+            "existing build.rs should not be overwritten"
+        );
+    }
+
+    #[test]
+    fn test_synthesize_missing_build_rs_creates_parent_dirs() {
+        // Non-root build script paths should create their missing parent dirs
+        // before the stub is written.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "nested-boomerang"
+version = "0.1.0"
+build = "scripts/build.rs"
+"#,
+        )
+        .unwrap();
+
+        synthesize_missing_build_rs(root).expect("synthesis succeeded");
+
+        let nested = root.join("scripts").join("build.rs");
+        assert!(nested.exists(), "nested build.rs should be created");
+        let stub = fs::read_to_string(nested).unwrap();
+        assert_eq!(stub, "fn main() {}\n");
+    }
+
+    #[test]
+    fn test_copy_vendor_sources_excludes_buck_file() {
+        // copy_vendor_sources with buck_file_name set should not write the BUCK
+        // file to the destination directory and should not include it in the
+        // returned checksum map.
+        let src_dir = tempfile::tempdir().expect("src tempdir");
+        let dst_dir = tempfile::tempdir().expect("dst tempdir");
+        let src = src_dir.path();
+        let dst = dst_dir.path();
+
+        fs::write(src.join("lib.rs"), b"pub fn fell_off_a_truck() {}").unwrap();
+        fs::write(src.join("BUCK"), b"rust_library(name=\"fell-off-a-truck\")").unwrap();
+
+        let file_paths = vec![src.join("lib.rs"), src.join("BUCK")];
+        let filters = VendorFilters {
+            buck_file_name: Some("BUCK".to_owned()),
+            checksum_filter: None,
+        };
+        let pkgdir = std::path::Path::new("vendor/fell-off-a-truck-1.0.0");
+
+        let cksums =
+            copy_vendor_sources(src, &file_paths, dst, &filters, pkgdir).expect("copy succeeded");
+
+        assert!(
+            dst.join("lib.rs").exists(),
+            "lib.rs should be copied to dst"
+        );
+        assert!(
+            !dst.join("BUCK").exists(),
+            "BUCK should not be written to dst"
+        );
+        assert!(
+            cksums.contains_key("lib.rs"),
+            "lib.rs should be in checksum map"
+        );
+        assert!(
+            !cksums.contains_key("BUCK"),
+            "BUCK should not be in checksum map"
+        );
+    }
+
+    #[test]
+    fn test_copy_vendor_sources_checksum_filter() {
+        // copy_vendor_sources with a checksum filter should copy filtered files
+        // to disk but omit them from the returned checksum map.
+        let src_dir = tempfile::tempdir().expect("src tempdir");
+        let dst_dir = tempfile::tempdir().expect("dst tempdir");
+        let src = src_dir.path();
+        let dst = dst_dir.path();
+
+        fs::write(src.join("lib.rs"), b"pub fn catapult() {}").unwrap();
+        fs::write(src.join("catapult.h"), b"// siege engine header").unwrap();
+
+        let file_paths = vec![src.join("lib.rs"), src.join("catapult.h")];
+        let filters = VendorFilters {
+            buck_file_name: None,
+            checksum_filter: Some(glob_filter("*.h")),
+        };
+        let pkgdir = std::path::Path::new("vendor/siege-engines-0.1.0");
+
+        let cksums =
+            copy_vendor_sources(src, &file_paths, dst, &filters, pkgdir).expect("copy succeeded");
+
+        // Header file must be copied to disk (checksum filter does not delete).
+        assert!(
+            dst.join("catapult.h").exists(),
+            ".h file should be copied to dst"
+        );
+        assert!(
+            dst.join("lib.rs").exists(),
+            "lib.rs should be copied to dst"
+        );
+
+        assert!(
+            !cksums.contains_key("catapult.h"),
+            ".h file should be excluded from checksum map"
+        );
+        assert!(
+            cksums.contains_key("lib.rs"),
+            "lib.rs should be in checksum map"
+        );
+    }
+    #[test]
+    fn test_copy_vendor_sources_gitignore_filter_keeps_cargo_toml_orig() {
+        let src_dir = tempfile::tempdir().expect("src tempdir");
+        let dst_dir = tempfile::tempdir().expect("dst tempdir");
+        let src = src_dir.path();
+        let dst = dst_dir.path();
+
+        fs::write(
+            src.join("Cargo.toml"),
+            b"[package]\nname = \"normalized\"\n",
+        )
+        .unwrap();
+        fs::write(src.join("Cargo.toml.orig"), b"[package]\nname = \"orig\"\n").unwrap();
+
+        let file_paths = vec![src.join("Cargo.toml"), src.join("Cargo.toml.orig")];
+        let filters = VendorFilters {
+            buck_file_name: None,
+            checksum_filter: Some(gitignore_filter("vendor/*/Cargo.toml.orig")),
+        };
+        let pkgdir = std::path::Path::new("vendor/fb-procfs-0.9.0");
+
+        let cksums =
+            copy_vendor_sources(src, &file_paths, dst, &filters, pkgdir).expect("copy succeeded");
+
+        assert!(
+            dst.join("Cargo.toml.orig").exists(),
+            "gitignore-matched Cargo.toml.orig should still be copied to dst"
+        );
+        assert!(
+            !cksums.contains_key("Cargo.toml.orig"),
+            "gitignore-matched Cargo.toml.orig should be absent from checksum map"
+        );
+        assert!(
+            cksums.contains_key("Cargo.toml"),
+            "Cargo.toml should remain in checksum map"
+        );
+    }
 
     #[test]
     fn test_generate_vendor_config_uses_relative_vendor_dir() {
@@ -2178,7 +2844,8 @@ mod test {
         std::fs::remove_dir_all(&staging_root).unwrap();
     }
 
-    // Invariant: compute_dir_checksums produces SHA256 hashes for all files in a tree
+    // Invariant: compute_dir_checksums_filtered without a filter produces SHA256 hashes for all
+    // files in a tree.
     #[test]
     fn test_compute_dir_checksums() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2186,7 +2853,9 @@ mod test {
         std::fs::create_dir(tmp.path().join("sub")).unwrap();
         std::fs::write(tmp.path().join("sub/b.txt"), b"world").unwrap();
 
-        let cksums = compute_dir_checksums(tmp.path()).unwrap();
+        let cksums =
+            compute_dir_checksums_filtered(tmp.path(), Path::new("vendor/example-0.1.0"), None)
+                .unwrap();
         assert_eq!(cksums.len(), 2);
         assert!(cksums.contains_key("a.txt"));
         assert!(cksums.contains_key("sub/b.txt"));
@@ -2238,7 +2907,18 @@ mod test {
             src_dir.path().join("Cargo.toml"),
         ];
 
-        let cksums = copy_vendor_sources(src_dir.path(), &file_paths, dst_dir.path()).unwrap();
+        let filters = VendorFilters {
+            buck_file_name: None,
+            checksum_filter: None,
+        };
+        let cksums = copy_vendor_sources(
+            src_dir.path(),
+            &file_paths,
+            dst_dir.path(),
+            &filters,
+            Path::new("vendor/example-0.1.0"),
+        )
+        .unwrap();
 
         assert!(dst_dir.path().join("lib.rs").exists());
         assert!(!dst_dir.path().join(".gitignore").exists());
