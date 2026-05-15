@@ -749,16 +749,20 @@ pub(crate) fn fast_vendor(
     let mut work_items = Vec::new();
     let mut sources: BTreeSet<SourceId> = BTreeSet::new();
 
+    // Load per-crate stamp map for incremental skip decisions.
+    let stamps_path = vendor_dir.join(STAMP_MAP_FILENAME);
+    let old_stamps = reusable_stamp_map(trust_existing_vendor_tree, &stamps_path);
+    let mut new_stamps: BTreeMap<String, String> = BTreeMap::new();
+
     for pkg_id in resolve.iter() {
         let replaced_sid = source_config
             .load(pkg_id.source_id(), &Default::default())?
             .replaced_source_id();
 
-        // Skip path dependencies -- they're already in the repo.
+        // Skip path dependencies -- they're already in the source tree.
+        // Any preexisting vendor/<name>-<version> directory for this crate
+        // stays in `to_remove` so it will be deleted as stale.
         if replaced_sid.is_path() {
-            if let Ok(file_path) = replaced_sid.url().to_file_path() {
-                to_remove.remove(&file_path);
-            }
             continue;
         }
 
@@ -770,13 +774,19 @@ pub(crate) fn fast_vendor(
         to_remove.remove(&dst);
         sources.insert(pkg_id.source_id());
 
-        // If this is an immutable registry source and we already have it, skip.
-        let cksum_path = dst.join(".cargo-checksum.json");
-        if trust_existing_vendor_tree && replaced_sid.is_registry() && cksum_path.exists() {
-            continue;
-        }
-
         let pkg_cksum = resolve.checksums().get(&pkg_id).and_then(|c| c.clone());
+
+        // Per-crate stamp check: skip extraction when content is unchanged.
+        // Only cacheable sources (registry with checksum, pinned git) get stamp
+        // entries; uncacheable sources are always extracted.
+        let cksum_path = dst.join(".cargo-checksum.json");
+        let stamp_key = crate_stamp_key(replaced_sid, pkg_cksum.as_deref(), &cfg_hash);
+        if let Some(ref key) = stamp_key {
+            new_stamps.insert(dst_name.clone(), key.clone());
+            if old_stamps.get(&dst_name).map(|s| s == key).unwrap_or(false) && cksum_path.exists() {
+                continue;
+            }
+        }
 
         if replaced_sid.is_registry() {
             // Derive archive path from the package root that cargo downloaded to.
@@ -916,6 +926,12 @@ pub(crate) fn fast_vendor(
         }
         Ok::<_, anyhow::Error>(())
     })?;
+
+    // Persist per-crate stamp map for the next incremental run.
+    let stamps_json =
+        serde_json::to_string(&new_stamps).context("failed to serialize per-crate stamp map")?;
+    write_regular_file(&stamps_path, stamps_json.as_bytes())
+        .with_context(|| format!("failed to write stamp map {}", stamps_path.display()))?;
 
     // Generate .cargo/config.toml with source replacements.
     let vendor_config = generate_vendor_config(&sources, &vendor_dir)?;
@@ -1198,6 +1214,61 @@ fn vendor_stamp_is_current(
         && stamp.cargo_config_hash == cargo_config_hash
 }
 
+/// Load the per-crate stamp map from `path`.
+///
+/// Returns an empty map on any error (missing file, malformed JSON, etc.),
+/// causing all crates to be re-extracted on the next run.
+fn load_stamp_map(path: &Path) -> BTreeMap<String, String> {
+    let Some(content) = read_regular_file_to_string(path) else {
+        return BTreeMap::new();
+    };
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+fn reusable_stamp_map(trust_existing_vendor_tree: bool, path: &Path) -> BTreeMap<String, String> {
+    if trust_existing_vendor_tree {
+        load_stamp_map(path)
+    } else {
+        BTreeMap::new()
+    }
+}
+
+pub(crate) fn read_existing_package_checksum(crate_dir: &Path) -> anyhow::Result<Option<String>> {
+    let cksum_path = crate_dir.join(".cargo-checksum.json");
+    let content = read_regular_file_to_string(&cksum_path)
+        .with_context(|| format!("missing or non-regular {}", cksum_path.display()))?;
+    let checksum_json: CargoChecksumJson = serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse {}", cksum_path.display()))?;
+    Ok(checksum_json.package)
+}
+
+/// Returns a stable cache key for this crate's per-crate stamp map entry, or
+/// `None` if this source type is not cacheable and should always be
+/// re-extracted.
+///
+/// - Registry sources: the SHA256 checksum of the downloaded tarball from
+///   Cargo.lock, combined with the vendoring-config fingerprint. This
+///   identifies both the source content and the expected extracted output.
+/// - Git sources with a precise revision: `"git:{url}#{commit}:{config_hash}"`.
+///   The precise field pins the source content, and `config_hash` pins the
+///   expected extracted output.
+/// - Anything else (git without precise, path, other): `None`.  Uncacheable
+///   sources are never stored in the stamp map and always re-extracted.
+fn crate_stamp_key(sid: SourceId, pkg_cksum: Option<&str>, config_hash: &str) -> Option<String> {
+    if sid.is_registry() {
+        // Registry tarballs are content-addressed by their Cargo.lock checksum,
+        // but the extracted output also depends on vendoring config.
+        pkg_cksum.map(|c| format!("registry:{c}:{config_hash}"))
+    } else if sid.is_git() {
+        // Git sources are stable only when pinned to a precise commit, and the
+        // extracted output also depends on vendoring config.
+        let precise = sid.precise_git_fragment()?;
+        Some(format!("git:{}#{}:{config_hash}", sid.url(), precise))
+    } else {
+        None
+    }
+}
+
 /// Returns `true` if this relative path should be included in the vendor dir.
 ///
 /// Mirrors cargo's `vendor_this()`: excludes `.gitattributes`, `.gitignore`,
@@ -1465,15 +1536,6 @@ fn write_checksum_json(
     let contents = json.to_string();
     write_regular_file(&cksum_path, contents.as_bytes())
         .with_context(|| format!("failed to write {}", cksum_path.display()))
-}
-
-pub(crate) fn read_existing_package_checksum(crate_dir: &Path) -> anyhow::Result<Option<String>> {
-    let cksum_path = crate_dir.join(".cargo-checksum.json");
-    let content = fs::read_to_string(&cksum_path)
-        .with_context(|| format!("missing or non-regular {}", cksum_path.display()))?;
-    let checksum_json: CargoChecksumJson = serde_json::from_str(&content)
-        .with_context(|| format!("failed to parse {}", cksum_path.display()))?;
-    Ok(checksum_json.package)
 }
 
 /// Generate a `.cargo/config.toml` string with source replacement entries
@@ -2360,7 +2422,9 @@ mod test {
     use super::collect_vendor_cleanup_entries;
     use super::compute_dir_checksums_filtered;
     use super::copy_vendor_sources;
+    use super::crate_stamp_key;
     use super::generate_vendor_config;
+    use super::load_stamp_map;
     use super::lockfile_hash;
     use super::make_staging_destination;
     use super::parse_source;
@@ -2368,6 +2432,7 @@ mod test {
     use super::read_existing_package_checksum;
     use super::read_vendor_stamp;
     use super::refresh_vendor_tree_hash_after_buckify;
+    use super::reusable_stamp_map;
     use super::synthesize_missing_build_rs;
     use super::vendor_config_hash;
     use super::vendor_stamp_is_current;
@@ -3923,6 +3988,234 @@ build = "scripts/build.rs"
         assert_ne!(
             hash_before, hash_after,
             "gitignore content changes must produce a different vendor_config hash"
+        );
+    }
+
+    // --- crate_stamp_key tests ---
+
+    fn registry_sid() -> cargo::core::SourceId {
+        cargo::core::SourceId::from_url("registry+https://github.com/rust-lang/crates.io-index")
+            .expect("valid registry URL")
+    }
+
+    fn git_sid_with_precise(url: &str, commit: &str) -> cargo::core::SourceId {
+        cargo::core::SourceId::from_url(&format!("git+{url}#{commit}"))
+            .expect("valid git URL with precise commit")
+    }
+
+    fn git_sid_no_precise(url: &str) -> cargo::core::SourceId {
+        cargo::core::SourceId::from_url(&format!("git+{url}"))
+            .expect("valid git URL without precise commit")
+    }
+
+    #[test]
+    fn test_crate_stamp_key_registry_with_checksum() {
+        // Registry source with a checksum returns Some(checksum) -- the
+        // tarball SHA256 plus vendoring config form the stable key.
+        let key = crate_stamp_key(
+            registry_sid(),
+            Some("sha256-of-dragon-breath-tarball"),
+            "config-hash-blueberry",
+        );
+        assert_eq!(
+            key,
+            Some("registry:sha256-of-dragon-breath-tarball:config-hash-blueberry".to_owned()),
+            "registry source with checksum should return Some(content+config key)"
+        );
+    }
+
+    #[test]
+    fn test_crate_stamp_key_registry_no_checksum() {
+        // Registry source without a checksum has no stable key.
+        let key = crate_stamp_key(registry_sid(), None, "config-hash-blueberry");
+        assert_eq!(
+            key, None,
+            "registry source without checksum should return None"
+        );
+    }
+
+    #[test]
+    fn test_crate_stamp_key_registry_changes_with_vendor_config_hash() {
+        let key_a = crate_stamp_key(
+            registry_sid(),
+            Some("sha256-of-dragon-breath-tarball"),
+            "cfg-a",
+        );
+        let key_b = crate_stamp_key(
+            registry_sid(),
+            Some("sha256-of-dragon-breath-tarball"),
+            "cfg-b",
+        );
+        assert_ne!(
+            key_a, key_b,
+            "registry stamp key must change when vendoring config changes"
+        );
+    }
+
+    #[test]
+    fn test_crate_stamp_key_git_with_precise() {
+        // Git source pinned to a commit returns a stable key containing both
+        // the repo URL, the commit hash, and the vendoring config hash.
+        let url = "https://github.com/unicorn-factory/flux-capacitor";
+        let commit = "abc123def456abc123def456abc123def456abc123";
+        let key = crate_stamp_key(
+            git_sid_with_precise(url, commit),
+            None,
+            "config-hash-blueberry",
+        );
+        let key = key.expect("pinned git source should return Some stamp key");
+        assert!(
+            key.starts_with("git:"),
+            "git stamp key should start with 'git:'"
+        );
+        assert!(
+            key.contains(commit),
+            "git stamp key should contain the precise commit hash"
+        );
+        assert!(
+            key.contains("unicorn-factory/flux-capacitor"),
+            "git stamp key should contain the repo path"
+        );
+        assert!(
+            key.contains("config-hash-blueberry"),
+            "git stamp key should contain the vendoring config hash"
+        );
+    }
+
+    #[test]
+    fn test_crate_stamp_key_git_without_precise() {
+        // Git source without a pinned commit is not stable and returns None.
+        let key = crate_stamp_key(
+            git_sid_no_precise("https://github.com/unicorn-factory/siege-engines"),
+            None,
+            "config-hash-blueberry",
+        );
+        assert_eq!(
+            key, None,
+            "git source without precise commit should return None (uncacheable)"
+        );
+    }
+
+    #[test]
+    fn test_crate_stamp_key_path_source() {
+        // Path dependencies are always re-extracted and must never get a stamp
+        // key. If they did, a stale vendor dir would be skipped on the next
+        // run rather than being cleaned up.
+        let sid = cargo::core::SourceId::from_url("path+file:///repo/local/boomerang")
+            .expect("valid path URL");
+        let key = crate_stamp_key(sid, None, "config-hash-blueberry");
+        assert_eq!(
+            key, None,
+            "path source must return None (uncacheable, always re-extracted)"
+        );
+    }
+
+    // --- load_stamp_map tests ---
+
+    #[test]
+    fn test_load_stamp_map_missing_file() {
+        // Missing stamp map returns an empty map, not an error.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".reindeer-vendor-stamps");
+        let map = load_stamp_map(&path);
+        assert!(map.is_empty(), "missing stamp map should load as empty map");
+    }
+
+    #[test]
+    fn test_load_stamp_map_valid_json() {
+        // Valid JSON map is loaded and returned intact.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".reindeer-vendor-stamps");
+        fs::write(
+            &path,
+            r#"{"pancake-stack-1.0.0":"sha256abc","sourdough-starter-2.1.0":"sha256def"}"#,
+        )
+        .unwrap();
+        let map = load_stamp_map(&path);
+        assert_eq!(map.len(), 2, "should load two entries from the stamp map");
+        assert_eq!(
+            map.get("pancake-stack-1.0.0").map(String::as_str),
+            Some("sha256abc")
+        );
+        assert_eq!(
+            map.get("sourdough-starter-2.1.0").map(String::as_str),
+            Some("sha256def")
+        );
+    }
+
+    #[test]
+    fn test_load_stamp_map_malformed_json() {
+        // Malformed stamp file returns an empty map, triggering a full re-extract.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".reindeer-vendor-stamps");
+        fs::write(&path, b"fell-off-a-truck: this-is-not-json").unwrap();
+        let map = load_stamp_map(&path);
+        assert!(
+            map.is_empty(),
+            "malformed stamp map should load as empty map"
+        );
+    }
+
+    #[test]
+    fn test_load_stamp_map_directory_returns_empty() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".reindeer-vendor-stamps");
+        fs::create_dir(&path).unwrap();
+
+        assert!(
+            load_stamp_map(&path).is_empty(),
+            "stamp-map directories should not be treated as valid stamp maps"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_stamp_map_symlink_returns_empty() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("map-target");
+        let path = dir.path().join(".reindeer-vendor-stamps");
+        fs::write(&target, r#"{"sourdough-starter-2.1.0":"sha256def"}"#).unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        assert!(
+            load_stamp_map(&path).is_empty(),
+            "stamp-map symlinks should not be treated as valid stamp maps"
+        );
+    }
+
+    #[test]
+    fn test_write_regular_file_repairs_stamp_map_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".reindeer-vendor-stamps");
+        fs::create_dir(&path).unwrap();
+
+        super::write_regular_file(&path, br#"{"sourdough-starter-2.1.0":"sha256def"}"#).unwrap();
+
+        assert_eq!(
+            load_stamp_map(&path)
+                .get("sourdough-starter-2.1.0")
+                .map(String::as_str),
+            Some("sha256def"),
+            "repaired stamp-map paths should become readable regular files"
+        );
+    }
+
+    #[test]
+    fn test_reusable_stamp_map_disabled_when_vendor_tree_untrusted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".reindeer-vendor-stamps");
+        fs::write(&path, r#"{"sourdough-starter-2.1.0":"sha256def"}"#).unwrap();
+
+        assert!(
+            reusable_stamp_map(false, &path).is_empty(),
+            "an untrusted starting vendor tree must disable stamp-map reuse for this run"
+        );
+        assert_eq!(
+            reusable_stamp_map(true, &path)
+                .get("sourdough-starter-2.1.0")
+                .map(String::as_str),
+            Some("sha256def"),
+            "a trusted starting vendor tree should still reuse the persisted stamp map"
         );
     }
 }
