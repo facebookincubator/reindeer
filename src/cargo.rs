@@ -70,6 +70,8 @@ use crate::remap::RemapConfig;
 use crate::remap::RemapSource;
 
 static STAGING_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+const VENDOR_STAMP_FILENAME: &str = ".reindeer-vendor-stamp";
+const STAMP_MAP_FILENAME: &str = ".reindeer-vendor-stamps";
 
 pub fn cargo_get_lockfile_and_metadata(
     config: &Config,
@@ -625,6 +627,49 @@ pub(crate) fn fast_vendor(
     paths: &Paths,
     filters: VendorFilters,
 ) -> anyhow::Result<()> {
+    // Fast path: skip resolve/download/extraction only when Cargo.lock,
+    // vendoring configuration, and the on-disk vendor tree all match the last
+    // successful run.
+    let vendor_dir = paths.third_party_dir.join("vendor");
+    let stamp_path = vendor_dir.join(VENDOR_STAMP_FILENAME);
+    let cargo_config_path = paths.cargo_home.join("config.toml");
+    let current_lockfile_hash = lockfile_hash(&paths.lockfile_path)?;
+    if current_lockfile_hash.is_none() {
+        log::debug!(
+            "Could not read {}; skipping vendor stamp check",
+            paths.lockfile_path.display()
+        );
+    }
+    let current_cargo_config_hash = match file_hash_if_regular(&cargo_config_path) {
+        Ok(hash) => hash,
+        Err(err) => {
+            log::debug!(
+                "Failed to hash {} before fast-path check: {err:#}",
+                cargo_config_path.display()
+            );
+            None
+        }
+    };
+    let (checksum_exclude, gitignore_checksum_exclude) = match &config.vendor {
+        VendorConfig::Source(src) => (
+            src.checksum_exclude.as_slice(),
+            src.gitignore_checksum_exclude.as_slice(),
+        ),
+        _ => (&[][..], &[][..]),
+    };
+    let cfg_hash = vendor_config_hash(
+        config.buck.split,
+        &config.buck.file_name,
+        checksum_exclude,
+        gitignore_checksum_exclude,
+        no_delete,
+        &paths.third_party_dir,
+    );
+    let current_vendor_tree_hash_handle = {
+        let vendor_dir = vendor_dir.clone();
+        thread::spawn(move || vendor_tree_hash(&vendor_dir))
+    };
+
     let gctx = make_gctx(
         config,
         args,
@@ -641,6 +686,47 @@ pub(crate) fn fast_vendor(
 
     let manifest_path = paths.manifest_path.clone();
     let ws = cargo::core::Workspace::new(&manifest_path, &gctx)?;
+    let current_vendor_tree_hash = match current_vendor_tree_hash_handle.join() {
+        Ok(Ok(hash)) => hash,
+        Ok(Err(err)) => {
+            log::debug!(
+                "Failed to hash {} before fast-path check: {err:#}",
+                vendor_dir.display()
+            );
+            None
+        }
+        Err(_) => {
+            log::warn!(
+                "Vendor tree hash worker panicked for {}; skipping fast path",
+                vendor_dir.display()
+            );
+            None
+        }
+    };
+    let trust_existing_vendor_tree =
+        current_vendor_tree_hash
+            .as_deref()
+            .is_some_and(|vendor_tree_hash| {
+                vendor_tree_is_reusable(&cfg_hash, vendor_tree_hash, &stamp_path)
+            });
+    if let (Some(lockfile_hash), Some(current_vendor_tree_hash), Some(current_cargo_config_hash)) = (
+        current_lockfile_hash.as_deref(),
+        current_vendor_tree_hash.as_deref(),
+        current_cargo_config_hash.as_deref(),
+    ) {
+        if vendor_stamp_is_current(
+            lockfile_hash,
+            &cfg_hash,
+            current_vendor_tree_hash,
+            current_cargo_config_hash,
+            &stamp_path,
+        ) {
+            log::info!(
+                "Cargo.lock, vendoring config, and vendor tree unchanged; vendor directory is up to date, skipping"
+            );
+            return Ok(());
+        }
+    }
 
     // Resolve deps and download all packages.
     let (package_set, resolve) =
@@ -650,18 +736,13 @@ pub(crate) fn fast_vendor(
         .get_many(resolve.iter())
         .context("failed to download packages")?;
 
-    let vendor_dir = paths.third_party_dir.join("vendor");
     fs::create_dir_all(&vendor_dir)?;
 
     // Collect existing directories for cleanup (unless --no-delete).
     let mut to_remove: BTreeSet<PathBuf> = if no_delete {
         BTreeSet::new()
     } else {
-        fs::read_dir(&vendor_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_str().is_some_and(|s| !s.starts_with('.')))
-            .map(|e| e.path())
-            .collect()
+        collect_vendor_cleanup_entries(&vendor_dir)?
     };
 
     // Collect packages to vendor and build work items.
@@ -691,7 +772,7 @@ pub(crate) fn fast_vendor(
 
         // If this is an immutable registry source and we already have it, skip.
         let cksum_path = dst.join(".cargo-checksum.json");
-        if replaced_sid.is_registry() && cksum_path.exists() {
+        if trust_existing_vendor_tree && replaced_sid.is_registry() && cksum_path.exists() {
             continue;
         }
 
@@ -738,13 +819,10 @@ pub(crate) fn fast_vendor(
         }
     }
 
-    // Remove stale vendor directories.
+    // Remove stale vendor entries left behind by prior runs or by drift in the
+    // top-level vendor directory.
     for stale in &to_remove {
-        if stale.is_dir() {
-            fs::remove_dir_all(stale).with_context(|| {
-                format!("failed to remove stale vendor dir {}", stale.display())
-            })?;
-        }
+        remove_existing_path(stale)?;
     }
 
     // Extract/copy in parallel using thread::scope with static chunking.
@@ -842,9 +920,282 @@ pub(crate) fn fast_vendor(
     // Generate .cargo/config.toml with source replacements.
     let vendor_config = generate_vendor_config(&sources, &vendor_dir)?;
     fs::create_dir_all(&paths.cargo_home)?;
-    fs::write(paths.cargo_home.join("config.toml"), &vendor_config)?;
+    write_regular_file(&cargo_config_path, vendor_config.as_bytes())
+        .with_context(|| format!("failed to write {}", cargo_config_path.display()))?;
+    let post_lockfile_hash = lockfile_hash(&paths.lockfile_path)?;
+    if let Some(post_lockfile_hash) = post_lockfile_hash {
+        let post_cargo_config_hash = file_hash_if_regular(&cargo_config_path)?
+            .expect("config.toml exists after successful vendoring");
+        let post_vendor_tree_hash =
+            vendor_tree_hash(&vendor_dir)?.expect("vendor dir exists after successful vendoring");
+        let stamp = VendorStamp {
+            lockfile_hash: post_lockfile_hash,
+            vendor_config_hash: cfg_hash.clone(),
+            vendor_tree_hash: post_vendor_tree_hash,
+            cargo_config_hash: post_cargo_config_hash,
+        };
+        let stamp_json =
+            serde_json::to_string(&stamp).context("failed to serialize vendor stamp")?;
+        write_regular_file(&stamp_path, stamp_json.as_bytes())
+            .with_context(|| format!("failed to write vendor stamp {}", stamp_path.display()))?;
+    } else {
+        let _ = remove_existing_path(&stamp_path);
+    }
 
     Ok(())
+}
+
+/// Persisted stamp recording the state of the last successful vendor run.
+#[derive(Debug, Serialize, Deserialize)]
+struct VendorStamp {
+    lockfile_hash: String,
+    vendor_config_hash: String,
+    vendor_tree_hash: String,
+    cargo_config_hash: String,
+}
+
+/// Stable hash over vendoring-configuration inputs.
+///
+/// If any of these values change, the whole-lockfile fast path must miss so
+/// the vendor directory is rebuilt with the new settings.
+fn vendor_config_hash(
+    buck_split: bool,
+    buck_file_name: &str,
+    checksum_exclude: &[String],
+    gitignore_checksum_exclude: &[PathBuf],
+    no_delete: bool,
+    third_party_dir: &Path,
+) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update([if buck_split { 1u8 } else { 0u8 }]);
+    hasher.update([if no_delete { 1u8 } else { 0u8 }]);
+    hasher.update(buck_file_name.as_bytes());
+    hasher.update(b"\x00");
+    for glob in checksum_exclude {
+        hasher.update(glob.as_bytes());
+        hasher.update(b"\x00");
+    }
+    hasher.update(b"\x00");
+    for path in gitignore_checksum_exclude {
+        hasher.update(path.to_string_lossy().as_bytes());
+        hasher.update(b"\x00");
+        match fs::read(third_party_dir.join(path)) {
+            Ok(contents) => {
+                hasher.update(b"present\x00");
+                hasher.update(&contents);
+            }
+            Err(err) => {
+                hasher.update(b"missing\x00");
+                hasher.update(err.kind().to_string().as_bytes());
+            }
+        }
+        hasher.update(b"\x00");
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn lockfile_hash(lockfile_path: &Path) -> anyhow::Result<Option<String>> {
+    match fs::read(lockfile_path) {
+        Ok(lockfile_bytes) => Ok(Some(format!("{:x}", sha2::Sha256::digest(&lockfile_bytes)))),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("failed to read {}", lockfile_path.display())),
+    }
+}
+
+fn path_file_type_no_follow(path: &Path) -> anyhow::Result<Option<fs::FileType>> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata.file_type())),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("failed to stat {}", path.display())),
+    }
+}
+
+fn file_hash_if_regular(path: &Path) -> anyhow::Result<Option<String>> {
+    let Some(file_type) = path_file_type_no_follow(path)? else {
+        return Ok(None);
+    };
+    if !file_type.is_file() {
+        return Ok(None);
+    }
+    let contents = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    Ok(Some(format!("{:x}", sha2::Sha256::digest(&contents))))
+}
+
+fn read_regular_file_to_string(path: &Path) -> Option<String> {
+    let Ok(file_type) = path_file_type_no_follow(path) else {
+        return None;
+    };
+    let file_type = file_type?;
+    if !file_type.is_file() {
+        return None;
+    }
+    fs::read_to_string(path).ok()
+}
+
+fn remove_existing_path(path: &Path) -> anyhow::Result<()> {
+    let Some(file_type) = path_file_type_no_follow(path)? else {
+        return Ok(());
+    };
+    if file_type.is_dir() {
+        fs::remove_dir_all(path)
+            .with_context(|| format!("failed to remove stale vendor dir {}", path.display()))?;
+    } else {
+        fs::remove_file(path)
+            .with_context(|| format!("failed to remove stale vendor file {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn prepare_regular_file_target(path: &Path) -> anyhow::Result<()> {
+    let Some(file_type) = path_file_type_no_follow(path)? else {
+        return Ok(());
+    };
+    if file_type.is_file() {
+        return Ok(());
+    }
+    remove_existing_path(path)
+}
+
+fn write_regular_file(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
+    prepare_regular_file_target(path)?;
+    fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))
+}
+
+fn read_vendor_stamp(stamp_path: &Path) -> Option<VendorStamp> {
+    let content = read_regular_file_to_string(stamp_path)?;
+    serde_json::from_str::<VendorStamp>(&content).ok()
+}
+
+pub(crate) fn refresh_vendor_tree_hash_after_buckify(vendor_dir: &Path) -> anyhow::Result<()> {
+    let stamp_path = vendor_dir.join(VENDOR_STAMP_FILENAME);
+    let Some(mut stamp) = read_vendor_stamp(&stamp_path) else {
+        return Ok(());
+    };
+    let Some(current_vendor_tree_hash) = vendor_tree_hash(vendor_dir)? else {
+        return Ok(());
+    };
+    if stamp.vendor_tree_hash == current_vendor_tree_hash {
+        return Ok(());
+    }
+    stamp.vendor_tree_hash = current_vendor_tree_hash;
+    let stamp_json =
+        serde_json::to_string(&stamp).context("failed to serialize refreshed vendor stamp")?;
+    write_regular_file(&stamp_path, stamp_json.as_bytes())
+        .with_context(|| format!("failed to refresh vendor stamp {}", stamp_path.display()))
+}
+
+fn is_vendor_bookkeeping_name(name: &Path) -> bool {
+    name.to_str()
+        .is_some_and(|name| matches!(name, VENDOR_STAMP_FILENAME | STAMP_MAP_FILENAME))
+}
+
+fn is_top_level_vendor_bookkeeping_path(vendor_dir: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(vendor_dir) else {
+        return false;
+    };
+    relative.components().count() == 1 && is_vendor_bookkeeping_name(relative)
+}
+
+fn is_valid_bookkeeping_file(vendor_dir: &Path, path: &Path) -> bool {
+    if !is_top_level_vendor_bookkeeping_path(vendor_dir, path) {
+        return false;
+    }
+    matches!(path_file_type_no_follow(path), Ok(Some(file_type)) if file_type.is_file())
+}
+
+fn vendor_tree_hash(vendor_dir: &Path) -> anyhow::Result<Option<String>> {
+    if !vendor_dir.exists() {
+        return Ok(None);
+    }
+
+    let mut entries = BTreeMap::new();
+    for entry in WalkDir::new(vendor_dir).into_iter() {
+        let entry = entry?;
+        let path = entry.path();
+        if path == vendor_dir || is_valid_bookkeeping_file(vendor_dir, path) {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(vendor_dir)
+            .expect("walkdir entry must be under vendor dir");
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let file_type = entry.file_type();
+        let fingerprint = if file_type.is_dir() {
+            "dir".to_owned()
+        } else if file_type.is_file() {
+            let contents =
+                fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+            format!("file:{:x}", sha2::Sha256::digest(&contents))
+        } else if file_type.is_symlink() {
+            let target = fs::read_link(path)
+                .with_context(|| format!("failed to read symlink {}", path.display()))?;
+            format!("symlink:{}", target.to_string_lossy())
+        } else {
+            bail!("unsupported vendor tree entry type at {}", path.display());
+        };
+        entries.insert(relative, fingerprint);
+    }
+
+    let mut hasher = sha2::Sha256::new();
+    for (relative, fingerprint) in entries {
+        hasher.update(relative.as_bytes());
+        hasher.update(b"\x00");
+        hasher.update(fingerprint.as_bytes());
+        hasher.update(b"\x00");
+    }
+    Ok(Some(format!("{:x}", hasher.finalize())))
+}
+
+fn collect_vendor_cleanup_entries(vendor_dir: &Path) -> anyhow::Result<BTreeSet<PathBuf>> {
+    if !vendor_dir.exists() {
+        return Ok(BTreeSet::new());
+    }
+
+    fs::read_dir(vendor_dir)?
+        .map(|entry| {
+            let entry = entry?;
+            let path = entry.path();
+            if is_valid_bookkeeping_file(vendor_dir, &path) {
+                Ok(None)
+            } else {
+                Ok(Some(path))
+            }
+        })
+        .filter_map(|entry| entry.transpose())
+        .collect::<Result<BTreeSet<_>, io::Error>>()
+        .map_err(anyhow::Error::from)
+        .with_context(|| format!("failed to read {}", vendor_dir.display()))
+}
+
+fn vendor_tree_is_reusable(
+    vendor_config_hash: &str,
+    vendor_tree_hash: &str,
+    stamp_path: &Path,
+) -> bool {
+    let Some(stamp) = read_vendor_stamp(stamp_path) else {
+        return false;
+    };
+    stamp.vendor_config_hash == vendor_config_hash && stamp.vendor_tree_hash == vendor_tree_hash
+}
+
+/// Returns `true` if the vendor stamp matches `lockfile_hash`,
+/// `vendor_config_hash`, `vendor_tree_hash`, and `cargo_config_hash`, meaning
+/// no extraction is needed this run. A missing or malformed stamp returns
+/// false.
+fn vendor_stamp_is_current(
+    lockfile_hash: &str,
+    vendor_config_hash: &str,
+    vendor_tree_hash: &str,
+    cargo_config_hash: &str,
+    stamp_path: &Path,
+) -> bool {
+    let Some(stamp) = read_vendor_stamp(stamp_path) else {
+        return false;
+    };
+    stamp.lockfile_hash == lockfile_hash
+        && stamp.vendor_config_hash == vendor_config_hash
+        && stamp.vendor_tree_hash == vendor_tree_hash
+        && stamp.cargo_config_hash == cargo_config_hash
 }
 
 /// Returns `true` if this relative path should be included in the vendor dir.
@@ -879,7 +1230,7 @@ fn make_staging_destination(dst: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
 }
 
 fn replace_vendor_dir(staged_dst: &Path, dst: &Path) -> anyhow::Result<()> {
-    let _ = fs::remove_dir_all(dst);
+    remove_existing_path(dst)?;
     fs::rename(staged_dst, dst).with_context(|| {
         format!(
             "failed to move staged vendor dir {} into {}",
@@ -997,43 +1348,6 @@ fn copy_vendor_sources(
     }
 
     Ok(cksums)
-}
-
-fn path_file_type_no_follow(path: &Path) -> anyhow::Result<Option<fs::FileType>> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => Ok(Some(metadata.file_type())),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err).with_context(|| format!("failed to stat {}", path.display())),
-    }
-}
-
-fn remove_existing_path(path: &Path) -> anyhow::Result<()> {
-    let Some(file_type) = path_file_type_no_follow(path)? else {
-        return Ok(());
-    };
-    if file_type.is_dir() {
-        fs::remove_dir_all(path)
-            .with_context(|| format!("failed to remove stale vendor dir {}", path.display()))?;
-    } else {
-        fs::remove_file(path)
-            .with_context(|| format!("failed to remove stale vendor file {}", path.display()))?;
-    }
-    Ok(())
-}
-
-fn prepare_regular_file_target(path: &Path) -> anyhow::Result<()> {
-    let Some(file_type) = path_file_type_no_follow(path)? else {
-        return Ok(());
-    };
-    if file_type.is_file() {
-        return Ok(());
-    }
-    remove_existing_path(path)
-}
-
-fn write_regular_file(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
-    prepare_regular_file_target(path)?;
-    fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))
 }
 
 fn remove_split_buck_file(crate_dir: &Path, buck_file_name: Option<&str>) -> anyhow::Result<()> {
@@ -2042,15 +2356,24 @@ mod test {
     use super::Source;
     use super::TargetKind;
     use super::VendorFilters;
+    use super::VendorStamp;
+    use super::collect_vendor_cleanup_entries;
     use super::compute_dir_checksums_filtered;
     use super::copy_vendor_sources;
     use super::generate_vendor_config;
+    use super::lockfile_hash;
     use super::make_staging_destination;
     use super::parse_source;
     use super::postprocess_vendored_crate_dir;
     use super::read_existing_package_checksum;
+    use super::read_vendor_stamp;
+    use super::refresh_vendor_tree_hash_after_buckify;
     use super::synthesize_missing_build_rs;
+    use super::vendor_config_hash;
+    use super::vendor_stamp_is_current;
     use super::vendor_this;
+    use super::vendor_tree_hash;
+    use super::vendor_tree_is_reusable;
     use super::write_checksum_json;
 
     // Build a ChecksumFilter that matches a single glob pattern.
@@ -2927,5 +3250,679 @@ build = "scripts/build.rs"
         assert!(cksums.contains_key("lib.rs"));
         assert!(cksums.contains_key("Cargo.toml"));
         assert!(!cksums.contains_key(".gitignore"));
+    }
+
+    fn write_stamp(
+        path: &Path,
+        lockfile_hash: &str,
+        vendor_config_hash: &str,
+        vendor_tree_hash: &str,
+        cargo_config_hash: &str,
+    ) {
+        let stamp = VendorStamp {
+            lockfile_hash: lockfile_hash.to_owned(),
+            vendor_config_hash: vendor_config_hash.to_owned(),
+            vendor_tree_hash: vendor_tree_hash.to_owned(),
+            cargo_config_hash: cargo_config_hash.to_owned(),
+        };
+        fs::write(path, serde_json::to_string(&stamp).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn test_vendor_stamp_is_current_all_present() {
+        // All hashes match -- should be current.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stamp = dir.path().join(".reindeer-vendor-stamp");
+
+        write_stamp(
+            &stamp,
+            "sourdough-lockfile",
+            "sourdough-config",
+            "sourdough-tree",
+            "sourdough-cargo-config",
+        );
+
+        assert!(
+            vendor_stamp_is_current(
+                "sourdough-lockfile",
+                "sourdough-config",
+                "sourdough-tree",
+                "sourdough-cargo-config",
+                &stamp,
+            ),
+            "stamp matches all hashes -- should be current"
+        );
+    }
+
+    #[test]
+    fn test_vendor_stamp_is_current_changed_vendor_config() {
+        // Lockfile hash matches but vendor_config_hash differs -- must re-vendor.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stamp = dir.path().join(".reindeer-vendor-stamp");
+
+        write_stamp(
+            &stamp,
+            "pancake-lockfile",
+            "old-config-hash",
+            "pancake-tree",
+            "pancake-cargo-config",
+        );
+
+        assert!(
+            !vendor_stamp_is_current(
+                "pancake-lockfile",
+                "new-config-hash",
+                "pancake-tree",
+                "pancake-cargo-config",
+                &stamp,
+            ),
+            "changed vendor_config_hash should not be considered current"
+        );
+    }
+
+    #[test]
+    fn test_vendor_stamp_is_current_stale_lockfile_hash() {
+        // Stamp exists but lockfile_hash no longer matches.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stamp = dir.path().join(".reindeer-vendor-stamp");
+
+        write_stamp(
+            &stamp,
+            "old-flux-capacitor",
+            "dragon-config",
+            "dragon-tree",
+            "dragon-cargo-config",
+        );
+
+        assert!(
+            !vendor_stamp_is_current(
+                "new-flux-capacitor",
+                "dragon-config",
+                "dragon-tree",
+                "dragon-cargo-config",
+                &stamp,
+            ),
+            "stale lockfile hash should not be considered current"
+        );
+    }
+
+    #[test]
+    fn test_vendor_stamp_is_current_changed_vendor_tree() {
+        // Stamp exists but vendor_tree_hash no longer matches.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stamp = dir.path().join(".reindeer-vendor-stamp");
+
+        write_stamp(
+            &stamp,
+            "boomerang-lockfile",
+            "boomerang-config",
+            "old-tree",
+            "boomerang-cargo-config",
+        );
+
+        assert!(
+            !vendor_stamp_is_current(
+                "boomerang-lockfile",
+                "boomerang-config",
+                "new-tree",
+                "boomerang-cargo-config",
+                &stamp,
+            ),
+            "stale vendor_tree_hash should not be considered current"
+        );
+    }
+
+    #[test]
+    fn test_vendor_stamp_is_current_changed_cargo_config_hash() {
+        // Stamp exists but cargo_config_hash no longer matches.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stamp = dir.path().join(".reindeer-vendor-stamp");
+
+        write_stamp(
+            &stamp,
+            "boomerang-lockfile",
+            "boomerang-config",
+            "boomerang-tree",
+            "old-cargo-config",
+        );
+
+        assert!(
+            !vendor_stamp_is_current(
+                "boomerang-lockfile",
+                "boomerang-config",
+                "boomerang-tree",
+                "new-cargo-config",
+                &stamp,
+            ),
+            "stale cargo_config_hash should not be considered current"
+        );
+    }
+
+    #[test]
+    fn test_vendor_stamp_is_current_missing_stamp() {
+        // No stamp file (first run) -- return false.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stamp = dir.path().join(".reindeer-vendor-stamp"); // not written
+
+        assert!(
+            !vendor_stamp_is_current(
+                "unicorn-lockfile",
+                "unicorn-config",
+                "unicorn-tree",
+                "unicorn-cargo-config",
+                &stamp,
+            ),
+            "missing stamp file should not be considered current"
+        );
+    }
+
+    #[test]
+    fn test_vendor_stamp_is_current_malformed_stamp() {
+        // Non-JSON stamp content (e.g. leftover bare-string from old format) -- return false.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stamp = dir.path().join(".reindeer-vendor-stamp");
+
+        fs::write(&stamp, "this-is-not-json").unwrap();
+
+        assert!(
+            !vendor_stamp_is_current(
+                "fell-off-a-truck",
+                "fell-off-a-truck",
+                "fell-off-a-tree",
+                "fell-off-a-config",
+                &stamp,
+            ),
+            "malformed (non-JSON) stamp should not be considered current"
+        );
+    }
+
+    #[test]
+    fn test_lockfile_hash_missing_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let lockfile = dir.path().join("Cargo.lock");
+
+        assert_eq!(
+            lockfile_hash(&lockfile).unwrap(),
+            None,
+            "missing Cargo.lock should be a cache miss, not a synthetic hash"
+        );
+    }
+
+    #[test]
+    fn test_file_hash_if_regular_missing_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+
+        assert_eq!(
+            super::file_hash_if_regular(&path).unwrap(),
+            None,
+            "missing files should not produce a synthetic hash"
+        );
+    }
+
+    #[test]
+    fn test_file_hash_if_regular_directory_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::create_dir(&path).unwrap();
+
+        assert_eq!(
+            super::file_hash_if_regular(&path).unwrap(),
+            None,
+            "directories should not be hashed as regular files"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_file_hash_if_regular_symlink_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("real-config.toml");
+        let path = dir.path().join("config.toml");
+        fs::write(&target, b"[source]\n").unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        assert_eq!(
+            super::file_hash_if_regular(&path).unwrap(),
+            None,
+            "symlinks should not be hashed as regular files"
+        );
+    }
+
+    #[test]
+    fn test_read_vendor_stamp_directory_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".reindeer-vendor-stamp");
+        fs::create_dir(&path).unwrap();
+
+        assert!(
+            super::read_vendor_stamp(&path).is_none(),
+            "stamp directories should not be treated as valid stamp files"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_read_vendor_stamp_symlink_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("stamp-target");
+        let path = dir.path().join(".reindeer-vendor-stamp");
+        write_stamp(&target, "lock", "config", "tree", "cargo-config");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        assert!(
+            super::read_vendor_stamp(&path).is_none(),
+            "stamp symlinks should not be treated as valid stamp files"
+        );
+    }
+
+    #[test]
+    fn test_write_regular_file_repairs_vendor_stamp_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".reindeer-vendor-stamp");
+        fs::create_dir(&path).unwrap();
+
+        let stamp_json = serde_json::to_string(&VendorStamp {
+            lockfile_hash: "lock".to_owned(),
+            vendor_config_hash: "config".to_owned(),
+            vendor_tree_hash: "tree".to_owned(),
+            cargo_config_hash: "cargo-config".to_owned(),
+        })
+        .unwrap();
+        super::write_regular_file(&path, stamp_json.as_bytes()).unwrap();
+
+        assert!(
+            super::read_vendor_stamp(&path).is_some(),
+            "repaired stamp paths should become readable regular files"
+        );
+    }
+
+    #[test]
+    fn test_write_regular_file_replaces_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".cargo-config");
+        fs::create_dir(&path).unwrap();
+
+        super::write_regular_file(&path, b"[source]\n").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[source]\n",
+            "write_regular_file should replace preexisting directories"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_regular_file_replaces_symlink() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("target");
+        let path = dir.path().join(".cargo-config");
+        fs::write(&target, b"old").unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        super::write_regular_file(&path, b"[source]\n").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[source]\n",
+            "write_regular_file should replace preexisting symlinks"
+        );
+        assert!(
+            fs::symlink_metadata(&path).unwrap().file_type().is_file(),
+            "repaired path should be a regular file"
+        );
+    }
+
+    #[test]
+    fn test_replace_vendor_dir_replaces_preexisting_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let staged_dst = dir.path().join("staged");
+        let dst = dir.path().join("vendor-crate");
+        fs::create_dir(&staged_dst).unwrap();
+        fs::write(staged_dst.join("lib.rs"), b"pub fn rise() {}\n").unwrap();
+        fs::write(&dst, b"old").unwrap();
+
+        super::replace_vendor_dir(&staged_dst, &dst).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dst.join("lib.rs")).unwrap(),
+            "pub fn rise() {}\n",
+            "replace_vendor_dir should repair preexisting files at the destination"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_replace_vendor_dir_replaces_preexisting_symlink() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let staged_dst = dir.path().join("staged");
+        let dst = dir.path().join("vendor-crate");
+        let target = dir.path().join("target");
+        fs::create_dir(&staged_dst).unwrap();
+        fs::write(staged_dst.join("lib.rs"), b"pub fn rise() {}\n").unwrap();
+        fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, &dst).unwrap();
+
+        super::replace_vendor_dir(&staged_dst, &dst).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dst.join("lib.rs")).unwrap(),
+            "pub fn rise() {}\n",
+            "replace_vendor_dir should repair preexisting symlinks at the destination"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_replace_vendor_dir_replaces_dangling_symlink() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let staged_dst = dir.path().join("staged");
+        let dst = dir.path().join("vendor-crate");
+        let target = dir.path().join("missing-target");
+        fs::create_dir(&staged_dst).unwrap();
+        fs::write(staged_dst.join("lib.rs"), b"pub fn rise() {}\n").unwrap();
+        std::os::unix::fs::symlink(&target, &dst).unwrap();
+
+        super::replace_vendor_dir(&staged_dst, &dst).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dst.join("lib.rs")).unwrap(),
+            "pub fn rise() {}\n",
+            "replace_vendor_dir should repair dangling symlinks at the destination"
+        );
+    }
+
+    #[test]
+    fn test_vendor_tree_hash_ignores_reindeer_bookkeeping_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vendor_dir = dir.path();
+        fs::create_dir_all(vendor_dir.join("sourdough-1.0.0")).unwrap();
+        fs::write(
+            vendor_dir.join("sourdough-1.0.0/lib.rs"),
+            b"pub fn rise() {}",
+        )
+        .unwrap();
+
+        let base_hash = vendor_tree_hash(vendor_dir).unwrap();
+
+        fs::write(vendor_dir.join(".reindeer-vendor-stamp"), b"{}").unwrap();
+        fs::write(vendor_dir.join(".reindeer-vendor-stamps"), b"{}").unwrap();
+
+        assert_eq!(
+            vendor_tree_hash(vendor_dir).unwrap(),
+            base_hash,
+            "reindeer bookkeeping files should not affect the vendor tree hash"
+        );
+    }
+
+    #[test]
+    fn test_vendor_tree_hash_changes_with_hidden_junk_and_empty_dirs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vendor_dir = dir.path();
+        fs::create_dir_all(vendor_dir.join("sourdough-1.0.0")).unwrap();
+        fs::write(
+            vendor_dir.join("sourdough-1.0.0/lib.rs"),
+            b"pub fn rise() {}",
+        )
+        .unwrap();
+
+        let base_hash = vendor_tree_hash(vendor_dir).unwrap();
+
+        fs::write(vendor_dir.join(".junk"), b"crumbs").unwrap();
+        let junk_hash = vendor_tree_hash(vendor_dir).unwrap();
+        assert_ne!(
+            junk_hash, base_hash,
+            "unexpected hidden files must invalidate the vendor tree hash"
+        );
+
+        fs::remove_file(vendor_dir.join(".junk")).unwrap();
+        fs::create_dir(vendor_dir.join(".reindeer-staging-123-0")).unwrap();
+        assert_ne!(
+            vendor_tree_hash(vendor_dir).unwrap(),
+            base_hash,
+            "unexpected empty directories must invalidate the vendor tree hash"
+        );
+    }
+
+    #[test]
+    fn test_refresh_vendor_tree_hash_after_buckify_updates_only_tree_hash() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vendor_dir = dir.path();
+        fs::create_dir_all(vendor_dir.join("sourdough-1.0.0")).unwrap();
+        fs::write(
+            vendor_dir.join("sourdough-1.0.0/lib.rs"),
+            b"pub fn rise() {}",
+        )
+        .unwrap();
+
+        let initial_tree_hash = vendor_tree_hash(vendor_dir).unwrap().unwrap();
+        write_stamp(
+            &vendor_dir.join(".reindeer-vendor-stamp"),
+            "lockfile-hash",
+            "config-hash",
+            &initial_tree_hash,
+            "cargo-config-hash",
+        );
+
+        fs::write(
+            vendor_dir.join("sourdough-1.0.0/BUCK"),
+            b"rust_library(name=\"sourdough\")",
+        )
+        .unwrap();
+        let refreshed_tree_hash = vendor_tree_hash(vendor_dir).unwrap().unwrap();
+
+        refresh_vendor_tree_hash_after_buckify(vendor_dir).unwrap();
+
+        let refreshed = read_vendor_stamp(&vendor_dir.join(".reindeer-vendor-stamp")).unwrap();
+        assert_eq!(
+            refreshed.lockfile_hash, "lockfile-hash",
+            "refresh should preserve the original lockfile hash"
+        );
+        assert_eq!(
+            refreshed.vendor_config_hash, "config-hash",
+            "refresh should preserve the original vendor config hash"
+        );
+        assert_eq!(
+            refreshed.cargo_config_hash, "cargo-config-hash",
+            "refresh should preserve the original cargo config hash"
+        );
+        assert_eq!(
+            refreshed.vendor_tree_hash, refreshed_tree_hash,
+            "refresh should replace only the vendor tree hash with the post-buckify value"
+        );
+    }
+
+    #[test]
+    fn test_refresh_vendor_tree_hash_after_buckify_missing_stamp_noop() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vendor_dir = dir.path();
+        fs::create_dir_all(vendor_dir.join("sourdough-1.0.0")).unwrap();
+        fs::write(
+            vendor_dir.join("sourdough-1.0.0/BUCK"),
+            b"rust_library(name=\"sourdough\")",
+        )
+        .unwrap();
+
+        refresh_vendor_tree_hash_after_buckify(vendor_dir).unwrap();
+
+        assert!(
+            !vendor_dir.join(".reindeer-vendor-stamp").exists(),
+            "refresh should stay a no-op when no prior fast-vendor stamp exists"
+        );
+    }
+
+    #[test]
+    fn test_collect_vendor_cleanup_entries_keeps_bookkeeping() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vendor_dir = dir.path();
+        fs::write(vendor_dir.join(".reindeer-vendor-stamp"), b"{}").unwrap();
+        fs::write(vendor_dir.join(".reindeer-vendor-stamps"), b"{}").unwrap();
+        fs::write(vendor_dir.join(".junk"), b"crumbs").unwrap();
+        fs::create_dir(vendor_dir.join(".reindeer-staging-123-0")).unwrap();
+        fs::create_dir(vendor_dir.join("sourdough-1.0.0")).unwrap();
+
+        let expected = BTreeSet::from([
+            vendor_dir.join(".junk"),
+            vendor_dir.join(".reindeer-staging-123-0"),
+            vendor_dir.join("sourdough-1.0.0"),
+        ]);
+        assert_eq!(
+            collect_vendor_cleanup_entries(vendor_dir).unwrap(),
+            expected,
+            "repair cleanup should remove hidden junk and stale staging dirs but preserve bookkeeping"
+        );
+    }
+
+    #[test]
+    fn test_collect_vendor_cleanup_entries_removes_invalid_bookkeeping_dirs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vendor_dir = dir.path();
+        fs::create_dir(vendor_dir.join(".reindeer-vendor-stamp")).unwrap();
+        fs::create_dir(vendor_dir.join(".reindeer-vendor-stamps")).unwrap();
+        fs::write(vendor_dir.join(".junk"), b"crumbs").unwrap();
+
+        let expected = BTreeSet::from([
+            vendor_dir.join(".junk"),
+            vendor_dir.join(".reindeer-vendor-stamp"),
+            vendor_dir.join(".reindeer-vendor-stamps"),
+        ]);
+        assert_eq!(
+            collect_vendor_cleanup_entries(vendor_dir).unwrap(),
+            expected,
+            "bookkeeping paths should only be preserved when they are top-level regular files"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_collect_vendor_cleanup_entries_removes_invalid_bookkeeping_symlink() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vendor_dir = dir.path();
+        let target = vendor_dir.join("outside");
+        fs::write(&target, b"crumbs").unwrap();
+        std::os::unix::fs::symlink(&target, vendor_dir.join(".reindeer-vendor-stamp")).unwrap();
+
+        let expected = BTreeSet::from([
+            vendor_dir.join(".reindeer-vendor-stamp"),
+            vendor_dir.join("outside"),
+        ]);
+        assert_eq!(
+            collect_vendor_cleanup_entries(vendor_dir).unwrap(),
+            expected,
+            "bookkeeping symlinks should be treated as drift and removed"
+        );
+    }
+
+    #[test]
+    fn test_vendor_tree_is_reusable_requires_matching_config_and_tree() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stamp = dir.path().join(".reindeer-vendor-stamp");
+        write_stamp(
+            &stamp,
+            "old-lockfile",
+            "old-config",
+            "old-tree",
+            "old-cargo-config",
+        );
+
+        assert!(
+            vendor_tree_is_reusable("old-config", "old-tree", &stamp),
+            "matching config and tree hashes should allow reuse of the existing vendor tree"
+        );
+        assert!(
+            !vendor_tree_is_reusable("new-config", "old-tree", &stamp),
+            "config changes must disable reuse of the existing vendor tree"
+        );
+        assert!(
+            !vendor_tree_is_reusable("old-config", "new-tree", &stamp),
+            "tree hash changes must disable reuse of the existing vendor tree"
+        );
+    }
+
+    #[test]
+    fn test_vendor_config_hash_changes_with_split() {
+        // split=true and split=false must produce different hashes.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let hash_with_split = vendor_config_hash(true, "BUCK", &[], &[], false, dir.path());
+        let hash_without_split = vendor_config_hash(false, "BUCK", &[], &[], false, dir.path());
+        assert_ne!(
+            hash_with_split, hash_without_split,
+            "split=true and split=false must produce different vendor_config hashes"
+        );
+    }
+
+    #[test]
+    fn test_vendor_config_hash_changes_with_file_name() {
+        // Different buck file names must produce different hashes.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let hash_buck = vendor_config_hash(false, "BUCK", &[], &[], false, dir.path());
+        let hash_targets = vendor_config_hash(false, "TARGETS", &[], &[], false, dir.path());
+        assert_ne!(
+            hash_buck, hash_targets,
+            "different buck file names must produce different vendor_config hashes"
+        );
+    }
+
+    #[test]
+    fn test_vendor_config_hash_changes_with_checksum_exclude() {
+        // Adding a checksum_exclude glob must change the hash.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let hash_empty = vendor_config_hash(false, "BUCK", &[], &[], false, dir.path());
+        let hash_with_glob = vendor_config_hash(
+            false,
+            "BUCK",
+            &["*.json".to_owned()],
+            &[],
+            false,
+            dir.path(),
+        );
+        assert_ne!(
+            hash_empty, hash_with_glob,
+            "non-empty checksum_exclude must produce a different vendor_config hash"
+        );
+    }
+
+    #[test]
+    fn test_vendor_config_hash_changes_with_no_delete() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let hash_with_no_delete = vendor_config_hash(false, "BUCK", &[], &[], true, dir.path());
+        let hash_without_no_delete = vendor_config_hash(false, "BUCK", &[], &[], false, dir.path());
+        assert_ne!(
+            hash_with_no_delete, hash_without_no_delete,
+            "no_delete must produce a different vendor_config hash"
+        );
+    }
+
+    #[test]
+    fn test_vendor_config_hash_changes_with_gitignore_contents() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ignore = PathBuf::from("checksum-exclude.gitignore");
+        let ignore_path = dir.path().join(&ignore);
+
+        fs::write(&ignore_path, "*.snap\n").expect("write ignore file");
+        let hash_before = vendor_config_hash(
+            false,
+            "BUCK",
+            &[],
+            std::slice::from_ref(&ignore),
+            false,
+            dir.path(),
+        );
+
+        fs::write(&ignore_path, "*.snap\n*.golden\n").expect("rewrite ignore file");
+        let hash_after = vendor_config_hash(
+            false,
+            "BUCK",
+            &[],
+            std::slice::from_ref(&ignore),
+            false,
+            dir.path(),
+        );
+
+        assert_ne!(
+            hash_before, hash_after,
+            "gitignore content changes must produce a different vendor_config hash"
+        );
     }
 }

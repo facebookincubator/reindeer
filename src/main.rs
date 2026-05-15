@@ -142,6 +142,10 @@ pub struct Paths {
     cargo_home: PathBuf,
 }
 
+fn should_refresh_vendor_tree_hash_after_buckify(split: bool, stdout: bool) -> bool {
+    split && !stdout
+}
+
 fn try_main() -> anyhow::Result<()> {
     let args = Args::parse();
 
@@ -250,6 +254,11 @@ fn try_main() -> anyhow::Result<()> {
                 config.vendor = VendorConfig::Off;
             }
             buckify::buckify(&config, &args, &paths, *stdout, *fast)?;
+            if should_refresh_vendor_tree_hash_after_buckify(config.buck.split, *stdout) {
+                cargo::refresh_vendor_tree_hash_after_buckify(
+                    &paths.third_party_dir.join("vendor"),
+                )?;
+            }
             if *vendor_cleanup {
                 vendor::cleanup_extern_crates(&config, &paths)?;
             }
@@ -289,5 +298,25 @@ fn main() {
     if let Err(err) = try_main() {
         log::error!("{:?}", err);
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_refresh_vendor_tree_hash_after_buckify;
+
+    #[test]
+    fn test_should_refresh_vendor_tree_hash_after_buckify_split_non_stdout() {
+        assert!(should_refresh_vendor_tree_hash_after_buckify(true, false));
+    }
+
+    #[test]
+    fn test_should_not_refresh_vendor_tree_hash_after_buckify_stdout() {
+        assert!(!should_refresh_vendor_tree_hash_after_buckify(true, true));
+    }
+
+    #[test]
+    fn test_should_not_refresh_vendor_tree_hash_after_buckify_non_split() {
+        assert!(!should_refresh_vendor_tree_hash_after_buckify(false, false));
     }
 }
