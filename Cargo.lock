@@ -405,9 +405,9 @@ dependencies = [
 
 [[package]]
 name = "cargo-credential"
-version = "0.4.9"
+version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e36f089041deadf16226478a7737a833864fbda09408c7af237b9d615eeb6d69"
+checksum = "aa57675b822ecda7f0be12eedbfabd890066271eedc7f2c45ed41e86e0f327a8"
 dependencies = [
  "anyhow",
  "libc",
@@ -415,7 +415,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "time",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
