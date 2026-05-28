@@ -4932,7 +4932,7 @@ dependencies = [
  "windows_i686_gnu 0.53.1",
  "windows_i686_gnullvm 0.53.1",
  "windows_i686_msvc 0.53.1",
- "windows_x86_64_gnu 0.53.0",
+ "windows_x86_64_gnu 0.53.1",
  "windows_x86_64_gnullvm 0.53.0",
  "windows_x86_64_msvc 0.53.0",
 ]
@@ -5005,9 +5005,9 @@ checksum = "147a5c80aabfbf0c7d901cb5895d1de30ef2907eb21fbbab29ca94c5b08b1a78"
 
 [[package]]
 name = "windows_x86_64_gnu"
-version = "0.53.0"
+version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e55b5ac9ea33f2fc1716d1742db15574fd6fc8dadc51caab1c16a3d3b4190ba"
+checksum = "9c3842cdd74a865a8066ab39c8a7a473c0778a3f29370b5fd6b4b9aa7df4a499"
 
 [[package]]
 name = "windows_x86_64_gnullvm"
