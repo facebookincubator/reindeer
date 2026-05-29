@@ -10,7 +10,9 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::VecDeque;
+use std::env;
 use std::ffi::OsStr;
+use std::fmt;
 use std::fmt::Write as _;
 use std::fs;
 use std::hash::Hash;
@@ -23,6 +25,7 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::PoisonError;
 use std::sync::mpsc;
 use std::thread;
@@ -95,6 +98,41 @@ use crate::subtarget::Subtarget;
 use crate::tp_metadata::TpMetadata;
 use crate::unused::UnusedFixups;
 use crate::version_naming::CollisionInfo;
+
+const BUCKIFY_DIAGNOSTICS_ENV: &str = "REINDEER_BUCKIFY_DIAGNOSTICS";
+const BUCKIFY_DIAGNOSTIC_STATE_ENV: &str = "REINDEER_BUCKIFY_DIAGNOSTIC_STATE";
+static BUCKIFY_DIAGNOSTIC_STATE_LOCK: Mutex<()> = Mutex::new(());
+
+struct BuckifyDiagnosticConfig {
+    diagnostics_enabled: bool,
+    state_path: Option<PathBuf>,
+}
+
+fn buckify_diagnostic_config() -> &'static BuckifyDiagnosticConfig {
+    static CONFIG: OnceLock<BuckifyDiagnosticConfig> = OnceLock::new();
+    CONFIG.get_or_init(|| BuckifyDiagnosticConfig {
+        diagnostics_enabled: env::var_os(BUCKIFY_DIAGNOSTICS_ENV).is_some_and(|value| value != "0"),
+        state_path: env::var_os(BUCKIFY_DIAGNOSTIC_STATE_ENV).map(PathBuf::from),
+    })
+}
+
+fn buckify_diagnostic(message: impl fmt::Display) {
+    let config = buckify_diagnostic_config();
+    if !config.diagnostics_enabled && config.state_path.is_none() {
+        return;
+    }
+
+    let message = message.to_string();
+    if let Some(state_path) = &config.state_path {
+        let _state_guard = BUCKIFY_DIAGNOSTIC_STATE_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let _ = fs::write(state_path, format!("{message}\n"));
+    }
+    if config.diagnostics_enabled {
+        eprintln!("[reindeer buckify diag] {message}");
+    }
+}
 
 pub fn evaluate_for_platforms<Rule, Collection, R>(
     common: &mut Rule,
@@ -169,6 +207,9 @@ fn generate_dep_rules<'scope, 'env>(
     let mut done = context.done.lock().unwrap();
     for (pkg, target_req) in pkg_deps {
         if done.insert((pkg.id, target_req)) {
+            buckify_diagnostic(format_args!(
+                "schedule package={pkg} target_req={target_req:?}"
+            ));
             let rule_tx = rule_tx.clone();
             scope.spawn(move || {
                 generate_rules(context, scope, rule_tx, pkg, target_req);
@@ -185,12 +226,18 @@ fn generate_rules<'scope, 'env>(
     pkg: &'env Manifest,
     target_req: TargetReq<'env>,
 ) {
+    buckify_diagnostic(format_args!(
+        "start package={pkg} target_req={target_req:?}"
+    ));
     if let TargetReq::Sources = target_req {
         if let Some(nonvendored_sources) =
             generate_nonvendored_sources_archive(context, pkg).transpose()
         {
             let _ = rule_tx.send(nonvendored_sources);
         }
+        buckify_diagnostic(format_args!(
+            "finish package={pkg} target_req={target_req:?} sources-only"
+        ));
         return;
     }
 
@@ -222,6 +269,9 @@ fn generate_rules<'scope, 'env>(
                 })));
             }
             // Don't recurse into dependencies - the external target handles them.
+            buckify_diagnostic(format_args!(
+                "finish package={pkg} target_req={target_req:?} extern-alias"
+            ));
             return;
         }
     }
@@ -275,6 +325,9 @@ fn generate_rules<'scope, 'env>(
             }
         }
     }
+    buckify_diagnostic(format_args!(
+        "finish package={pkg} target_req={target_req:?}"
+    ));
 }
 
 fn generate_nonvendored_sources_archive(
@@ -620,6 +673,10 @@ fn generate_target_rules<'a>(
     let tgt_disp = collision_info.target_display(pkg);
 
     log::debug!("Generating rules for package {} target {}", pkg, tgt.name);
+    buckify_diagnostic(format_args!(
+        "target start package={pkg} target={}",
+        tgt.name
+    ));
 
     let fixups = context.fixups.get(pkg)?;
     if fixups.omit_target(tgt) {
@@ -725,7 +782,17 @@ fn generate_target_rules<'a>(
         // source, then parse the crate to see what files are actually used.
         if fixups.precise_srcs() && edition >= Edition::Rust2018 {
             measure_time::trace_time!("srcfiles for {}", pkg);
+            buckify_diagnostic(format_args!(
+                "srcfiles start package={pkg} target={} crate_root={}",
+                tgt.name,
+                tgt.src_path.display()
+            ));
             srcs = srcfiles(manifest_dir.to_owned(), tgt.src_path.clone());
+            buckify_diagnostic(format_args!(
+                "srcfiles finish package={pkg} target={} files={}",
+                tgt.name,
+                srcs.len()
+            ));
         }
 
         if srcs.is_empty() {
@@ -893,6 +960,12 @@ fn generate_target_rules<'a>(
             &compatible_platforms,
             collision_info,
         )?;
+        buckify_diagnostic(format_args!(
+            "target finish package={pkg} target={} rules={} deps={}",
+            tgt.name,
+            rules.len(),
+            dep_pkgs.len()
+        ));
         return Ok((rules, dep_pkgs));
     }
 
@@ -1404,6 +1477,12 @@ fn generate_target_rules<'a>(
         }
     }
 
+    buckify_diagnostic(format_args!(
+        "target finish package={pkg} target={} rules={} deps={}",
+        tgt.name,
+        rules.len(),
+        dep_pkgs.len()
+    ));
     Ok((rules, dep_pkgs))
 }
 
@@ -1516,11 +1595,18 @@ pub(crate) fn buckify(
     stdout: bool,
     fast: bool,
 ) -> anyhow::Result<()> {
+    buckify_diagnostic(format_args!("buckify start fast={fast} stdout={stdout}"));
     let (lockfile, metadata) = {
         log::info!("Running `cargo metadata`...");
         measure_time::info_time!("Running `cargo metadata`");
         cargo_get_lockfile_and_metadata(config, args, paths, fast)?
     };
+    buckify_diagnostic(format_args!(
+        "metadata loaded packages={} resolve_nodes={} workspace_members={}",
+        metadata.packages.len(),
+        metadata.resolve.nodes.len(),
+        metadata.workspace_members.len()
+    ));
 
     log::trace!("Metadata {:#?}", metadata);
 
@@ -1545,6 +1631,7 @@ pub(crate) fn buckify(
         done: Mutex::new(HashSet::default()),
     };
     let rules = do_buckify(&context)?;
+    buckify_diagnostic(format_args!("rules generated count={}", rules.len()));
 
     // Report unused fixups
     let fixups = &context.fixups.lock();
