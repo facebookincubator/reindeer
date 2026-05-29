@@ -54,8 +54,6 @@ tempfile = "3.27.0"
 rlimit = "0.11"
 
 [patch.crates-io]
-cxx = { git = "https://github.com/facebookexperimental/cxx.git", rev = "d98f6c434f8e6a018533c31a7a4cf7cdc7252210" }
-cxx-build = { git = "https://github.com/facebookexperimental/cxx.git", rev = "d98f6c434f8e6a018533c31a7a4cf7cdc7252210" }
 libssh2-sys = { git = "https://github.com/alexcrichton/ssh2-rs", rev = "5219ffbaa5b0a170376d6d1896c5cb5367bdedb8" }
 
 [workspace]
