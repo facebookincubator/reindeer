@@ -511,6 +511,23 @@ fn srcfiles(manifest_dir: PathBuf, crate_root: PathBuf) -> Vec<PathBuf> {
     }
 }
 
+/// Visibility scoped to a single crate's own vendor directory.
+///
+/// In split mode the generated `srcs`/filegroup rules live in
+/// `vendor/{name}-{version}/`, but their only consumers (the crate's library,
+/// binary, and build-script targets) are written to `vendor/{name}/`. Scoping
+/// these helper rules to `//{buck_package}/vendor/{name}:` keeps them reachable
+/// by that crate's targets while keeping them private from the rest of the
+/// vendor tree.
+pub(crate) fn vendor_crate_visibility(paths: &Paths, crate_name: &str) -> Visibility {
+    let prefix = if paths.buck_package.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", paths.buck_package)
+    };
+    Visibility::Custom(vec![format!("//{prefix}vendor/{crate_name}:")])
+}
+
 pub(crate) fn split_srcs(
     paths: &Paths,
     common: &mut RustCommon,
@@ -1237,12 +1254,7 @@ fn generate_target_rules<'a>(
                     name: srcs_name,
                     base,
                     platform,
-                    // FIXME: consider restricting to specific package version directories
-                    visibility: Visibility::Custom(vec![if paths.buck_package.is_empty() {
-                        "//vendor/...".to_owned()
-                    } else {
-                        format!("//{}/vendor/...", paths.buck_package)
-                    }]),
+                    visibility: vendor_crate_visibility(paths, &rust_library.owner.name),
                 }));
             }
             rules.push(Rule::Library(rust_library));
@@ -1352,12 +1364,7 @@ fn generate_target_rules<'a>(
                 name: srcs_name,
                 base,
                 platform,
-                // FIXME: consider restricting to specific package version directories
-                visibility: Visibility::Custom(vec![if paths.buck_package.is_empty() {
-                    "//vendor/...".to_owned()
-                } else {
-                    format!("//{}/vendor/...", paths.buck_package)
-                }]),
+                visibility: vendor_crate_visibility(paths, &rust_binary.owner.name),
             }));
         }
 
@@ -1857,7 +1864,44 @@ pub(crate) fn buckify(
 
 #[cfg(test)]
 mod test {
+    use std::path::PathBuf;
+
     use super::short_name_for_git_repo;
+    use super::vendor_crate_visibility;
+    use crate::Paths;
+    use crate::buck::Visibility;
+
+    fn paths_with_buck_package(buck_package: &str) -> Paths {
+        Paths {
+            buck_package: buck_package.to_owned(),
+            third_party_dir: PathBuf::new(),
+            manifest_path: PathBuf::new(),
+            lockfile_path: PathBuf::new(),
+            cargo_home: PathBuf::new(),
+        }
+    }
+
+    #[test]
+    fn vendor_crate_visibility_scopes_to_crate_dir() {
+        let paths = paths_with_buck_package("third-party/rust");
+        assert_eq!(
+            vendor_crate_visibility(&paths, "unicorn-factory"),
+            Visibility::Custom(vec![
+                "//third-party/rust/vendor/unicorn-factory:".to_owned()
+            ]),
+            "non-empty buck_package should prefix the crate's vendor dir",
+        );
+    }
+
+    #[test]
+    fn vendor_crate_visibility_handles_empty_buck_package() {
+        let paths = paths_with_buck_package("");
+        assert_eq!(
+            vendor_crate_visibility(&paths, "flux-capacitor"),
+            Visibility::Custom(vec!["//vendor/flux-capacitor:".to_owned()]),
+            "empty buck_package should emit a root-relative vendor path",
+        );
+    }
 
     #[test]
     fn hashes_with_same_repo_variations() {

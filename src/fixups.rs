@@ -46,6 +46,7 @@ use crate::buck::Visibility;
 use crate::buckify::evaluate_for_platforms;
 use crate::buckify::short_name_for_git_repo;
 use crate::buckify::split_srcs;
+use crate::buckify::vendor_crate_visibility;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
 use crate::cargo::NodeDepKind;
@@ -835,16 +836,7 @@ impl<'meta> Fixups<'meta> {
                                 include: vec!["**".to_owned()],
                                 exclude: vec![config.buck.file_name.to_string()],
                             },
-                            // FIXME: consider restricting to specific package version directories
-                            visibility: Visibility::Custom(vec![if self
-                                .paths
-                                .buck_package
-                                .is_empty()
-                            {
-                                "//vendor/...".to_owned()
-                            } else {
-                                format!("//{}/vendor/...", self.paths.buck_package)
-                            }]),
+                            visibility: vendor_crate_visibility(self.paths, &self.package.name),
                         }));
                         BuildscriptGenruleManifestDir::Target(RuleRef::new(format!(
                             "//{}{}vendor/{}-{}:{}",
@@ -1018,12 +1010,7 @@ impl<'meta> Fixups<'meta> {
                     name: srcs_name,
                     base,
                     platform,
-                    // FIXME: consider restricting to specific package version directories
-                    visibility: Visibility::Custom(vec![if self.paths.buck_package.is_empty() {
-                        "//vendor/...".to_owned()
-                    } else {
-                        format!("//{}/vendor/...", self.paths.buck_package)
-                    }]),
+                    visibility: vendor_crate_visibility(self.paths, &buildscript_build.owner.name),
                 }));
             }
 
