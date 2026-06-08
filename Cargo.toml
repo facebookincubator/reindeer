@@ -38,7 +38,7 @@ serde_starlark = "0.1.19"
 serde_with = { version = "3.20.0", features = ["hex", "json"] }
 sha2 = "0.10.6"
 spdx = "0.13.4"
-strum = { version = "0.27.1", features = ["derive"] }
+strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "2.0.117", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 tar = "0.4.46"
 termcolor = "1.0"
