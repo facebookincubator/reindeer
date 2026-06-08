@@ -698,9 +698,9 @@ dependencies = [
 
 [[package]]
 name = "crates-io"
-version = "0.40.17"
+version = "0.40.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec97b1f074b7b2fe478fb89e51a26e25a75ae2de02d4c8cc85c5f206dd628286"
+checksum = "d8bff9b303e2c1ca7c8c6021c52bde41a38c00009ff6e4ca2b578d1bbe26f8f1"
 dependencies = [
  "curl",
  "percent-encoding",
