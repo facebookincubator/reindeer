@@ -32,7 +32,7 @@ use std::thread;
 
 use anyhow::Context;
 use anyhow::bail;
-use cached::proc_macro::cached;
+use cached::macros::cached;
 use cargo::core::PackageId;
 use fnv::FnvHasher;
 use foldhash::HashMap;
