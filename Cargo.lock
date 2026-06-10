@@ -292,9 +292,9 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "cached"
-version = "0.55.1"
+version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0839c297f8783316fcca9d90344424e968395413f0662a5481f79c6648bbc14"
+checksum = "e7acd047b9f5ea1f471e437e92b6155ba4b9849064d8fcd36c550c01a4725839"
 dependencies = [
  "ahash",
  "async-trait",
@@ -302,8 +302,9 @@ dependencies = [
  "cached_proc_macro_types",
  "directories",
  "futures",
- "hashbrown 0.14.5",
+ "hashbrown 0.16.1",
  "once_cell",
+ "parking_lot 0.12.5",
  "rmp-serde",
  "serde",
  "sled",
@@ -314,9 +315,9 @@ dependencies = [
 
 [[package]]
 name = "cached_proc_macro"
-version = "0.24.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673992d934f0711b68ebb3e1b79cdc4be31634b37c98f26867ced0438ca5c603"
+checksum = "8a6717e609bc3fd7e2cf7640a6fb5299d7291a882a379d570aea56e8dd6cf61a"
 dependencies = [
  "darling 0.20.11",
  "proc-macro2",
@@ -2226,10 +2227,6 @@ name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
-dependencies = [
- "ahash",
- "allocator-api2",
-]
 
 [[package]]
 name = "hashbrown"
