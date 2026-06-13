@@ -57,6 +57,11 @@ pub struct FixupConfigFile {
 
     /// Platform-specific configs
     pub platform_fixup: Vec<FixupConfig>,
+
+    /// Resolved from a `shared_fixups` source rather than the local fixups
+    /// directory. Such fixups are exempt from the unused-fixup check, since a
+    /// shared repo carries fixups for crates/versions a consumer may not use.
+    pub external: bool,
 }
 
 impl FixupConfigFile {
@@ -143,6 +148,12 @@ impl FixupConfigFile {
         public_versions: &HashSet<&Version>,
         unused: &mut UnusedFixups,
     ) {
+        // Shared fixups are a library: a curated repo carries entries for
+        // crates/versions a given consumer doesn't use, so "unused" is expected
+        // and not an error. Only the project's own local fixups are checked.
+        if self.external {
+            return;
+        }
         for fixup in iter::once(&self.base).chain(&self.platform_fixup) {
             if let Some(span) = &fixup.buildscript.span {
                 if fixup.used.load(Ordering::Relaxed)
@@ -555,6 +566,51 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
             toml: self.toml,
             base,
             platform_fixup: fields.platform_fixup,
+            external: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::Ordering;
+
+    use foldhash::HashSet;
+
+    use super::FixupConfigFile;
+    use crate::unused::UnusedFixups;
+
+    // `buildscript.run = false` applied to a crate version with no build script
+    // is "unused". Simulate buckify having marked the base fixup as applied
+    // (used) while no build script ran (buildscript.used stays false).
+    fn unused_buildscript_fixup(external: bool) -> FixupConfigFile {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("fixups.toml"), "buildscript.run = false\n").unwrap();
+        let cfg = FixupConfigFile::load(dir.path().to_path_buf()).unwrap();
+        cfg.base.used.store(true, Ordering::Relaxed);
+        FixupConfigFile { external, ..cfg }
+    }
+
+    #[test]
+    fn local_unused_buildscript_is_reported() {
+        let cfg = unused_buildscript_fixup(false);
+        let mut unused = UnusedFixups::new();
+        cfg.collect_unused("somecrate", &HashSet::default(), &mut unused);
+        assert_eq!(
+            unused.buildscripts.len(),
+            1,
+            "a local unused buildscript fixup should be flagged",
+        );
+    }
+
+    #[test]
+    fn external_unused_buildscript_is_ignored() {
+        let cfg = unused_buildscript_fixup(true);
+        let mut unused = UnusedFixups::new();
+        cfg.collect_unused("somecrate", &HashSet::default(), &mut unused);
+        assert!(
+            unused.buildscripts.is_empty(),
+            "shared (external) fixups must be exempt from the unused-fixup check",
+        );
     }
 }
