@@ -58,6 +58,34 @@ pub struct Config {
     #[serde(default)]
     pub third_party_dir: Option<PathBuf>,
 
+    /// Shared fixup sources, searched after the local `<third_party_dir>/fixups`,
+    /// in order. For a crate, the first source containing a `<crate>/fixups.toml`
+    /// wins, so a project keeps the option to override a shared fixup by adding
+    /// its own local one.
+    ///
+    /// Each entry is either a path (string) or a git table. A path is relative
+    /// to the directory containing `reindeer.toml`. A git source is fetched at a
+    /// pinned commit into a shared cache under `$CARGO_HOME`, so several projects
+    /// on a machine fetch it once:
+    ///
+    /// ```toml
+    /// shared_fixups = [
+    ///     "../local-fixups",
+    ///     { git_origin = "https://github.com/org/fixups.git",
+    ///       commit_hash = "<40-hex sha1>", subdir = "fixups" },
+    /// ]
+    /// ```
+    ///
+    /// The `git_origin`/`commit_hash` field names mirror Buck2's
+    /// `[external_cell_*]` config, so one commit can drive both Buck2's external
+    /// cell and Reindeer's fixups.
+    ///
+    /// Fixups resolved from shared sources are exempt from the unused-fixup
+    /// check: a shared repo legitimately carries fixups for crates and versions
+    /// a given consumer does not use.
+    #[serde(default)]
+    pub shared_fixups: Vec<SharedFixup>,
+
     /// Try to compute a precise list of sources rather than using globbing
     #[serde(default)]
     pub precise_srcs: bool,
@@ -129,6 +157,37 @@ pub struct Config {
         deserialize_with = "deserialize_platforms"
     )]
     pub platform: HashMap<PlatformName, PlatformConfig>,
+}
+
+/// A `shared_fixups` entry: either a local path (bare string) or a git source.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum SharedFixup {
+    /// Local directory of `<crate>/fixups.toml` entries, relative to the
+    /// directory containing `reindeer.toml`.
+    Path(PathBuf),
+    /// A git repository fetched at a pinned commit into a shared cache.
+    Git(GitFixupSource),
+}
+
+/// A git-hosted shared fixups directory, pinned by commit. Field names mirror
+/// Buck2's `[external_cell_*]` config so one commit drives both.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitFixupSource {
+    /// Repository URL, e.g. `https://github.com/org/fixups.git`.
+    pub git_origin: String,
+    /// Full 40-hex sha1 commit to fetch. A pinned commit (not a branch/tag)
+    /// keeps buckify reproducible and avoids moving refs.
+    pub commit_hash: String,
+    /// Subdirectory within the repo holding the `<crate>/fixups.toml` tree.
+    /// Defaults to `fixups`.
+    #[serde(default = "default_fixups_subdir")]
+    pub subdir: PathBuf,
+}
+
+fn default_fixups_subdir() -> PathBuf {
+    PathBuf::from("fixups")
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -525,5 +584,38 @@ pub(crate) fn parse_cfg_kv(cfgs: &mut HashMap<String, HashSet<String>>, line: &s
         }
     } else {
         cfgs.entry(line.to_owned()).or_insert_with(HashSet::default);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SharedFixup;
+
+    #[derive(serde::Deserialize)]
+    struct Wrap {
+        shared_fixups: Vec<SharedFixup>,
+    }
+
+    #[test]
+    fn shared_fixups_parses_path_and_git() {
+        let toml = r#"
+shared_fixups = [
+    "../local/fixups",
+    { git_origin = "https://example.com/r.git", commit_hash = "0123456789abcdef0123456789abcdef01234567" },
+]
+"#;
+        let w: Wrap = toml::from_str(toml).unwrap();
+        assert_eq!(w.shared_fixups.len(), 2);
+        assert!(
+            matches!(&w.shared_fixups[0], SharedFixup::Path(p) if p.ends_with("fixups")),
+            "bare string should parse as a path source",
+        );
+        match &w.shared_fixups[1] {
+            SharedFixup::Git(g) => {
+                assert_eq!(g.git_origin, "https://example.com/r.git");
+                assert_eq!(g.subdir.to_str(), Some("fixups"), "subdir defaults to fixups");
+            }
+            other => panic!("expected git source, got {other:?}"),
+        }
     }
 }
