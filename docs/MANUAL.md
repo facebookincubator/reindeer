@@ -80,6 +80,15 @@ Reindeer can be configured with a reindeer.toml file. By default, this file will
 be looked up in the current directory, but it can be passed explicitly via the
 `-c`/`--config` CLI flags.
 
+**Config location with `--third-party-dir`:** when `--third-party-dir <dir>` is
+given, the config defaults to `<dir>/reindeer.toml` (not the current directory).
+So `reindeer --third-party-dir third-party buckify` reads
+`third-party/reindeer.toml` — that is where your config (including
+`shared_fixups`, below) must live, not the repo root. An explicit `--config`
+still wins if you want the file elsewhere; the two flags compose
+(`--third-party-dir` sets the directory, `--config` relocates just the config
+file).
+
 The following list documents some of the main options supported in a
 reindeer.toml file. The exhaustive list of configuration options can be found in
 the source code at `src/config.rs` (see `Config`).
@@ -764,7 +773,8 @@ fixup sources, searched **after** the local one. Each entry is either a local
 path (string) or a git source (table):
 
 ```toml
-# reindeer.toml
+# reindeer.toml  (with --third-party-dir, this is <third-party-dir>/reindeer.toml
+# — see the "reindeer.toml" section's precedence gotcha)
 shared_fixups = [
     # Local path, relative to this reindeer.toml.
     "../buck2-fixups/fixups",
