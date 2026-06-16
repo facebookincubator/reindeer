@@ -248,13 +248,16 @@ impl<'meta> Fixups<'meta> {
         }
 
         let mut visibility = visibility.clone();
+
+        // Make top-level dependencies of root package visible to root package
+        // without requiring that the root package is listed in custom
+        // visibility fixups.
         if self.config.buck.split
             && index.is_public_package(self.package)
             && !index.is_root_package(self.package)
-            && let Visibility::Custom(visibility) = &mut visibility
             && let Some(root_pkg) = index.root_pkg
         {
-            visibility.push(format!(
+            let root_pkg_target = format!(
                 "//{}{}{}:{}",
                 self.paths.buck_package,
                 if self.paths.buck_package.is_empty() {
@@ -269,8 +272,16 @@ impl<'meta> Fixups<'meta> {
                 .to_str()
                 .unwrap(),
                 root_pkg.name,
-            ));
+            );
+            match &mut visibility {
+                Visibility::Public => {}
+                Visibility::Private => {
+                    visibility = Visibility::Custom(vec![root_pkg_target]);
+                }
+                Visibility::Custom(visibility) => visibility.push(root_pkg_target),
+            }
         }
+
         visibility
     }
 
