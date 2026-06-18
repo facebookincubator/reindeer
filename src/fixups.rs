@@ -1798,7 +1798,26 @@ impl<'meta> Fixups<'meta> {
 
             if let Some(overlay) = &config.overlay {
                 let overlay_dir = self.fixup_config.fixup_dir.join(overlay);
-                let relative_overlay_dir = relative_path(self.third_party_dir, &overlay_dir);
+                let relative_overlay_dir = if self.fixup_config.external {
+                    // A shared (`shared_fixups`) fixup's overlay files live
+                    // outside this rig, so a path relative to the rig would need
+                    // `..`, which buck2 rejects for sources. Reference them
+                    // through a fixed in-rig anchor symlink the consuming rig
+                    // provides: `.shared-fixups -> <shared fixups root>`. The
+                    // anchor is deliberately NOT named `fixups`: that would land
+                    // in reindeer's local `<rig>/fixups` fixup search, making
+                    // these fixups non-external and tripping the unused-fixup
+                    // check that `shared_fixups` exists to exempt.
+                    // fixup_dir is `<shared-root>/<crate>`.
+                    let shared_root = self
+                        .fixup_config
+                        .fixup_dir
+                        .parent()
+                        .context("shared fixup dir has no parent")?;
+                    Path::new(".shared-fixups").join(relative_path(shared_root, &overlay_dir))
+                } else {
+                    relative_path(self.third_party_dir, &overlay_dir)
+                };
                 let overlay_files =
                     config.overlay_files(&self.fixup_config.fixup_dir, &self.config.buck);
 
