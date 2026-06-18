@@ -24,7 +24,7 @@ foldhash = "0.2.0"
 globset = { version = "0.4.13", features = ["serde1"] }
 ignore = "0.4.26"
 indoc = "2.0.2"
-itertools = "0.14.0"
+itertools = "0.15.0"
 log = { version = "0.4.32", features = ["kv_unstable", "kv_unstable_std"] }
 measure_time = "0.9"
 monostate = "1"
