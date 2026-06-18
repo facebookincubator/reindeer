@@ -80,6 +80,15 @@ Reindeer can be configured with a reindeer.toml file. By default, this file will
 be looked up in the current directory, but it can be passed explicitly via the
 `-c`/`--config` CLI flags.
 
+**Config location with `--third-party-dir`:** when `--third-party-dir <dir>` is
+given, the config defaults to `<dir>/reindeer.toml` (not the current directory).
+So `reindeer --third-party-dir third-party buckify` reads
+`third-party/reindeer.toml` — that is where your config (including
+`shared_fixups`, below) must live, not the repo root. An explicit `--config`
+still wins if you want the file elsewhere; the two flags compose
+(`--third-party-dir` sets the directory, `--config` relocates just the config
+file).
+
 The following list documents some of the main options supported in a
 reindeer.toml file. The exhaustive list of configuration options can be found in
 the source code at `src/config.rs` (see `Config`).
@@ -87,6 +96,9 @@ the source code at `src/config.rs` (see `Config`).
 - `manifest_path` (path): Path to the Cargo.toml we are buckifying.
 - `third_party_dir` (path): Where to write the output. Defaults to the current
   directory.
+- `shared_fixups` (list of path strings and/or git tables): Extra fixup sources,
+  searched after the local `<third_party_dir>/fixups`. See the "Shared fixup
+  directories" section.
 - `precise_srcs` (bool): Try to compute a precise list of sources rather than
   using globbing.
 - `include_top_level` (bool): Include root package as top-level public target in
@@ -750,6 +762,76 @@ static_libs = ["lib/windows.lib"]
 ---
 
 - **`public`** — make the rule have public visibility
+
+---
+
+## Shared fixup directories
+
+By default a fixup for `somecrate` is read from
+`<third_party_dir>/fixups/somecrate/fixups.toml`. `shared_fixups` adds extra
+fixup sources, searched **after** the local one. Each entry is either a local
+path (string) or a git source (table):
+
+```toml
+# reindeer.toml  (with --third-party-dir, this is <third-party-dir>/reindeer.toml
+# — see the "reindeer.toml" section's precedence gotcha)
+shared_fixups = [
+    # Local path, relative to this reindeer.toml.
+    "../buck2-fixups/fixups",
+
+    # Git source, fetched at a pinned commit into a shared cache.
+    { git_origin = "https://github.com/gilescope/buck2-fixups.git",
+      commit_hash = "0123456789abcdef0123456789abcdef01234567",
+      subdir = "fixups" },
+]
+```
+
+For each crate, the first source that contains a `<crate>/fixups.toml` wins, so a
+project can still override a shared fixup by adding its own local one.
+
+This lets several projects share one curated fixup repository — instead of each
+copying fixups and letting them drift.
+
+**Git sources.** `commit_hash` must be a full 40-hex sha1 (a pinned commit, not a
+branch or tag) — this keeps buckify reproducible and avoids moving refs. The repo
+is fetched with `git` into a shared cache under `$CARGO_HOME`
+(`reindeer/shared-fixups/<origin>/<commit>/`), keyed by commit, so every project
+on the machine fetches a given commit once. `subdir` (default `fixups`) selects
+the directory of `<crate>/fixups.toml` entries within the repo. The
+`git_origin`/`commit_hash` field names mirror Buck2's `[external_cell_*]` config,
+so one commit can drive both Buck2's external cell and Reindeer's fixups.
+
+Fixups resolved from a `shared_fixups` source are **exempt from the unused-fixup
+check**: a shared repo legitimately carries fixups for crates and versions that a
+given consumer does not use, so an otherwise-"unused" shared fixup is not an
+error. Your own local fixups are still checked.
+
+Notes:
+
+- A shared fixup that pins a build-script target by version (e.g.
+  `$(location :somecrate-1.2-build-script-run)`) only fits consumers resolving a
+  matching version. Make such fixups version-robust with
+  [version-specific blocks](#version-specific-fixups) (`cfg(version = ...)`).
+- Fixups that ship their own `BUCK`/overlay targets (for example Windows system
+  import libraries) are consumed through Buck's external-cell mechanism, not
+  through `shared_fixups`.
+
+### Security
+
+A fixup can set `rustc_flags`, `linker_flags`, `cargo_env`, `buildscript.run`,
+`cxx_library`, and `overlay`, so it influences how code is built. Pointing
+`shared_fixups` at a git repo therefore **delegates build-time behaviour to that
+repo's commit — trust it as you would a build dependency.** The mandatory
+`commit_hash` makes that trust explicit and reviewable, and the fetched checkout
+is verified to be at exactly that commit (on both fetch and cache hit).
+
+Reindeer also refuses `git_origin` values that would let a config string run
+code rather than name a repo — git remote-helper transports (`ext::`, `fd::`, …)
+and a leading `-` — and runs `git` with `GIT_ALLOW_PROTOCOL=file:git:ssh:https:http`
+so git itself rejects those transports, and `GIT_TERMINAL_PROMPT=0` so a fetch
+never blocks on a credential prompt. Prefer `https`/`ssh` origins; the
+`commit_hash` pin guards content integrity even if the transport is weak. Any
+credentials embedded in `git_origin` are redacted from logs and error messages.
 
 ---
 

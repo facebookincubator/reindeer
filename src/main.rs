@@ -154,7 +154,14 @@ fn try_main() -> anyhow::Result<()> {
 
     if let Some(from_args) = args.third_party_dir.as_deref() {
         let third_party_dir = dunce::canonicalize(from_args)?;
-        config = config::read_config(&third_party_dir.join("reindeer.toml"), &args)?;
+        // The two flags compose: --third-party-dir sets the directory, an
+        // explicit --config relocates just the config file. Default is the
+        // conventional <third-party-dir>/reindeer.toml.
+        let config_path = args
+            .config
+            .clone()
+            .unwrap_or_else(|| third_party_dir.join("reindeer.toml"));
+        config = config::read_config(&config_path, &args)?;
 
         ensure_third_party_dir_exists(&third_party_dir)?;
 

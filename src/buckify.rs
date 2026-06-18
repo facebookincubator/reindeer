@@ -1617,7 +1617,7 @@ pub(crate) fn buckify(
 
     log::trace!("Metadata {:#?}", metadata);
 
-    let fixups = FixupsCache::new(config, paths);
+    let fixups = FixupsCache::new(config, paths)?;
     let index = Index::new(config, &metadata, &fixups)?;
     let packages = metadata.packages.iter().collect::<Vec<_>>();
     let collision_info = if config.buck.split {

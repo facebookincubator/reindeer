@@ -12,15 +12,21 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::btree_map;
 use std::fmt;
+use std::fs;
+use std::hash::Hasher as _;
+use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::PoisonError;
 use std::sync::atomic::Ordering;
 
+use anyhow::Context as _;
 use anyhow::bail;
+use fnv::FnvHasher;
 use foldhash::HashSet;
 
 use crate::Paths;
@@ -55,6 +61,7 @@ use crate::cargo::TargetKind;
 use crate::collection::Select;
 use crate::collection::SetOrMap;
 use crate::config::Config;
+use crate::config::SharedFixup;
 use crate::config::VendorConfig;
 use crate::fixups::buildscript::CxxLibraryFixup;
 use crate::fixups::buildscript::ExportedHeaders;
@@ -106,16 +113,21 @@ impl<'meta> fmt::Debug for Fixups<'meta> {
 pub struct FixupsCache<'meta> {
     config: &'meta Config,
     paths: &'meta Paths,
+    /// Absolute base dirs of the configured `shared_fixups`, resolved once
+    /// (git sources fetched into the shared cache). Searched, in order, after
+    /// the local fixups dir.
+    shared_dirs: Vec<PathBuf>,
     fixups: Mutex<BTreeMap<&'meta str, Arc<FixupConfigFile>>>,
 }
 
 impl<'meta> FixupsCache<'meta> {
-    pub fn new(config: &'meta Config, paths: &'meta Paths) -> Self {
-        FixupsCache {
+    pub fn new(config: &'meta Config, paths: &'meta Paths) -> anyhow::Result<Self> {
+        Ok(FixupsCache {
             config,
             paths,
+            shared_dirs: resolve_shared_fixups(config)?,
             fixups: Mutex::new(BTreeMap::new()),
-        }
+        })
     }
 
     /// Get fixups.toml for a specific package.
@@ -124,12 +136,30 @@ impl<'meta> FixupsCache<'meta> {
         let fixup_config = if let Some(arc) = fixups_map.get(package.name.as_str()) {
             Arc::clone(arc)
         } else {
-            let fixup_dir = self
+            // Search the local fixups dir first, then each shared_fixups source
+            // in order. The first directory with a fixups.toml for this crate
+            // wins (so a project can override a shared fixup with its own), and
+            // shared hits are tagged `external` to exempt them from the
+            // unused-fixup check.
+            let local_dir = self
                 .paths
                 .third_party_dir
                 .join("fixups")
                 .join(&package.name);
-            let fixup_config = FixupConfigFile::load(fixup_dir)?;
+            let (fixup_dir, external) = if local_dir.join("fixups.toml").is_file() {
+                (local_dir, false)
+            } else {
+                self.shared_dirs
+                    .iter()
+                    .map(|base| base.join(&package.name))
+                    .find(|dir| dir.join("fixups.toml").is_file())
+                    .map(|dir| (dir, true))
+                    // Nothing found: load from the local path, which yields an
+                    // empty (default) config, matching the previous behaviour.
+                    .unwrap_or((local_dir, false))
+            };
+            let mut fixup_config = FixupConfigFile::load(fixup_dir)?;
+            fixup_config.external = external;
             let arc = Arc::new(fixup_config);
             fixups_map.insert(&package.name, Arc::clone(&arc));
             arc
@@ -148,6 +178,195 @@ impl<'meta> FixupsCache<'meta> {
     pub fn lock(&self) -> MutexGuard<'_, BTreeMap<&'meta str, Arc<FixupConfigFile>>> {
         self.fixups.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// Resolve each `shared_fixups` entry to an absolute base directory. Path
+/// entries are taken relative to the reindeer.toml directory; git entries are
+/// fetched at their pinned commit into a shared cache under `$CARGO_HOME`.
+fn resolve_shared_fixups(config: &Config) -> anyhow::Result<Vec<PathBuf>> {
+    config
+        .shared_fixups
+        .iter()
+        .map(|entry| match entry {
+            SharedFixup::Path(path) => Ok(config.config_dir.join(path)),
+            SharedFixup::Git(git) => {
+                // Keep `subdir` inside the fetched repo: a `..` or absolute path
+                // would let a fixup source point the search outside the cache.
+                if !subdir_is_safe(&git.subdir) {
+                    bail!(
+                        "shared_fixups git source {}: subdir must be a relative path inside the \
+                         repo (no `..` or absolute), got {:?}",
+                        redact_credentials(&git.git_origin),
+                        git.subdir,
+                    );
+                }
+                let repo = fetch_git_fixups(&git.git_origin, &git.commit_hash)?;
+                Ok(repo.join(&git.subdir))
+            }
+        })
+        .collect()
+}
+
+/// A `subdir` is safe if it stays inside the fetched repo (relative, no `..`).
+fn subdir_is_safe(subdir: &Path) -> bool {
+    !subdir.is_absolute()
+        && !subdir
+            .components()
+            .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
+}
+
+/// Redact `scheme://userinfo@host` credentials from a git URL so tokens
+/// embedded in `git_origin` (e.g. `https://x-token:ghp_…@github.com/…`) don't
+/// leak into logs or error messages.
+fn redact_credentials(git_origin: &str) -> String {
+    let Some(after_scheme) = git_origin.find("://").map(|i| i + 3) else {
+        return git_origin.to_owned();
+    };
+    let rest = &git_origin[after_scheme..];
+    // Userinfo is between "://" and the first '@', and only when that '@' comes
+    // before the path ('/').
+    match (rest.find('@'), rest.find('/')) {
+        (Some(at), slash) if slash.is_none_or(|s| at < s) => {
+            format!("{}***@{}", &git_origin[..after_scheme], &rest[at + 1..])
+        }
+        _ => git_origin.to_owned(),
+    }
+}
+
+/// Reject `git_origin` values that would let a config string run code through
+/// git rather than just name a repo. Git's remote-helper transports (`ext::`,
+/// `fd::`, …) execute arbitrary commands, and a leading `-` is option injection.
+/// A helper takes the form `<word>::<addr>`; a real URL scheme is `<s>://…`, so
+/// the text before a `::` contains a `/`.
+fn validate_git_origin(git_origin: &str) -> anyhow::Result<()> {
+    if git_origin.starts_with('-') {
+        bail!(
+            "shared_fixups git_origin must not start with '-': {:?}",
+            redact_credentials(git_origin)
+        );
+    }
+    if let Some(idx) = git_origin.find("::") {
+        if !git_origin[..idx].contains('/') {
+            bail!(
+                "shared_fixups git_origin uses a git remote-helper transport \
+                 (e.g. ext::, fd::), which can run arbitrary commands; refusing: {:?}",
+                redact_credentials(git_origin)
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Whether `dir` is a git checkout whose HEAD is exactly `commit_hash`. Used to
+/// trust a cache hit and to confirm a fresh fetch landed on the pinned commit
+/// (defends against a server returning a different commit, or cache tampering).
+fn checkout_is_at(dir: &Path, commit_hash: &str) -> bool {
+    Command::new("git")
+        .args(["-C", &dir.to_string_lossy(), "rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .is_some_and(|head| head.trim() == commit_hash)
+}
+
+/// Fetch a git repo at `commit_hash` into a shared cache and return the
+/// checkout dir. The cache lives under `$CARGO_HOME` keyed by a hash of the
+/// origin plus the commit, so every project on the machine fetches a given
+/// commit once. Mirrors Buck2's external-cell fetch (shell out to `git`; pin to
+/// a sha1, no moving refs).
+fn fetch_git_fixups(git_origin: &str, commit_hash: &str) -> anyhow::Result<PathBuf> {
+    // Use in all logs/errors so a token embedded in the URL never leaks.
+    let safe_origin = redact_credentials(git_origin);
+
+    if commit_hash.len() != 40 || !commit_hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!(
+            "shared_fixups git source {safe_origin}: commit_hash must be a full 40-hex sha1 \
+             (a pinned commit, not a branch or tag), got {commit_hash:?}"
+        );
+    }
+    validate_git_origin(git_origin)?;
+
+    let cargo_home =
+        home::cargo_home().context("locating CARGO_HOME for the shared fixups cache")?;
+    // Key the cache by a stable hash of the full origin (not a lossy slug, which
+    // could collide e.g. `a-b` vs `a_b`) plus the commit.
+    let mut hasher = FnvHasher::default();
+    hasher.write(git_origin.as_bytes());
+    let origin_key = format!("{:016x}", hasher.finish());
+    let base = cargo_home
+        .join("reindeer")
+        .join("shared-fixups")
+        .join(origin_key);
+    let checkout = base.join(commit_hash);
+
+    // Cache hit: `checkout` is published by an atomic rename of a fully-fetched,
+    // already-verified temp dir, so its mere presence at the pinned commit is
+    // proof enough.
+    if checkout_is_at(&checkout, commit_hash) {
+        return Ok(checkout);
+    }
+
+    log::info!("Fetching shared fixups {safe_origin} @ {commit_hash}");
+    fs::create_dir_all(&base)
+        .with_context(|| format!("creating fixups cache dir {}", base.display()))?;
+
+    // Fetch into a private temp dir, then atomically rename into place, so
+    // concurrent reindeer processes sharing the cache can't observe (or corrupt)
+    // a half-fetched checkout.
+    let tmp = base.join(format!(".tmp-{}-{}", std::process::id(), commit_hash));
+    if tmp.exists() {
+        fs::remove_dir_all(&tmp)
+            .with_context(|| format!("clearing stale temp checkout {}", tmp.display()))?;
+    }
+    fs::create_dir_all(&tmp)
+        .with_context(|| format!("creating temp checkout {}", tmp.display()))?;
+
+    let git = |args: &[&str]| -> anyhow::Result<()> {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(&tmp)
+            // Defence in depth on top of validate_git_origin: git itself refuses
+            // remote-helper transports (ext::, fd::, …) outside this allowlist,
+            // and never blocks on an interactive credential prompt.
+            .env("GIT_ALLOW_PROTOCOL", "file:git:ssh:https:http")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .status()
+            .with_context(|| format!("running `git {}`", args.join(" ")))?;
+        if !status.success() {
+            bail!(
+                "`git {}` failed for shared fixups {safe_origin}",
+                args.join(" ")
+            );
+        }
+        Ok(())
+    };
+    git(&["init", "-q"])?;
+    git(&["remote", "add", "origin", git_origin])?;
+    git(&["fetch", "-q", "--depth", "1", "origin", commit_hash])?;
+    git(&["reset", "-q", "--hard", "FETCH_HEAD"])?;
+
+    // Confirm we landed on the pinned commit (a malicious server could answer a
+    // fetch with different objects).
+    if !checkout_is_at(&tmp, commit_hash) {
+        let _ = fs::remove_dir_all(&tmp);
+        bail!("shared_fixups {safe_origin}: fetched checkout is not at {commit_hash}");
+    }
+    // Publish atomically. If another process won the race, `checkout` already
+    // exists (a non-empty dir, so rename fails) — fall back to it after
+    // re-verifying.
+    match fs::rename(&tmp, &checkout) {
+        Ok(()) => {}
+        Err(_) if checkout_is_at(&checkout, commit_hash) => {
+            let _ = fs::remove_dir_all(&tmp);
+        }
+        Err(e) => {
+            let _ = fs::remove_dir_all(&tmp);
+            return Err(e)
+                .with_context(|| format!("publishing fixups checkout to {}", checkout.display()));
+        }
+    }
+    Ok(checkout)
 }
 
 impl<'meta> Fixups<'meta> {
@@ -1596,7 +1815,26 @@ impl<'meta> Fixups<'meta> {
 
             if let Some(overlay) = &config.overlay {
                 let overlay_dir = self.fixup_config.fixup_dir.join(overlay);
-                let relative_overlay_dir = relative_path(self.third_party_dir, &overlay_dir);
+                let relative_overlay_dir = if self.fixup_config.external {
+                    // A shared (`shared_fixups`) fixup's overlay files live
+                    // outside this rig, so a path relative to the rig would need
+                    // `..`, which buck2 rejects for sources. Reference them
+                    // through a fixed in-rig anchor symlink the consuming rig
+                    // provides: `.shared-fixups -> <shared fixups root>`. The
+                    // anchor is deliberately NOT named `fixups`: that would land
+                    // in reindeer's local `<rig>/fixups` fixup search, making
+                    // these fixups non-external and tripping the unused-fixup
+                    // check that `shared_fixups` exists to exempt.
+                    // fixup_dir is `<shared-root>/<crate>`.
+                    let shared_root = self
+                        .fixup_config
+                        .fixup_dir
+                        .parent()
+                        .context("shared fixup dir has no parent")?;
+                    Path::new(".shared-fixups").join(relative_path(shared_root, &overlay_dir))
+                } else {
+                    relative_path(self.third_party_dir, &overlay_dir)
+                };
                 let overlay_files =
                     config.overlay_files(&self.fixup_config.fixup_dir, &self.config.buck);
 
@@ -1698,8 +1936,87 @@ fn resolve_readme(readme: Option<&str>, manifest_dir: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
+    use super::fetch_git_fixups;
+    use super::redact_credentials;
     use super::resolve_readme;
+    use super::subdir_is_safe;
+    use super::validate_git_origin;
+
+    #[test]
+    fn credentials_are_redacted_for_logging() {
+        assert_eq!(
+            redact_credentials("https://x-token:ghp_secret@github.com/org/repo.git"),
+            "https://***@github.com/org/repo.git",
+        );
+        assert_eq!(
+            redact_credentials("https://ghp_secret@github.com/org/repo.git"),
+            "https://***@github.com/org/repo.git",
+        );
+        // No userinfo, or an '@' only in the path: left untouched.
+        assert_eq!(
+            redact_credentials("https://github.com/org/repo.git"),
+            "https://github.com/org/repo.git",
+        );
+        assert_eq!(
+            redact_credentials("https://github.com/org/repo@v1"),
+            "https://github.com/org/repo@v1",
+        );
+    }
+
+    #[test]
+    fn git_fixups_rejects_non_sha1_commit() {
+        // A branch/tag name (not a 40-hex sha1) is refused before any fetch, so
+        // shared fixups stay reproducibly pinned.
+        for bad in ["main", "v1.0", "0123abc", &"z".repeat(40)] {
+            let err = fetch_git_fixups("https://example.invalid/repo.git", bad).unwrap_err();
+            assert!(
+                err.to_string().contains("40-hex sha1"),
+                "expected sha1 validation error for {bad:?}, got: {err}",
+            );
+        }
+    }
+
+    #[test]
+    fn git_origin_blocks_remote_helpers_and_dashes() {
+        // Remote-helper transports run arbitrary commands; a leading dash is
+        // option injection. Both must be refused.
+        for bad in [
+            "ext::sh -c 'id'",
+            "fd::17",
+            "-oProxyCommand=evil",
+            "--upload-pack=evil",
+        ] {
+            assert!(
+                validate_git_origin(bad).is_err(),
+                "expected {bad:?} to be rejected",
+            );
+        }
+        // Real repo URLs (including scp-like and IPv6) are accepted.
+        for ok in [
+            "https://github.com/org/repo.git",
+            "git@github.com:org/repo.git",
+            "ssh://git@host/repo",
+            "git://host/repo",
+            "file:///srv/repo",
+            "https://[::1]/repo.git",
+        ] {
+            assert!(
+                validate_git_origin(ok).is_ok(),
+                "expected {ok:?} to be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn subdir_must_stay_in_repo() {
+        assert!(subdir_is_safe(Path::new("fixups")));
+        assert!(subdir_is_safe(Path::new("a/b/c")));
+        assert!(!subdir_is_safe(Path::new("../escape")));
+        assert!(!subdir_is_safe(Path::new("a/../../escape")));
+        assert!(!subdir_is_safe(Path::new("/abs/path")));
+    }
 
     #[test]
     fn readme_absolute_path_made_relative() {
