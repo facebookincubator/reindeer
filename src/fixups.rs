@@ -729,7 +729,8 @@ impl<'meta> Fixups<'meta> {
                     },
                     name: Name(format!("{}-{}", index.public_rule_name(self.package), name)),
                     actual: cxx_library_target,
-                    platforms: Some(cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
+                    platforms: (!config.buck.alias_with_platforms.is_default)
+                        .then(|| cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
                     visibility: self.visibility(index),
                     sort_key: Name(format!("{}-{}", self.package, name)),
                 }));
@@ -839,12 +840,12 @@ impl<'meta> Fixups<'meta> {
                             static_lib_file_name,
                         )),
                         actual: prebuilt_cxx_library_target,
-                        platforms: Some(
+                        platforms: (!config.buck.alias_with_platforms.is_default).then(|| {
                             prebuilt_cxx_library_platforms
                                 .iter()
                                 .map(|&p| p.clone())
-                                .collect(),
-                        ),
+                                .collect()
+                        }),
                         visibility: self.visibility(index),
                         sort_key: Name(format!(
                             "{}-{}-{}",
