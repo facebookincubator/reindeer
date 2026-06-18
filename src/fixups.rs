@@ -141,7 +141,11 @@ impl<'meta> FixupsCache<'meta> {
             // wins (so a project can override a shared fixup with its own), and
             // shared hits are tagged `external` to exempt them from the
             // unused-fixup check.
-            let local_dir = self.paths.third_party_dir.join("fixups").join(&package.name);
+            let local_dir = self
+                .paths
+                .third_party_dir
+                .join("fixups")
+                .join(&package.name);
             let (fixup_dir, external) = if local_dir.join("fixups.toml").is_file() {
                 (local_dir, false)
             } else {
@@ -283,8 +287,8 @@ fn fetch_git_fixups(git_origin: &str, commit_hash: &str) -> anyhow::Result<PathB
     }
     validate_git_origin(git_origin)?;
 
-    let cargo_home = home::cargo_home()
-        .context("locating CARGO_HOME for the shared fixups cache")?;
+    let cargo_home =
+        home::cargo_home().context("locating CARGO_HOME for the shared fixups cache")?;
     // Key the cache by a stable hash of the full origin (not a lossy slug, which
     // could collide e.g. `a-b` vs `a_b`) plus the commit.
     let mut hasher = FnvHasher::default();
@@ -330,7 +334,10 @@ fn fetch_git_fixups(git_origin: &str, commit_hash: &str) -> anyhow::Result<PathB
             .status()
             .with_context(|| format!("running `git {}`", args.join(" ")))?;
         if !status.success() {
-            bail!("`git {}` failed for shared fixups {safe_origin}", args.join(" "));
+            bail!(
+                "`git {}` failed for shared fixups {safe_origin}",
+                args.join(" ")
+            );
         }
         Ok(())
     };
@@ -355,9 +362,8 @@ fn fetch_git_fixups(git_origin: &str, commit_hash: &str) -> anyhow::Result<PathB
         }
         Err(e) => {
             let _ = fs::remove_dir_all(&tmp);
-            return Err(e).with_context(|| {
-                format!("publishing fixups checkout to {}", checkout.display())
-            });
+            return Err(e)
+                .with_context(|| format!("publishing fixups checkout to {}", checkout.display()));
         }
     }
     Ok(checkout)
@@ -1985,7 +1991,10 @@ mod tests {
             "file:///srv/repo",
             "https://[::1]/repo.git",
         ] {
-            assert!(validate_git_origin(ok).is_ok(), "expected {ok:?} to be accepted");
+            assert!(
+                validate_git_origin(ok).is_ok(),
+                "expected {ok:?} to be accepted"
+            );
         }
     }
 

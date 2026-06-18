@@ -613,7 +613,11 @@ shared_fixups = [
         match &w.shared_fixups[1] {
             SharedFixup::Git(g) => {
                 assert_eq!(g.git_origin, "https://example.com/r.git");
-                assert_eq!(g.subdir.to_str(), Some("fixups"), "subdir defaults to fixups");
+                assert_eq!(
+                    g.subdir.to_str(),
+                    Some("fixups"),
+                    "subdir defaults to fixups"
+                );
             }
             other => panic!("expected git source, got {other:?}"),
         }
