@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::btree_map;
 use std::fmt;
+use std::iter;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -181,6 +182,30 @@ impl<'meta> Fixups<'meta> {
             if let Some(true) = fixup.platform.eval_only_version(&self.package.version) {
                 fixup.used.store(true, Ordering::Relaxed);
                 configs.push(fixup);
+            }
+        }
+
+        configs
+    }
+
+    fn configs_grouped_by_platform<'a>(
+        &self,
+        compatible_platforms: &BTreeSet<&'a PlatformName>,
+    ) -> Vec<(&FixupConfig, BTreeSet<&'a PlatformName>)> {
+        let mut configs_unordered = BTreeMap::new();
+        for &platform_name in compatible_platforms {
+            for fixup in self.configs(platform_name) {
+                configs_unordered
+                    .entry(&raw const *fixup)
+                    .or_insert_with(BTreeSet::new)
+                    .insert(platform_name);
+            }
+        }
+
+        let mut configs = Vec::new();
+        for fixup in iter::once(&self.fixup_config.base).chain(&self.fixup_config.platform_fixup) {
+            if let Some(platforms) = configs_unordered.remove(&&raw const *fixup) {
+                configs.push((fixup, platforms));
             }
         }
 
@@ -464,43 +489,48 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        let mut cxx_library = Vec::new();
-        let mut prebuilt_cxx_library = Vec::new();
-        let mut library_fixups = BTreeSet::new();
+        let configs_grouped_by_platform = self.configs_grouped_by_platform(compatible_platforms);
+        let mut cxx_libraries = Vec::new();
+        let mut prebuilt_cxx_libraries = Vec::new();
+        for (fixup, platforms) in &configs_grouped_by_platform {
+            for library in &fixup.cxx_library {
+                cxx_libraries.push((library, platforms));
+            }
+            for library in &fixup.prebuilt_cxx_library {
+                prebuilt_cxx_libraries.push((library, platforms));
+            }
+        }
+
         let mut buildscript_platforms = BTreeSet::new();
         for &platform_name in compatible_platforms {
-            for fixup in self.configs(platform_name) {
-                if library_fixups.insert(&raw const *fixup) {
-                    cxx_library.extend(&fixup.cxx_library);
-                    prebuilt_cxx_library.extend(&fixup.prebuilt_cxx_library);
-                }
-            }
-
             if self.has_buildscript_for_platform(platform_name) {
                 buildscript_platforms.insert(platform_name);
             }
         }
 
         // Emit a C++ library build rule (elsewhere - add a dependency to it)
-        for CxxLibraryFixup {
-            name,
-            srcs,
-            headers,
-            exported_headers,
-            public,
-            include_paths,
-            fixup_include_paths,
-            exclude,
-            compiler_flags,
-            preprocessor_flags,
-            header_namespace,
-            deps,
-            compatible_with,
-            target_compatible_with,
-            preferred_linkage,
-            undefined_symbols,
-            ..
-        } in cxx_library
+        for (
+            CxxLibraryFixup {
+                name,
+                srcs,
+                headers,
+                exported_headers,
+                public,
+                include_paths,
+                fixup_include_paths,
+                exclude,
+                compiler_flags,
+                preprocessor_flags,
+                header_namespace,
+                deps,
+                compatible_with,
+                target_compatible_with,
+                preferred_linkage,
+                undefined_symbols,
+                ..
+            },
+            cxx_library_platforms,
+        ) in cxx_libraries
         {
             let cxx_library_target = if self.config.buck.split {
                 res.push(Rule::CxxLibrary(CxxLibrary {
@@ -699,7 +729,7 @@ impl<'meta> Fixups<'meta> {
                     },
                     name: Name(format!("{}-{}", index.public_rule_name(self.package), name)),
                     actual: cxx_library_target,
-                    platforms: None,
+                    platforms: Some(cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
                     visibility: self.visibility(index),
                     sort_key: Name(format!("{}-{}", self.package, name)),
                 }));
@@ -707,15 +737,18 @@ impl<'meta> Fixups<'meta> {
         }
 
         // Emit a prebuilt C++ library rule for each static library (elsewhere - add dependencies to them)
-        for PrebuiltCxxLibraryFixup {
-            name,
-            static_libs,
-            public,
-            compatible_with,
-            target_compatible_with,
-            preferred_linkage,
-            ..
-        } in prebuilt_cxx_library
+        for (
+            PrebuiltCxxLibraryFixup {
+                name,
+                static_libs,
+                public,
+                compatible_with,
+                target_compatible_with,
+                preferred_linkage,
+                ..
+            },
+            prebuilt_cxx_library_platforms,
+        ) in prebuilt_cxx_libraries
         {
             let static_lib_globs = Globs::new(static_libs, NO_EXCLUDE);
             for static_lib in static_lib_globs.walk(self.manifest_dir)? {
@@ -806,7 +839,12 @@ impl<'meta> Fixups<'meta> {
                             static_lib_file_name,
                         )),
                         actual: prebuilt_cxx_library_target,
-                        platforms: None,
+                        platforms: Some(
+                            prebuilt_cxx_library_platforms
+                                .iter()
+                                .map(|&p| p.clone())
+                                .collect(),
+                        ),
                         visibility: self.visibility(index),
                         sort_key: Name(format!(
                             "{}-{}-{}",
