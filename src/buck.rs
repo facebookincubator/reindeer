@@ -275,7 +275,7 @@ impl Serialize for Sources {
         if !mapped_srcs.is_empty() {
             map.serialize_entry("mapped_srcs", mapped_srcs)?;
         }
-        serialize_platforms_dict(&mut map, platform)?;
+        serialize_platforms_dict(&mut map, platform, false)?;
         map.serialize_entry("visibility", visibility)?;
         map.end()
     }
@@ -583,6 +583,7 @@ pub struct RustCommon {
     pub base: PlatformRustCommon,
     // Platform-specific
     pub platform: BTreeMap<PlatformName, PlatformRustCommon>,
+    pub serialize_all_platforms: bool,
 }
 
 /// Serialize as:
@@ -618,12 +619,16 @@ pub struct RustCommon {
 fn serialize_platforms_dict<S, V>(
     map: &mut S,
     platforms: &BTreeMap<PlatformName, V>,
+    serialize_all_platforms: bool,
 ) -> Result<(), S::Error>
 where
     S: SerializeMap,
     V: Serialize + Default + PartialEq,
 {
-    struct Platforms<'a, V>(&'a BTreeMap<PlatformName, V>);
+    struct Platforms<'a, V> {
+        platforms: &'a BTreeMap<PlatformName, V>,
+        serialize_all_platforms: bool,
+    }
 
     impl<V> Serialize for Platforms<'_, V>
     where
@@ -631,8 +636,8 @@ where
     {
         fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
             let mut map = ser.serialize_map(None)?;
-            for (name, value) in self.0 {
-                if *value != V::default() {
+            for (name, value) in self.platforms {
+                if self.serialize_all_platforms || *value != V::default() {
                     map.serialize_entry(name, &FunctionCall::new("dict", value))?;
                 }
             }
@@ -640,11 +645,42 @@ where
         }
     }
 
-    if platforms.values().any(|value| *value != V::default()) {
-        map.serialize_entry("platform", &Platforms(platforms))?;
+    if serialize_all_platforms || platforms.values().any(|value| *value != V::default()) {
+        map.serialize_entry(
+            "platform",
+            &Platforms {
+                platforms,
+                serialize_all_platforms,
+            },
+        )?;
     }
 
     Ok(())
+}
+
+fn serialize_platforms_set_as_dict<S>(
+    map: &mut S,
+    platforms: &BTreeSet<PlatformName>,
+) -> Result<(), S::Error>
+where
+    S: SerializeMap,
+{
+    struct Platforms<'a>(&'a BTreeSet<PlatformName>);
+
+    #[derive(Serialize)]
+    struct Empty {}
+
+    impl Serialize for Platforms<'_> {
+        fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+            let mut map = ser.serialize_map(None)?;
+            for name in self.0 {
+                map.serialize_entry(name, &FunctionCall::new("dict", &Empty {}))?;
+            }
+            map.end()
+        }
+    }
+
+    map.serialize_entry("platform", &Platforms(platforms))
 }
 
 #[derive(Debug)]
@@ -690,6 +726,7 @@ impl Serialize for RustLibrary {
                             preferred_linkage,
                         },
                     platform,
+                    serialize_all_platforms,
                 },
             proc_macro,
             dlopen_enable,
@@ -737,7 +774,7 @@ impl Serialize for RustLibrary {
         if !named_deps.is_empty() {
             map.serialize_entry("named_deps", named_deps)?;
         }
-        serialize_platforms_dict(&mut map, platform)?;
+        serialize_platforms_dict(&mut map, platform, *serialize_all_platforms)?;
         if let Some(preferred_linkage) = preferred_linkage {
             map.serialize_entry("preferred_linkage", preferred_linkage)?;
         }
@@ -803,6 +840,7 @@ impl Serialize for RustBinary {
                             preferred_linkage,
                         },
                     platform,
+                    serialize_all_platforms,
                 },
         } = self;
         let mut map = ser.serialize_map(None)?;
@@ -840,7 +878,7 @@ impl Serialize for RustBinary {
         if !named_deps.is_empty() {
             map.serialize_entry("named_deps", named_deps)?;
         }
-        serialize_platforms_dict(&mut map, platform)?;
+        serialize_platforms_dict(&mut map, platform, *serialize_all_platforms)?;
         if let Some(preferred_linkage) = preferred_linkage {
             map.serialize_entry("preferred_linkage", preferred_linkage)?;
         }
@@ -871,6 +909,7 @@ pub struct BuildscriptGenrule {
     pub base: PlatformBuildscriptGenrule,
     // Platform-specific
     pub platform: BTreeMap<PlatformName, PlatformBuildscriptGenrule>,
+    pub serialize_all_platforms: bool,
 }
 
 #[derive(Debug)]
@@ -900,6 +939,7 @@ impl Serialize for BuildscriptGenrule {
                     rustc_link_search,
                 },
             platform,
+            serialize_all_platforms,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
@@ -923,7 +963,7 @@ impl Serialize for BuildscriptGenrule {
                 map.serialize_entry("manifest_dir", manifest_dir)?;
             }
         }
-        serialize_platforms_dict(&mut map, platform)?;
+        serialize_platforms_dict(&mut map, platform, *serialize_all_platforms)?;
         if *rustc_link_lib {
             map.serialize_entry("rustc_link_lib", &true)?;
         }
@@ -982,6 +1022,7 @@ pub struct CxxLibrary {
     pub deps: BTreeSet<RuleRef>,
     pub preferred_linkage: Option<String>,
     pub undefined_symbols: bool,
+    pub platforms: Option<BTreeSet<PlatformName>>,
 }
 
 impl Serialize for CxxLibrary {
@@ -1007,6 +1048,7 @@ impl Serialize for CxxLibrary {
             deps,
             preferred_linkage,
             undefined_symbols,
+            platforms,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
@@ -1037,6 +1079,9 @@ impl Serialize for CxxLibrary {
         }
         if !metadata.is_empty() {
             map.serialize_entry("metadata", metadata)?;
+        }
+        if let Some(platforms) = platforms {
+            serialize_platforms_set_as_dict(&mut map, platforms)?;
         }
         if let Some(preferred_linkage) = preferred_linkage {
             map.serialize_entry("preferred_linkage", preferred_linkage)?;
@@ -1148,6 +1193,7 @@ pub struct PrebuiltCxxLibrary {
     pub common: Common,
     pub static_lib: SubtargetOrPath,
     pub preferred_linkage: Option<String>,
+    pub platforms: Option<BTreeSet<PlatformName>>,
 }
 
 impl Serialize for PrebuiltCxxLibrary {
@@ -1165,6 +1211,7 @@ impl Serialize for PrebuiltCxxLibrary {
                 },
             static_lib,
             preferred_linkage,
+            platforms,
         } = self;
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
@@ -1176,6 +1223,9 @@ impl Serialize for PrebuiltCxxLibrary {
         }
         if !metadata.is_empty() {
             map.serialize_entry("metadata", metadata)?;
+        }
+        if let Some(platforms) = platforms {
+            serialize_platforms_set_as_dict(&mut map, platforms)?;
         }
         map.serialize_entry("static_lib", static_lib)?;
         if !target_compatible_with.is_empty() {
@@ -1442,6 +1492,7 @@ mod tests {
             manifest_dir: BuildscriptGenruleManifestDir::None,
             base: PlatformBuildscriptGenrule::default(),
             platform: BTreeMap::new(),
+            serialize_all_platforms: false,
         })
     }
 

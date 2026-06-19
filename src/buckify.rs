@@ -790,6 +790,12 @@ fn generate_target_rules<'a>(
     let mut perplat: BTreeMap<PlatformName, PlatformRustCommon> = BTreeMap::new();
     let compatible_platforms = index.compatible_platforms(pkg);
 
+    if config.buck.platform_compatibility_on_all_targets {
+        for &platform in &compatible_platforms {
+            perplat.insert(platform.clone(), PlatformRustCommon::default());
+        }
+    }
+
     if matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local) {
         // Get a list of the most obvious sources for the crate. This is either
         // a list of filename, or a list of globs.
@@ -966,6 +972,7 @@ fn generate_target_rules<'a>(
                 edition,
                 base,
                 platform: perplat,
+                serialize_all_platforms: config.buck.platform_compatibility_on_all_targets,
             },
         };
         let rules = fixups.emit_buildscript_rules(
@@ -1184,6 +1191,7 @@ fn generate_target_rules<'a>(
                 edition,
                 base: lib_base,
                 platform: lib_perplat,
+                serialize_all_platforms: config.buck.platform_compatibility_on_all_targets,
             },
             proc_macro: tgt.crate_proc_macro(),
             dlopen_enable: tgt.kind_cdylib() && fixups.python_ext().is_none(),
@@ -1348,6 +1356,7 @@ fn generate_target_rules<'a>(
                 edition,
                 base: bin_base,
                 platform: bin_perplat,
+                serialize_all_platforms: config.buck.platform_compatibility_on_all_targets,
             },
         };
 

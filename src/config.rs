@@ -155,6 +155,12 @@ pub struct BuckConfig {
     #[serde(default)]
     pub split: bool,
 
+    /// Populate the `platform` attribute of `rust_library` and `rust_binary`
+    /// targets with all platforms the crate is configured for, even when some
+    /// of those platforms contain no platform-specific information.
+    #[serde(default)]
+    pub platform_compatibility_on_all_targets: bool,
+
     /// Banner for the top of all generated bzl files, namely BUCK and METADATA.bzl
     #[serde(default)]
     pub generated_file_header:

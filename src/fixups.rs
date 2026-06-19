@@ -621,6 +621,11 @@ impl<'meta> Fixups<'meta> {
                     deps: deps.iter().cloned().map(RuleRef::new).collect(),
                     preferred_linkage: preferred_linkage.clone(),
                     undefined_symbols: *undefined_symbols,
+                    platforms: self
+                        .config
+                        .buck
+                        .platform_compatibility_on_all_targets
+                        .then(|| cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
                 }));
                 RuleRef::new(format!(
                     "//{}{}vendor/{}:{}",
@@ -717,6 +722,11 @@ impl<'meta> Fixups<'meta> {
                     deps: deps.iter().cloned().map(RuleRef::new).collect(),
                     preferred_linkage: preferred_linkage.clone(),
                     undefined_symbols: *undefined_symbols,
+                    platforms: self
+                        .config
+                        .buck
+                        .platform_compatibility_on_all_targets
+                        .then(|| cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
                 }));
                 RuleRef::from(target_name)
             };
@@ -785,6 +795,14 @@ impl<'meta> Fixups<'meta> {
                         },
                         static_lib: SubtargetOrPath::Path(BuckPath(static_lib.to_owned())),
                         preferred_linkage: preferred_linkage.clone(),
+                        platforms: self.config.buck.platform_compatibility_on_all_targets.then(
+                            || {
+                                prebuilt_cxx_library_platforms
+                                    .iter()
+                                    .map(|&p| p.clone())
+                                    .collect()
+                            },
+                        ),
                     }));
                     RuleRef::new(format!(
                         "//{}{}vendor/{}:{}",
@@ -823,6 +841,14 @@ impl<'meta> Fixups<'meta> {
                         },
                         static_lib: self.subtarget_or_path(&static_lib)?,
                         preferred_linkage: preferred_linkage.clone(),
+                        platforms: self.config.buck.platform_compatibility_on_all_targets.then(
+                            || {
+                                prebuilt_cxx_library_platforms
+                                    .iter()
+                                    .map(|&p| p.clone())
+                                    .collect()
+                            },
+                        ),
                     }));
                     RuleRef::from(target_name)
                 };
@@ -925,6 +951,7 @@ impl<'meta> Fixups<'meta> {
                     rustc_link_search: false,
                 },
                 platform: BTreeMap::new(),
+                serialize_all_platforms: config.buck.platform_compatibility_on_all_targets,
             };
 
             for &platform_name in &buildscript_platforms {
