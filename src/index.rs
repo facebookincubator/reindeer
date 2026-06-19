@@ -246,9 +246,8 @@ impl<'meta> Index<'meta> {
     pub fn compatible_platforms(&self, pkg: &Manifest) -> BTreeSet<&'meta PlatformName> {
         let mut compatible_platforms = BTreeSet::new();
         for platform_name in self.config.platform.keys() {
-            if self
-                .pkgid_platform_features
-                .contains_key(&(pkg.id, platform_name))
+            if let Some(resolve) = self.pkgid_platform_features.get(&(pkg.id, platform_name))
+                && resolve.enabled
             {
                 compatible_platforms.insert(platform_name);
             }
