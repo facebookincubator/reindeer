@@ -741,6 +741,10 @@ impl<'meta> Fixups<'meta> {
                     actual: cxx_library_target,
                     platforms: (!config.buck.alias_with_platforms.is_default)
                         .then(|| cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
+                    target_compatible_with: Select {
+                        common: target_compatible_with.clone(),
+                        selects: Vec::new(),
+                    },
                     visibility: self.visibility(index),
                     sort_key: Name(format!("{}-{}", self.package, name)),
                 }));
@@ -872,6 +876,10 @@ impl<'meta> Fixups<'meta> {
                                 .map(|&p| p.clone())
                                 .collect()
                         }),
+                        target_compatible_with: Select {
+                            common: target_compatible_with.clone(),
+                            selects: Vec::new(),
+                        },
                         visibility: self.visibility(index),
                         sort_key: Name(format!(
                             "{}-{}-{}",

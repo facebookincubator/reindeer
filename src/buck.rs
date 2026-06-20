@@ -216,6 +216,7 @@ pub struct Alias {
     /// Target that the alias refers to.
     pub actual: RuleRef,
     pub platforms: Option<BTreeSet<PlatformName>>,
+    pub target_compatible_with: Select<Vec<RuleRef>>,
     pub visibility: Visibility,
     pub sort_key: Name,
 }
@@ -227,6 +228,7 @@ impl Serialize for Alias {
             name,
             actual,
             platforms,
+            target_compatible_with,
             visibility,
             sort_key: _,
         } = self;
@@ -235,6 +237,9 @@ impl Serialize for Alias {
         map.serialize_entry("actual", actual)?;
         if let Some(platforms) = platforms {
             map.serialize_entry("platforms", platforms)?;
+        }
+        if !target_compatible_with.is_empty() {
+            map.serialize_entry("target_compatible_with", target_compatible_with)?;
         }
         map.serialize_entry("visibility", visibility)?;
         map.end()
@@ -1462,6 +1467,7 @@ mod tests {
     use super::PlatformBuildscriptGenrule;
     use super::Rule;
     use super::RuleRef;
+    use super::Select;
     use super::Visibility;
 
     fn aws_lc_sys_owner() -> PackageVersion {
@@ -1542,6 +1548,7 @@ mod tests {
             name: Name(alias_name.to_owned()),
             actual: RuleRef::new(format!(":{archive_name}")),
             platforms: None,
+            target_compatible_with: Select::default(),
             visibility: Visibility::Private,
             sort_key: Name(alias_name.to_owned()),
         });

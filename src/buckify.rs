@@ -264,6 +264,7 @@ fn generate_rules<'scope, 'env>(
                     name: Name(extern_disp),
                     actual: RuleRef::new(extern_target),
                     platforms: None,
+                    target_compatible_with: Select::default(),
                     visibility: Visibility::Private,
                     sort_key: Name(pkg.to_string()),
                 })));
@@ -1140,6 +1141,10 @@ fn generate_target_rules<'a>(
                     format!(":{}", tgt_disp)
                 }),
                 platforms,
+                target_compatible_with: Select {
+                    common: fixups.target_compatible_with().clone(),
+                    selects: fixups.compute_target_compatible_with_select(),
+                },
                 visibility: fixups.visibility(index),
                 sort_key: Name(tgt_disp.clone()),
             }));
@@ -1226,6 +1231,7 @@ fn generate_target_rules<'a>(
                         pkg.name,
                     )),
                     platforms: None,
+                    target_compatible_with: Select::default(),
                     visibility: fixups.visibility(index),
                     sort_key: Name(pkg.to_string()),
                 }));
@@ -1309,6 +1315,7 @@ fn generate_target_rules<'a>(
                     format!(":{}-{}", tgt_disp, tgt.name)
                 }),
                 platforms,
+                target_compatible_with: Select::default(),
                 visibility: fixups.visibility(index),
                 sort_key: Name(format!("{}-{}", tgt_disp, tgt.name)),
             }));
@@ -1477,6 +1484,7 @@ fn generate_target_rules<'a>(
                     name,
                 )),
                 platforms: None,
+                target_compatible_with: Select::default(),
                 visibility: visibility.clone(),
                 sort_key: Name(format!("{}-{}", tgt_disp, name)),
             }));
