@@ -27,6 +27,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::PoisonError;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::thread;
 
@@ -193,6 +195,13 @@ struct RuleContext<'meta> {
     fixups: FixupsCache<'meta>,
     collision_info: CollisionInfo,
     done: Mutex<HashSet<(PackageId, TargetReq<'meta>)>>,
+    // Live worker threads in the buckify scope, and the soft cap on them.
+    // Buckify fans out one thread per (package, target); the graph has thousands,
+    // which on macOS exceeds the read-only per-process thread limit
+    // (kern.num_taskthreads) — pthread_create then fails with EAGAIN. Past the cap
+    // we run work inline instead of spawning. See gilescope/buck2-fixups#55.
+    live: AtomicUsize,
+    max_threads: usize,
 }
 
 /// Generate rules for a set of dependencies
@@ -204,16 +213,33 @@ fn generate_dep_rules<'scope, 'env>(
     rule_tx: mpsc::Sender<anyhow::Result<Rule>>,
     pkg_deps: impl IntoIterator<Item = (&'env Manifest, TargetReq<'env>)>,
 ) {
-    let mut done = context.done.lock().unwrap();
-    for (pkg, target_req) in pkg_deps {
-        if done.insert((pkg.id, target_req)) {
-            buckify_diagnostic(format_args!(
-                "schedule package={pkg} target_req={target_req:?}"
-            ));
-            let rule_tx = rule_tx.clone();
+    // Claim the not-yet-scheduled deps under the lock, then DROP it before doing
+    // any work: generate_rules recurses back into generate_dep_rules, which would
+    // otherwise re-enter and deadlock on this same `done` mutex on the inline path.
+    let todo: Vec<(&'env Manifest, TargetReq<'env>)> = {
+        let mut done = context.done.lock().unwrap();
+        pkg_deps
+            .into_iter()
+            .filter(|(pkg, target_req)| done.insert((pkg.id, *target_req)))
+            .collect()
+    };
+    for (pkg, target_req) in todo {
+        buckify_diagnostic(format_args!(
+            "schedule package={pkg} target_req={target_req:?}"
+        ));
+        let rule_tx = rule_tx.clone();
+        // Spawn while under the thread cap; once at the cap, run inline so we
+        // never exceed the OS per-process thread limit. The inline path recurses
+        // in-stack along the dependency chain (bounded by graph depth) and always
+        // makes progress, so this can't deadlock.
+        if context.live.fetch_add(1, Ordering::Relaxed) < context.max_threads {
             scope.spawn(move || {
                 generate_rules(context, scope, rule_tx, pkg, target_req);
+                context.live.fetch_sub(1, Ordering::Relaxed);
             });
+        } else {
+            context.live.fetch_sub(1, Ordering::Relaxed);
+            generate_rules(context, scope, rule_tx, pkg, target_req);
         }
     }
 }
@@ -1636,6 +1662,19 @@ pub(crate) fn buckify(
         fixups,
         collision_info,
         done: Mutex::new(HashSet::default()),
+        live: AtomicUsize::new(0),
+        // Plenty of concurrency to keep every core busy (work is short, I/O-ish)
+        // while staying well under any platform's per-process thread cap.
+        // Overridable via REINDEER_BUCKIFY_THREADS for unusual environments.
+        max_threads: std::env::var("REINDEER_BUCKIFY_THREADS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| {
+                thread::available_parallelism()
+                    .map(|n| n.get() * 8)
+                    .unwrap_or(64)
+                    .clamp(16, 256)
+            }),
     };
     let rules = do_buckify(&context)?;
     buckify_diagnostic(format_args!("rules generated count={}", rules.len()));
