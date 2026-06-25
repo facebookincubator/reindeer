@@ -63,5 +63,5 @@ members = ["."]
 license = "MIT"
 repository = "https://github.com/facebookincubator/reindeer"
 
-[lints]
-rust = { unexpected_cfgs = { check-cfg = ["cfg(fbcode_build)"], level = "warn" } }
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fbcode_build)"]}
