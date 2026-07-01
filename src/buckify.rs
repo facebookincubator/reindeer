@@ -1726,6 +1726,8 @@ pub(crate) fn buckify(
                 }
             }
 
+            let mut generated_vendor_buck_paths = BTreeSet::new();
+
             fn spawn<'scope, 'env>(
                 scope: &'scope thread::Scope<'scope, 'env>,
                 errors: &'scope Mutex<Vec<anyhow::Error>>,
@@ -1743,7 +1745,7 @@ pub(crate) fn buckify(
 
             let errors_owned = Mutex::new(Vec::new());
             let errors = &errors_owned;
-            thread::scope(move |scope| {
+            thread::scope(|scope| {
                 spawn(scope, errors, move || {
                     let mut out = Vec::new();
                     buck::write_buckfile(&config.buck, toplevel_rules.into_iter(), &mut out)
@@ -1756,14 +1758,15 @@ pub(crate) fn buckify(
                 });
 
                 for (owner, rules) in crate_rules {
+                    let owner_dir = paths.third_party_dir.join("vendor").join(owner);
+                    let buckpath = owner_dir.join(&config.buck.file_name);
+                    generated_vendor_buck_paths.insert(buckpath.clone());
                     spawn(scope, errors, move || {
                         let mut out = Vec::new();
                         buck::write_buckfile(&config.buck, rules.into_iter(), &mut out)
                             .context("writing buck file")?;
-                        let owner_dir = paths.third_party_dir.join("vendor").join(owner);
                         fs::create_dir_all(&owner_dir)
                             .with_context(|| format!("crate {}", owner_dir.display()))?;
-                        let buckpath = owner_dir.join(&config.buck.file_name);
                         if !fs::read(&buckpath).is_ok_and(|x| x == out) {
                             fs::write(&buckpath, out)
                                 .with_context(|| format!("write {} file", buckpath.display()))?;
@@ -1773,15 +1776,16 @@ pub(crate) fn buckify(
                 }
 
                 for (owner, rules) in version_rules {
+                    let buckpath = paths
+                        .third_party_dir
+                        .join("vendor")
+                        .join(format!("{}-{}", owner.name, owner.version))
+                        .join(&config.buck.file_name);
+                    generated_vendor_buck_paths.insert(buckpath.clone());
                     spawn(scope, errors, move || {
                         let mut out = Vec::new();
                         buck::write_buckfile(&config.buck, rules.into_iter(), &mut out)
                             .context("writing buck file")?;
-                        let buckpath = paths
-                            .third_party_dir
-                            .join("vendor")
-                            .join(format!("{}-{}", owner.name, owner.version))
-                            .join(&config.buck.file_name);
                         if !fs::read(&buckpath).is_ok_and(|x| x == out) {
                             fs::write(&buckpath, out)
                                 .with_context(|| format!("write {} file", buckpath.display()))?;
@@ -1859,6 +1863,8 @@ pub(crate) fn buckify(
             {
                 return Err(err);
             }
+
+            cleanup_stale_split_vendor_buck_files(config, paths, &generated_vendor_buck_paths)?;
         } else {
             let mut out = Vec::new();
             buck::write_buckfile(&config.buck, rules.iter(), &mut out)
@@ -1879,14 +1885,87 @@ pub(crate) fn buckify(
     Ok(())
 }
 
+fn cleanup_stale_split_vendor_buck_files(
+    config: &Config,
+    paths: &Paths,
+    generated_vendor_buck_paths: &BTreeSet<PathBuf>,
+) -> anyhow::Result<()> {
+    let vendor_dir = paths.third_party_dir.join("vendor");
+    let entries = match fs::read_dir(&vendor_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to read {}", vendor_dir.display()));
+        }
+    };
+
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        let crate_dir = entry.path();
+        let buckpath = crate_dir.join(&config.buck.file_name);
+        if generated_vendor_buck_paths.contains(&buckpath)
+            || !is_generated_buck_file(config, &buckpath)?
+        {
+            continue;
+        }
+
+        fs::remove_file(&buckpath)
+            .with_context(|| format!("failed to remove stale {}", buckpath.display()))?;
+        match fs::remove_dir(&crate_dir) {
+            Ok(()) => {}
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    io::ErrorKind::DirectoryNotEmpty | io::ErrorKind::NotFound
+                ) => {}
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("failed to remove empty {}", crate_dir.display()));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn is_generated_buck_file(config: &Config, buckpath: &Path) -> anyhow::Result<bool> {
+    let header = config.buck.generated_file_header.as_bytes();
+    if header.is_empty() {
+        return Ok(false);
+    }
+
+    let file_type = match fs::symlink_metadata(buckpath) {
+        Ok(metadata) => metadata.file_type(),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to stat {}", buckpath.display()));
+        }
+    };
+    if !file_type.is_file() {
+        return Ok(false);
+    }
+
+    fs::read(buckpath)
+        .map(|contents| contents.starts_with(header))
+        .with_context(|| format!("failed to read {}", buckpath.display()))
+}
+
 #[cfg(test)]
 mod test {
+    use std::collections::BTreeSet;
+    use std::fs;
     use std::path::PathBuf;
 
+    use super::cleanup_stale_split_vendor_buck_files;
     use super::short_name_for_git_repo;
     use super::vendor_crate_visibility;
     use crate::Paths;
     use crate::buck::Visibility;
+    use crate::config::Config;
 
     fn paths_with_buck_package(buck_package: &str) -> Paths {
         Paths {
@@ -1896,6 +1975,91 @@ mod test {
             lockfile_path: PathBuf::new(),
             cargo_home: PathBuf::new(),
         }
+    }
+
+    fn paths_with_third_party_dir(third_party_dir: PathBuf) -> Paths {
+        Paths {
+            buck_package: "third-party/rust".to_owned(),
+            third_party_dir,
+            manifest_path: PathBuf::new(),
+            lockfile_path: PathBuf::new(),
+            cargo_home: PathBuf::new(),
+        }
+    }
+
+    fn split_config() -> Config {
+        toml::from_str("[buck]\nsplit = true\n").expect("test config should parse")
+    }
+
+    #[test]
+    fn cleanup_stale_split_vendor_buck_files_removes_only_unproduced_generated_buck_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = paths_with_third_party_dir(dir.path().join("third-party/rust"));
+        let vendor_dir = paths.third_party_dir.join("vendor");
+        let config = split_config();
+        let generated_file_header = &*config.buck.generated_file_header;
+
+        let active_buck = vendor_dir.join("active-crate").join("BUCK");
+        fs::create_dir_all(active_buck.parent().expect("active parent")).unwrap();
+        fs::write(
+            &active_buck,
+            format!("{generated_file_header}active rules\n"),
+        )
+        .unwrap();
+
+        let stale_split_buck = vendor_dir.join("stale-crate").join("BUCK");
+        fs::create_dir_all(stale_split_buck.parent().expect("stale parent")).unwrap();
+        fs::write(
+            &stale_split_buck,
+            format!("{generated_file_header}stale rules\n"),
+        )
+        .unwrap();
+
+        let stale_versioned_dir = vendor_dir.join("stale-crate-1.0.0");
+        let stale_versioned_buck = stale_versioned_dir.join("BUCK");
+        fs::create_dir_all(&stale_versioned_dir).unwrap();
+        fs::write(stale_versioned_dir.join("lib.rs"), "pub fn stale() {}\n").unwrap();
+        fs::write(
+            &stale_versioned_buck,
+            format!("{generated_file_header}stale versioned rules\n"),
+        )
+        .unwrap();
+
+        let handwritten_buck = vendor_dir.join("handwritten-crate").join("BUCK");
+        fs::create_dir_all(handwritten_buck.parent().expect("handwritten parent")).unwrap();
+        fs::write(&handwritten_buck, "handwritten rules\n").unwrap();
+
+        cleanup_stale_split_vendor_buck_files(
+            &config,
+            &paths,
+            &BTreeSet::from([active_buck.clone()]),
+        )
+        .unwrap();
+
+        assert!(
+            active_buck.exists(),
+            "BUCK files generated by the current buckify run should be preserved"
+        );
+        assert!(
+            !stale_split_buck.exists(),
+            "stale generated split BUCK files should be removed"
+        );
+        assert!(
+            !stale_split_buck.parent().expect("stale parent").exists(),
+            "empty stale split BUCK package dirs should be removed"
+        );
+        assert!(
+            !stale_versioned_buck.exists(),
+            "stale generated BUCK files in versioned vendor dirs should be removed"
+        );
+        assert!(
+            stale_versioned_dir.join("lib.rs").exists(),
+            "source files in versioned vendor dirs should be preserved"
+        );
+        assert!(
+            handwritten_buck.exists(),
+            "BUCK files without the reindeer generated header should not be deleted"
+        );
     }
 
     #[test]
