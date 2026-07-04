@@ -53,9 +53,6 @@ tempfile = "3.27.0"
 [target.'cfg(unix)'.dependencies]
 rlimit = "0.11"
 
-[patch.crates-io]
-libssh2-sys = { git = "https://github.com/alexcrichton/ssh2-rs", rev = "5219ffbaa5b0a170376d6d1896c5cb5367bdedb8" }
-
 [workspace]
 members = ["."]
 
