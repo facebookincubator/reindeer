@@ -1828,7 +1828,6 @@ fn copy_vendor_sources(
         }
 
         let key = relative.to_str().expect("non-UTF8 path").replace('\\', "/");
-        let generated_cargo_toml = key == "Cargo.toml" && normalized_cargo_toml.is_some();
         let contents = if key == "Cargo.toml" {
             match normalized_cargo_toml {
                 Some(contents) => contents.as_bytes().to_vec(),
@@ -1838,17 +1837,26 @@ fn copy_vendor_sources(
         } else {
             fs::read(src_path).with_context(|| format!("failed to read {}", src_path.display()))?
         };
-        write_vendored_source_file(src_path, &dst_path, &contents, generated_cargo_toml)?;
+        write_vendored_source_file(
+            #[cfg(unix)]
+            src_path,
+            &dst_path,
+            &contents,
+            #[cfg(unix)]
+            {
+                key == "Cargo.toml" && normalized_cargo_toml.is_some()
+            },
+        )?;
     }
 
     Ok(())
 }
 
 fn write_vendored_source_file(
-    src_path: &Path,
+    #[cfg(unix)] src_path: &Path,
     dst_path: &Path,
     contents: &[u8],
-    generated: bool,
+    #[cfg(unix)] generated: bool,
 ) -> anyhow::Result<()> {
     prepare_regular_file_target(dst_path)?;
     let mut options = fs::OpenOptions::new();
