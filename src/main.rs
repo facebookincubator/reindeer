@@ -87,8 +87,6 @@ pub struct Args {
 
 #[derive(Debug, Subcommand)]
 enum SubCommand {
-    /// Update Cargo.lock with new dependencies
-    Update {},
     /// Vendor crate needed for build
     Vendor {
         /// Don't delete older crates in the vendor directory
@@ -258,20 +256,6 @@ fn try_main() -> anyhow::Result<()> {
         #[cfg(fbcode_build)]
         SubCommand::Auditsec { no_fetch } => {
             audit_sec::audit_sec(&paths, *no_fetch)?;
-        }
-
-        SubCommand::Update { .. } => {
-            let _ = cargo::run_cargo(
-                &config,
-                Some(&paths.cargo_home),
-                None,
-                &args,
-                &[
-                    "generate-lockfile",
-                    "--manifest-path",
-                    paths.manifest_path.to_str().unwrap(),
-                ],
-            )?;
         }
     }
 
