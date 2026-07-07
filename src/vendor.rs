@@ -348,11 +348,11 @@ mod tests {
         fs::write(
             fake_cargo,
             r#"@echo off
-if not "%1"=="vendor" (
+if not "%~1"=="vendor" (
   echo unexpected args: %* 1>&2
   exit /b 1
 )
-set "vendor_dir=%4"
+set "vendor_dir=%~4"
 mkdir "%vendor_dir%\biscuit-1.0.0"
 (
 echo [package]
