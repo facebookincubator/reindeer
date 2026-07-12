@@ -437,9 +437,9 @@ dependencies = [
 
 [[package]]
 name = "cargo-credential-wincred"
-version = "0.4.22"
+version = "0.4.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c21c232e758ef669f021d020ed03b8cabb1a924fc0832d66716b582eee291670"
+checksum = "98217a0c25db10c0825228cd6dbe009742c2e524f3dd135b5abd988d6960e25a"
 dependencies = [
  "cargo-credential",
  "windows-sys",
