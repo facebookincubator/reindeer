@@ -416,9 +416,9 @@ dependencies = [
 
 [[package]]
 name = "cargo-credential-libsecret"
-version = "0.5.7"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8771c255a26ef3f81bb91fb0c508b6e85ba767d8b3bd5fee47068bc32dd7b62d"
+checksum = "2e4e04c7a5534329dcdb4c7cefc6c22b0b1206d72f868efdbfff449f44fef6ca"
 dependencies = [
  "anyhow",
  "cargo-credential",
