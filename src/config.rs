@@ -220,11 +220,16 @@ pub enum VendorConfig {
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VendorSourceConfig {
+    /// Whether reindeer.toml specifies an explicit `[vendor]` section or
+    /// `vendor = true`. False if there is no reindeer.toml or it does not
+    /// contain a setting for vendoring either way.
+    #[serde(skip)]
+    pub explicit: bool,
     /// List of .gitignore files to use to filter checksum files, relative to
     /// this config file.
     #[serde(default)]
     pub gitignore_checksum_exclude: Vec<PathBuf>,
-    /// Set of globs to remove from Cargo's checksun files in vendored dirs
+    /// Set of globs to remove from Cargo's checksum files in vendored dirs
     #[serde(default)]
     pub checksum_exclude: Vec<String>,
 }
@@ -353,7 +358,10 @@ where
             // `vendor = true`: default configuration with vendoring.
             // `vendor = false`: do not vendor.
             Ok(if value {
-                VendorConfig::default()
+                VendorConfig::Source(VendorSourceConfig {
+                    explicit: true,
+                    ..VendorSourceConfig::default()
+                })
             } else {
                 VendorConfig::Off
             })
@@ -374,8 +382,11 @@ where
         where
             M: MapAccess<'de>,
         {
-            VendorSourceConfig::deserialize(MapAccessDeserializer::new(map))
-                .map(VendorConfig::Source)
+            let source_config = VendorSourceConfig::deserialize(MapAccessDeserializer::new(map))?;
+            Ok(VendorConfig::Source(VendorSourceConfig {
+                explicit: true,
+                ..source_config
+            }))
         }
     }
 

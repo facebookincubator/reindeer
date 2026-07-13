@@ -27,6 +27,7 @@ use clap::Parser;
 use clap::Subcommand;
 
 use crate::config::VendorConfig;
+use crate::config::VendorSourceConfig;
 use crate::path::buck_package;
 use crate::path::ensure_third_party_dir_exists;
 
@@ -243,8 +244,15 @@ fn try_main() -> anyhow::Result<()> {
                 VendorConfig::LocalRegistry | VendorConfig::Source(_)
             ) && !vendor::is_vendored(&config, &paths)?
             {
-                // If you ran `reindeer buckify` without `reindeer vendor`, then
-                // default to generating non-vendored targets.
+                if matches!(
+                    config.vendor,
+                    VendorConfig::LocalRegistry
+                        | VendorConfig::Source(VendorSourceConfig { explicit: true, .. })
+                ) {
+                    log::warn!(
+                        "reindeer.toml specifies vendor configuration but `reindeer vendor` was not run. Generating non-vendored targets."
+                    );
+                }
                 config.vendor = VendorConfig::Off;
             }
             buckify::buckify(&config, &args, &paths, *stdout, *fast)?;
