@@ -25,6 +25,7 @@ use crate::cargo::fast_vendor;
 use crate::cargo::postprocess_vendored_directory;
 use crate::config::Config;
 use crate::config::VendorConfig;
+use crate::config::VendorSourceConfig;
 use crate::remap::RemapConfig;
 use crate::remap::RemapSource;
 
@@ -39,85 +40,84 @@ pub(crate) fn cargo_vendor(
 ) -> anyhow::Result<()> {
     let vendordir = Path::new("vendor"); // relative to third_party_dir
     let full_vendor_dir = paths.third_party_dir.join("vendor");
-    let source_filters = matches!(&config.vendor, VendorConfig::Source(_))
-        .then(|| build_filters(config, paths))
-        .transpose()?;
 
-    if let VendorConfig::LocalRegistry = config.vendor {
-        let mut cmdline = vec![
-            "local-registry",
-            "-s",
-            paths.lockfile_path.to_str().unwrap(),
-            full_vendor_dir.to_str().unwrap(),
-            "--git",
-        ];
-        if no_delete {
-            cmdline.push("--no-delete");
+    match &config.vendor {
+        VendorConfig::Off => {
+            unreachable!(
+                "VendorConfig::Off is only ever set during `reindeer buckify`, not `reindeer vendor`"
+            );
         }
-        log::info!("Running cargo {:?}", cmdline);
-        let _ = cargo::run_cargo(config, Some(&paths.cargo_home), None, args, &cmdline)?;
-        let mut remap = RemapConfig::default();
-        remap.sources.insert(
-            "crates-io".to_owned(),
-            RemapSource {
-                registry: Some("sparse+https://index.crates.io/".to_owned()),
-                replace_with: Some("local-registry".to_owned()),
-                ..RemapSource::default()
-            },
-        );
-        remap.sources.insert(
-            "local-registry".to_owned(),
-            RemapSource {
-                local_registry: Some(vendordir.to_owned()),
-                ..RemapSource::default()
-            },
-        );
-        let config_toml = toml::to_string(&remap).context("failed to serialize config.toml")?;
-        fs::write(paths.cargo_home.join("config.toml"), config_toml)?;
-        assert!(is_vendored(config, paths)?);
-    } else {
-        if fast {
-            log::info!("Running fast vendor (library mode)");
-            let filters = source_filters.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "`--fast` currently only works with `vendor = true` in reindeer.toml"
-                )
-            })?;
-            fast_vendor(config, no_delete, args, paths, filters)?;
-            assert!(is_vendored(config, paths)?);
-        } else {
+        VendorConfig::LocalRegistry => {
             let mut cmdline = vec![
-                "vendor",
-                "--manifest-path",
-                paths.manifest_path.to_str().unwrap(),
+                "local-registry",
+                "-s",
+                paths.lockfile_path.to_str().unwrap(),
                 full_vendor_dir.to_str().unwrap(),
-                "--versioned-dirs",
+                "--git",
             ];
             if no_delete {
                 cmdline.push("--no-delete");
             }
-
-            fs::create_dir_all(&paths.cargo_home)?;
-
             log::info!("Running cargo {:?}", cmdline);
-            let mut cargoconfig =
-                cargo::run_cargo(config, Some(&paths.cargo_home), None, args, &cmdline)?;
-
-            // .cargo/config.toml will contain a section like this, in which we do
-            // not want an absolute path:
-            //
-            //     [source.vendored-sources]
-            //     directory = "vendor"
-            cargoconfig = cargoconfig.replace(
-                &*full_vendor_dir.to_string_lossy(),
-                &vendordir.to_string_lossy(),
+            let _ = cargo::run_cargo(config, Some(&paths.cargo_home), None, args, &cmdline)?;
+            let mut remap = RemapConfig::default();
+            remap.sources.insert(
+                "crates-io".to_owned(),
+                RemapSource {
+                    registry: Some("sparse+https://index.crates.io/".to_owned()),
+                    replace_with: Some("local-registry".to_owned()),
+                    ..RemapSource::default()
+                },
             );
-
-            fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
-            if !cargoconfig.is_empty() {
+            remap.sources.insert(
+                "local-registry".to_owned(),
+                RemapSource {
+                    local_registry: Some(vendordir.to_owned()),
+                    ..RemapSource::default()
+                },
+            );
+            let config_toml = toml::to_string(&remap).context("failed to serialize config.toml")?;
+            fs::write(paths.cargo_home.join("config.toml"), config_toml)?;
+            assert!(is_vendored(config, paths)?);
+        }
+        VendorConfig::Source(source_config) => {
+            let filters = build_filters(config, paths, source_config)?;
+            if fast {
+                log::info!("Running fast vendor (library mode)");
+                fast_vendor(config, no_delete, args, paths, filters)?;
                 assert!(is_vendored(config, paths)?);
-            }
-            if let Some(filters) = source_filters {
+            } else {
+                let mut cmdline = vec![
+                    "vendor",
+                    "--manifest-path",
+                    paths.manifest_path.to_str().unwrap(),
+                    full_vendor_dir.to_str().unwrap(),
+                    "--versioned-dirs",
+                ];
+                if no_delete {
+                    cmdline.push("--no-delete");
+                }
+
+                fs::create_dir_all(&paths.cargo_home)?;
+
+                log::info!("Running cargo {:?}", cmdline);
+                let mut cargoconfig =
+                    cargo::run_cargo(config, Some(&paths.cargo_home), None, args, &cmdline)?;
+
+                // .cargo/config.toml will contain a section like this, in which we do
+                // not want an absolute path:
+                //
+                //     [source.vendored-sources]
+                //     directory = "vendor"
+                cargoconfig = cargoconfig.replace(
+                    &*full_vendor_dir.to_string_lossy(),
+                    &vendordir.to_string_lossy(),
+                );
+
+                fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
+                if !cargoconfig.is_empty() {
+                    assert!(is_vendored(config, paths)?);
+                }
                 postprocess_vendored_directory(&paths.third_party_dir, &filters)?;
             }
         }
@@ -174,24 +174,24 @@ pub(crate) fn is_vendored(config: &Config, paths: &Paths) -> anyhow::Result<bool
     }
 }
 
-fn build_filters(config: &Config, paths: &Paths) -> anyhow::Result<VendorFilters> {
+fn build_filters(
+    config: &Config,
+    paths: &Paths,
+    source_config: &VendorSourceConfig,
+) -> anyhow::Result<VendorFilters> {
     let buck_file_name = if config.buck.split {
         Some((*config.buck.file_name).clone())
     } else {
         None
     };
 
-    let checksum_filter = if let VendorConfig::Source(source_config) = &config.vendor {
-        build_checksum_filter(
-            config.buck.split,
-            &config.buck.file_name,
-            &source_config.checksum_exclude,
-            &source_config.gitignore_checksum_exclude,
-            &paths.third_party_dir,
-        )?
-    } else {
-        None
-    };
+    let checksum_filter = build_checksum_filter(
+        config.buck.split,
+        &config.buck.file_name,
+        &source_config.checksum_exclude,
+        &source_config.gitignore_checksum_exclude,
+        &paths.third_party_dir,
+    )?;
 
     Ok(VendorFilters {
         buck_file_name,
