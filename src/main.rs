@@ -101,8 +101,6 @@ enum SubCommand {
         #[cfg(fbcode_build)]
         #[arg(long)]
         no_fetch: bool,
-        #[arg(long, hide = true)]
-        fast: bool,
     },
     /// Generate Buck build rules for Cargo packages
     Buckify {
@@ -217,7 +215,6 @@ fn try_main() -> anyhow::Result<()> {
             audit_sec,
             #[cfg(fbcode_build)]
             no_fetch,
-            fast: _,
         } => {
             if matches!(
                 config.vendor,
