@@ -597,12 +597,6 @@ pub(crate) struct VendorFilters {
     pub(crate) checksum_filter: Option<ChecksumFilter>,
 }
 
-#[derive(Debug, Deserialize)]
-struct CargoChecksumJson {
-    #[serde(default)]
-    package: Option<String>,
-}
-
 struct ExpectedCrate {
     dst_name: String,
     dst: PathBuf,
@@ -1016,17 +1010,6 @@ fn bytes_sha256(bytes: &[u8]) -> String {
     format!("{:x}", sha2::Sha256::digest(bytes))
 }
 
-fn read_regular_file_to_string(path: &Path) -> Option<String> {
-    let Ok(file_type) = path_file_type_no_follow(path) else {
-        return None;
-    };
-    let file_type = file_type?;
-    if !file_type.is_file() {
-        return None;
-    }
-    fs::read_to_string(path).ok()
-}
-
 fn remove_existing_path(path: &Path) -> anyhow::Result<()> {
     let Some(file_type) = path_file_type_no_follow(path)? else {
         return Ok(());
@@ -1091,18 +1074,6 @@ fn remove_expected_vendor_entries_from_cleanup(
     if buck_file_name.is_some() {
         to_remove.remove(&vendor_dir.join(package_name));
     }
-}
-
-pub(crate) fn read_existing_package_checksum(crate_dir: &Path) -> anyhow::Result<Option<String>> {
-    Ok(read_existing_checksum_json(crate_dir)?.package)
-}
-
-fn read_existing_checksum_json(crate_dir: &Path) -> anyhow::Result<CargoChecksumJson> {
-    let cksum_path = crate_dir.join(".cargo-checksum.json");
-    let content = read_regular_file_to_string(&cksum_path)
-        .with_context(|| format!("missing or non-regular {}", cksum_path.display()))?;
-    serde_json::from_str(&content)
-        .with_context(|| format!("failed to parse {}", cksum_path.display()))
 }
 
 fn find_cached_registry_archive(
@@ -1945,39 +1916,6 @@ pub(crate) fn postprocess_vendored_crate_dir(
     let file_cksums =
         compute_dir_checksums_filtered(crate_dir, pkgdir, filters.checksum_filter.as_ref())?;
     write_checksum_json(crate_dir, pkg_cksum, &file_cksums)
-}
-
-pub(crate) fn postprocess_vendored_directory(
-    third_party_dir: &Path,
-    filters: &VendorFilters,
-) -> anyhow::Result<()> {
-    let vendor_dir = third_party_dir.join("vendor");
-    if !vendor_dir.try_exists()? {
-        return Ok(());
-    }
-
-    for entry in fs::read_dir(&vendor_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-
-        let crate_dir = entry.path();
-        let pkgdir = crate_dir.strip_prefix(third_party_dir).with_context(|| {
-            format!(
-                "vendored crate {} is not under {}",
-                crate_dir.display(),
-                third_party_dir.display(),
-            )
-        })?;
-        let package_checksum = read_existing_package_checksum(&crate_dir)
-            .with_context(|| format!("failed to read {}", crate_dir.display()))?;
-
-        postprocess_vendored_crate_dir(&crate_dir, pkgdir, filters, package_checksum.as_deref())
-            .with_context(|| format!("failed to post-process {}", crate_dir.display()))?;
-    }
-
-    Ok(())
 }
 
 /// Write `.cargo-checksum.json` into a vendored crate directory.
@@ -2894,7 +2832,6 @@ mod test {
     use super::make_staging_destination;
     use super::parse_source;
     use super::postprocess_vendored_crate_dir;
-    use super::read_existing_package_checksum;
     use super::remove_expected_vendor_entries_from_cleanup;
     use super::synthesize_missing_build_rs;
     use super::tree_fingerprint;
@@ -3285,77 +3222,6 @@ build = "build.rs"
         assert!(
             cksums.contains_key("build.rs"),
             "synthesized build.rs must be included in .cargo-checksum.json"
-        );
-    }
-
-    #[test]
-    fn test_postprocess_vendored_crate_dir_preserves_package_checksum() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let crate_dir = dir.path().join("biscuit-1.0.0");
-        fs::create_dir_all(&crate_dir).unwrap();
-        fs::write(
-            crate_dir.join("Cargo.toml"),
-            r#"[package]
-name = "biscuit"
-version = "1.0.0"
-build = "build.rs"
-"#,
-        )
-        .unwrap();
-        fs::write(crate_dir.join("lib.rs"), "pub fn biscuit() {}\n").unwrap();
-        fs::write(crate_dir.join("ignore.h"), "// filtered header\n").unwrap();
-        fs::write(crate_dir.join("BUCK"), "rust_library(name=\"biscuit\")\n").unwrap();
-        fs::write(
-            crate_dir.join(".cargo-checksum.json"),
-            r#"{"package":"sha256abc","files":{"Cargo.toml":"old","lib.rs":"old","ignore.h":"old","BUCK":"old"}}"#,
-        )
-        .unwrap();
-
-        let filters = VendorFilters {
-            buck_file_name: Some("BUCK".to_owned()),
-            checksum_filter: Some(glob_filter("*.h")),
-        };
-        let package_checksum = read_existing_package_checksum(&crate_dir).unwrap();
-        let pkgdir = Path::new("vendor/biscuit-1.0.0");
-
-        postprocess_vendored_crate_dir(&crate_dir, pkgdir, &filters, package_checksum.as_deref())
-            .unwrap();
-
-        assert!(
-            !crate_dir.join("BUCK").exists(),
-            "split BUCK should be removed before checksums are recomputed"
-        );
-        assert!(
-            crate_dir.join("build.rs").exists(),
-            "post-process should synthesize missing build.rs"
-        );
-
-        let checksum: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(crate_dir.join(".cargo-checksum.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            checksum.get("package").and_then(|value| value.as_str()),
-            Some("sha256abc"),
-            "post-process should preserve the existing package checksum"
-        );
-        let files = checksum
-            .get("files")
-            .and_then(|value| value.as_object())
-            .unwrap();
-        assert!(
-            files.contains_key("Cargo.toml") && files.contains_key("lib.rs"),
-            "kept files should remain in the checksum map"
-        );
-        assert!(
-            files.contains_key("build.rs"),
-            "synthesized build.rs should be added to the checksum map"
-        );
-        assert!(
-            !files.contains_key("BUCK")
-                && !files.contains_key("ignore.h")
-                && !files.contains_key(".cargo-checksum.json"),
-            "split BUCK, filtered files, and the old checksum file should all be absent from the rewritten checksum map"
         );
     }
 

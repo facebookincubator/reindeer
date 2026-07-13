@@ -22,7 +22,6 @@ use crate::cargo;
 use crate::cargo::ChecksumFilter;
 use crate::cargo::VendorFilters;
 use crate::cargo::fast_vendor;
-use crate::cargo::postprocess_vendored_directory;
 use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::config::VendorSourceConfig;
@@ -36,7 +35,6 @@ pub(crate) fn cargo_vendor(
     #[cfg(fbcode_build)] no_fetch: bool,
     args: &Args,
     paths: &Paths,
-    fast: bool,
 ) -> anyhow::Result<()> {
     let vendordir = Path::new("vendor"); // relative to third_party_dir
     let full_vendor_dir = paths.third_party_dir.join("vendor");
@@ -81,45 +79,10 @@ pub(crate) fn cargo_vendor(
             assert!(is_vendored(config, paths)?);
         }
         VendorConfig::Source(source_config) => {
+            log::info!("Running fast vendor (library mode)");
             let filters = build_filters(config, paths, source_config)?;
-            if fast {
-                log::info!("Running fast vendor (library mode)");
-                fast_vendor(config, no_delete, args, paths, filters)?;
-                assert!(is_vendored(config, paths)?);
-            } else {
-                let mut cmdline = vec![
-                    "vendor",
-                    "--manifest-path",
-                    paths.manifest_path.to_str().unwrap(),
-                    full_vendor_dir.to_str().unwrap(),
-                    "--versioned-dirs",
-                ];
-                if no_delete {
-                    cmdline.push("--no-delete");
-                }
-
-                fs::create_dir_all(&paths.cargo_home)?;
-
-                log::info!("Running cargo {:?}", cmdline);
-                let mut cargoconfig =
-                    cargo::run_cargo(config, Some(&paths.cargo_home), None, args, &cmdline)?;
-
-                // .cargo/config.toml will contain a section like this, in which we do
-                // not want an absolute path:
-                //
-                //     [source.vendored-sources]
-                //     directory = "vendor"
-                cargoconfig = cargoconfig.replace(
-                    &*full_vendor_dir.to_string_lossy(),
-                    &vendordir.to_string_lossy(),
-                );
-
-                fs::write(paths.cargo_home.join("config.toml"), &cargoconfig)?;
-                if !cargoconfig.is_empty() {
-                    assert!(is_vendored(config, paths)?);
-                }
-                postprocess_vendored_directory(&paths.third_party_dir, &filters)?;
-            }
+            fast_vendor(config, no_delete, args, paths, filters)?;
+            assert!(is_vendored(config, paths)?);
         }
     }
 
@@ -316,93 +279,7 @@ pub(crate) fn cleanup_extern_crates(config: &Config, paths: &Paths) -> anyhow::R
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-    use std::path::PathBuf;
-
-    use clap::Parser;
-
     use super::*;
-    fn test_paths_for_dir(third_party_dir: PathBuf) -> crate::Paths {
-        let manifest_path = third_party_dir.join("Cargo.toml");
-        let cargo_home = third_party_dir.join(".cargo");
-        crate::Paths {
-            buck_package: "test.third_party".to_owned(),
-            third_party_dir,
-            lockfile_path: manifest_path.with_file_name("Cargo.lock"),
-            manifest_path,
-            cargo_home,
-        }
-    }
-
-    fn fake_cargo_path(root: &Path) -> PathBuf {
-        root.join(if cfg!(windows) {
-            "fake-cargo.cmd"
-        } else {
-            "fake-cargo.sh"
-        })
-    }
-
-    fn write_fake_cargo_vendor_program(fake_cargo: &Path) {
-        #[cfg(windows)]
-        fs::write(
-            fake_cargo,
-            r#"@echo off
-if not "%~1"=="vendor" (
-  echo unexpected args: %* 1>&2
-  exit /b 1
-)
-set "vendor_dir=%~4"
-mkdir "%vendor_dir%\biscuit-1.0.0"
-(
-echo [package]
-echo name = "biscuit"
-echo version = "1.0.0"
-echo build = "build.rs"
-) > "%vendor_dir%\biscuit-1.0.0\Cargo.toml"
-> "%vendor_dir%\biscuit-1.0.0\lib.rs" echo pub fn biscuit() {}
-> "%vendor_dir%\biscuit-1.0.0\ignore.h" echo // filtered header
-> "%vendor_dir%\biscuit-1.0.0\BUCK" echo rust_library(name="biscuit")
-> "%vendor_dir%\biscuit-1.0.0\.cargo-checksum.json" echo {"package":"sha256abc","files":{"Cargo.toml":"old","lib.rs":"old","ignore.h":"old","BUCK":"old"}}
-echo [source.vendored-sources]
-echo directory = "%vendor_dir%"
-"#,
-        )
-        .unwrap();
-
-        #[cfg(unix)]
-        {
-            fs::write(
-                fake_cargo,
-                r#"#!/bin/bash
-set -euo pipefail
-if [[ "$1" != "vendor" ]]; then
-  echo "unexpected args: $@" >&2
-  exit 1
-fi
-vendor_dir="$4"
-mkdir -p "$vendor_dir/biscuit-1.0.0"
-cat > "$vendor_dir/biscuit-1.0.0/Cargo.toml" <<'EOF'
-[package]
-name = "biscuit"
-version = "1.0.0"
-build = "build.rs"
-EOF
-printf 'pub fn biscuit() {}\n' > "$vendor_dir/biscuit-1.0.0/lib.rs"
-printf '// filtered header\n' > "$vendor_dir/biscuit-1.0.0/ignore.h"
-printf 'rust_library(name="biscuit")\n' > "$vendor_dir/biscuit-1.0.0/BUCK"
-printf '{"package":"sha256abc","files":{"Cargo.toml":"old","lib.rs":"old","ignore.h":"old","BUCK":"old"}}' > "$vendor_dir/biscuit-1.0.0/.cargo-checksum.json"
-printf '[source.vendored-sources]\ndirectory = "%s"\n' "$vendor_dir"
-"#,
-            )
-            .unwrap();
-
-            use std::os::unix::fs::PermissionsExt;
-
-            let mut perms = fs::metadata(fake_cargo).unwrap().permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(fake_cargo, perms).unwrap();
-        }
-    }
 
     #[test]
     fn test_extract_crate_name() {
@@ -509,157 +386,6 @@ printf '[source.vendored-sources]\ndirectory = "%s"\n' "$vendor_dir"
         assert!(
             format!("{err:#}").contains("Invalid buck.file_name glob `[`"),
             "error should point at invalid buck.file_name glob: {err:#}"
-        );
-    }
-
-    #[test]
-    fn test_postprocess_vendored_directory_preserves_package_checksum() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let third_party_dir = dir.path();
-        let vendor_dir = third_party_dir.join("vendor");
-        let crate_dir = vendor_dir.join("biscuit-1.0.0");
-        fs::create_dir_all(&crate_dir).unwrap();
-        fs::write(
-            crate_dir.join("Cargo.toml"),
-            r#"[package]
-name = "biscuit"
-version = "1.0.0"
-build = "build.rs"
-"#,
-        )
-        .unwrap();
-        fs::write(crate_dir.join("lib.rs"), "pub fn biscuit() {}\n").unwrap();
-        fs::write(crate_dir.join("ignore.h"), "// filtered header\n").unwrap();
-        fs::write(crate_dir.join("BUCK"), "rust_library(name=\"biscuit\")\n").unwrap();
-        fs::write(
-            crate_dir.join(".cargo-checksum.json"),
-            r#"{"package":"sha256abc","files":{"Cargo.toml":"old","lib.rs":"old","ignore.h":"old","BUCK":"old"}}"#,
-        )
-        .unwrap();
-
-        let filters = VendorFilters {
-            buck_file_name: Some("BUCK".to_owned()),
-            checksum_filter: Some(
-                build_checksum_filter(true, "BUCK", &["*.h".to_owned()], &[], third_party_dir)
-                    .unwrap()
-                    .unwrap(),
-            ),
-        };
-
-        postprocess_vendored_directory(third_party_dir, &filters).unwrap();
-
-        assert!(
-            !crate_dir.join("BUCK").exists(),
-            "split BUCK should be removed by the slow-path post-process"
-        );
-        assert!(
-            crate_dir.join("build.rs").exists(),
-            "missing build.rs should be synthesized during slow-path post-process"
-        );
-
-        let checksum: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(crate_dir.join(".cargo-checksum.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            checksum.get("package").and_then(|value| value.as_str()),
-            Some("sha256abc"),
-            "slow-path post-process must preserve cargo vendor's package checksum"
-        );
-        let files = checksum
-            .get("files")
-            .and_then(|value| value.as_object())
-            .unwrap();
-        assert!(
-            files.contains_key("Cargo.toml") && files.contains_key("lib.rs"),
-            "kept files should remain in the checksum map"
-        );
-        assert!(
-            files.contains_key("build.rs"),
-            "synthesized build.rs should be added to the checksum map"
-        );
-        assert!(
-            !files.contains_key("BUCK") && !files.contains_key("ignore.h"),
-            "split BUCK and checksum-filtered files should be omitted from the checksum map"
-        );
-    }
-
-    #[test]
-    fn test_cargo_vendor_slow_source_path_runs_postprocess_fixups() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let third_party_dir = dir.path().join("third-party");
-        fs::create_dir_all(&third_party_dir).unwrap();
-        fs::write(
-            third_party_dir.join("Cargo.toml"),
-            r#"[package]
-name = "workspace"
-version = "0.1.0"
-"#,
-        )
-        .unwrap();
-
-        let fake_cargo = fake_cargo_path(dir.path());
-        write_fake_cargo_vendor_program(&fake_cargo);
-
-        let mut config: Config = toml::from_str(
-            r#"
-[vendor]
-checksum_exclude = ["*.h"]
-
-[buck]
-split = true
-"#,
-        )
-        .unwrap();
-        config.config_dir = third_party_dir.clone();
-
-        let args = Args::parse_from([
-            "reindeer",
-            "--cargo-path",
-            fake_cargo.to_str().unwrap(),
-            "vendor",
-        ]);
-        let paths = test_paths_for_dir(third_party_dir.clone());
-
-        cargo_vendor(
-            &config,
-            false,
-            #[cfg(fbcode_build)]
-            false,
-            #[cfg(fbcode_build)]
-            false,
-            &args,
-            &paths,
-            false,
-        )
-        .unwrap();
-
-        let crate_dir = third_party_dir.join("vendor/biscuit-1.0.0");
-        assert!(
-            !crate_dir.join("BUCK").exists(),
-            "slow source vendor branch should remove split BUCK files"
-        );
-        assert!(
-            crate_dir.join("build.rs").exists(),
-            "slow source vendor branch should synthesize missing build.rs"
-        );
-
-        let checksum: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(crate_dir.join(".cargo-checksum.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            checksum.get("package").and_then(|value| value.as_str()),
-            Some("sha256abc"),
-            "slow source vendor branch should preserve cargo vendor's package checksum"
-        );
-        let files = checksum
-            .get("files")
-            .and_then(|value| value.as_object())
-            .unwrap();
-        assert!(
-            !files.contains_key("BUCK") && !files.contains_key("ignore.h"),
-            "restored slow-path fixups should rewrite filtered checksum entries"
         );
     }
 }

@@ -101,9 +101,7 @@ enum SubCommand {
         #[cfg(fbcode_build)]
         #[arg(long)]
         no_fetch: bool,
-        /// (Unsupported.) Bypass `cargo vendor` by using cargo-as-a-library to
-        /// resolve, download, and extract crates.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         fast: bool,
     },
     /// Generate Buck build rules for Cargo packages
@@ -219,7 +217,7 @@ fn try_main() -> anyhow::Result<()> {
             audit_sec,
             #[cfg(fbcode_build)]
             no_fetch,
-            fast,
+            fast: _,
         } => {
             if matches!(
                 config.vendor,
@@ -239,7 +237,6 @@ fn try_main() -> anyhow::Result<()> {
                 *no_fetch,
                 &args,
                 &paths,
-                *fast,
             )?;
         }
 
