@@ -221,6 +221,15 @@ fn try_main() -> anyhow::Result<()> {
             no_fetch,
             fast,
         } => {
+            if matches!(
+                config.vendor,
+                VendorConfig::Source(VendorSourceConfig {
+                    explicit: Some(false),
+                    ..
+                })
+            ) {
+                log::warn!("reindeer.toml specifies `vendor = false`, but vendoring anyway");
+            }
             vendor::cargo_vendor(
                 &config,
                 *no_delete,
@@ -247,7 +256,10 @@ fn try_main() -> anyhow::Result<()> {
                 if matches!(
                     config.vendor,
                     VendorConfig::LocalRegistry
-                        | VendorConfig::Source(VendorSourceConfig { explicit: true, .. })
+                        | VendorConfig::Source(VendorSourceConfig {
+                            explicit: Some(true),
+                            ..
+                        })
                 ) {
                     log::warn!(
                         "reindeer.toml specifies vendor configuration but `reindeer vendor` was not run. Generating non-vendored targets."

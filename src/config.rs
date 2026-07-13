@@ -220,11 +220,18 @@ pub enum VendorConfig {
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VendorSourceConfig {
-    /// Whether reindeer.toml specifies an explicit `[vendor]` section or
-    /// `vendor = true`. False if there is no reindeer.toml or it does not
-    /// contain a setting for vendoring either way.
+    /// - `Some(true)` if reindeer.toml specifies an explicit `[vendor]` section
+    ///   or `vendor = true`. User will get a warning if they run `reindeer
+    ///   buckify` without `reindeer vendor`.
+    ///
+    /// - `Some(false)` if reindeer.toml specifies `vendor = false`. User will
+    ///   get a warning if they run `reindeer vendor` (but it will still
+    ///   vendor).
+    ///
+    /// - `None` if there is no reindeer.toml or it does not contain a setting
+    ///   for vendoring either way.
     #[serde(skip)]
-    pub explicit: bool,
+    pub explicit: Option<bool>,
     /// List of .gitignore files to use to filter checksum files, relative to
     /// this config file.
     #[serde(default)]
@@ -355,16 +362,25 @@ where
         where
             E: serde::de::Error,
         {
-            // `vendor = true`: default configuration with vendoring.
-            // `vendor = false`: do not vendor.
-            Ok(if value {
-                VendorConfig::Source(VendorSourceConfig {
-                    explicit: true,
-                    ..VendorSourceConfig::default()
-                })
-            } else {
-                VendorConfig::Off
-            })
+            // Regardless of whether the configuration has `vendor = false` or
+            // `vendor = true` the behavior is the same:
+            //
+            //   - If the user runs `reindeer vendor` then vendor things.
+            //
+            //   - If the user runs `reindeer buckify` after having run
+            //     `reindeer vendor`, generate Buck targets referring to the
+            //     vendored code.
+            //
+            //   - If the user runs `reindeer buckify` without having run
+            //     `reindeer vendor`, generate Buck targets referring to
+            //     crate files downloaded at build time.
+            //
+            // The `explicit` field only determines whether they get a warning
+            // about what they are doing.
+            Ok(VendorConfig::Source(VendorSourceConfig {
+                explicit: Some(value),
+                ..VendorSourceConfig::default()
+            }))
         }
 
         fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
@@ -384,7 +400,7 @@ where
         {
             let source_config = VendorSourceConfig::deserialize(MapAccessDeserializer::new(map))?;
             Ok(VendorConfig::Source(VendorSourceConfig {
-                explicit: true,
+                explicit: Some(true),
                 ..source_config
             }))
         }

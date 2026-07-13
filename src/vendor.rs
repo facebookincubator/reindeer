@@ -168,8 +168,7 @@ pub(crate) fn is_vendored(config: &Config, paths: &Paths) -> anyhow::Result<bool
     match remap_config.sources.get(source_name) {
         Some(source) => match config.vendor {
             VendorConfig::LocalRegistry => Ok(source.local_registry.is_some()),
-            VendorConfig::Source(_) => Ok(source.directory.is_some()),
-            VendorConfig::Off => Ok(false),
+            VendorConfig::Source(_) | VendorConfig::Off => Ok(source.directory.is_some()),
         },
         None => Ok(false),
     }
@@ -510,38 +509,6 @@ printf '[source.vendored-sources]\ndirectory = "%s"\n' "$vendor_dir"
         assert!(
             format!("{err:#}").contains("Invalid buck.file_name glob `[`"),
             "error should point at invalid buck.file_name glob: {err:#}"
-        );
-    }
-
-    #[test]
-    fn test_cargo_vendor_fast_errors_without_source_vendor() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let third_party_dir = dir.path().join("third-party");
-        fs::create_dir_all(&third_party_dir).unwrap();
-
-        let mut config: Config = toml::from_str("vendor = false").unwrap();
-        config.config_dir = third_party_dir.clone();
-
-        let args = Args::parse_from(["reindeer", "vendor", "--fast"]);
-        let paths = test_paths_for_dir(third_party_dir);
-
-        let err = cargo_vendor(
-            &config,
-            false,
-            #[cfg(fbcode_build)]
-            false,
-            #[cfg(fbcode_build)]
-            false,
-            &args,
-            &paths,
-            true,
-        )
-        .expect_err("expected fast-vendor error");
-
-        assert!(
-            format!("{err:#}")
-                .contains("`--fast` currently only works with `vendor = true` in reindeer.toml"),
-            "error should explain that fast vendoring only supports source vendoring: {err:#}"
         );
     }
 
