@@ -691,10 +691,10 @@ pub(crate) fn fast_vendor(
     let mut sources: BTreeSet<SourceId> = BTreeSet::new();
     let mut prepared_crates = 0usize;
 
-    eprintln!(
-        "Preparing expected contents for {} vendored crates...",
-        original_package_ids.len(),
-    );
+    if let n @ 1.. = original_package_ids.len() {
+        eprintln!("Preparing expected contents for {n} vendored crates...");
+    }
+
     for pkg_id in resolve.iter() {
         // Skip path dependencies -- they're already in the source tree.
         // Any preexisting vendor/<name>-<version> directory for this crate
