@@ -21,7 +21,7 @@ erased-serde = "0.4.10"
 flate2 = { version = "1.0.33", features = ["rust_backend"], default-features = false }
 fnv = "1.0"
 foldhash = "0.2.0"
-globset = { version = "0.4.13", features = ["serde1"] }
+globset = { version = "0.4.19", features = ["serde1"] }
 ignore = "0.4.28"
 indoc = "2.0.2"
 itertools = "0.15.0"
