@@ -1247,6 +1247,11 @@ impl Serialize for PrebuiltCxxLibrary {
 #[derive(Debug)]
 pub enum Rule {
     Alias(Alias),
+    /// A per-crate alias forwarding to a shared top-level `git_fetch` rule. In
+    /// non-vendored split mode one git repo can source several crates, so the
+    /// `git_fetch` stays at top level and each consuming crate's package gets a
+    /// local alias so its `:{short}.git` references resolve.
+    GitFetchAlias(Alias),
     Sources(Sources),
     Filegroup(Filegroup),
     ExtractArchive(ExtractArchive),
@@ -1294,6 +1299,9 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
         // Make the alias rule come before the actual rule. Note that aliases
         // emitted by reindeer are always to a target within the same package.
         Rule::Alias(Alias {
+            owner, sort_key, ..
+        })
+        | Rule::GitFetchAlias(Alias {
             owner, sort_key, ..
         }) => RuleSortKey::Owned(owner, 0, sort_key),
         Rule::ExtractArchive(ExtractArchive {
@@ -1357,7 +1365,7 @@ impl Rule {
     pub fn render(&self, config: &BuckConfig, out: &mut impl Write) -> anyhow::Result<()> {
         use serde_starlark::Serializer;
         let serialized = match self {
-            Rule::Alias(alias) => {
+            Rule::Alias(alias) | Rule::GitFetchAlias(alias) => {
                 let function = match alias.platforms {
                     None => &config.alias,
                     Some(_) => &config.alias_with_platforms,

@@ -45,7 +45,9 @@ use crate::buck::StringOrPath;
 use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
 use crate::buckify::evaluate_for_platforms;
+use crate::buckify::relabel_fixups_mapped_srcs;
 use crate::buckify::short_name_for_git_repo;
+use crate::buckify::sources_are_local;
 use crate::buckify::split_srcs;
 use crate::buckify::vendor_crate_visibility;
 use crate::cargo::Manifest;
@@ -237,9 +239,7 @@ impl<'meta> Fixups<'meta> {
         &self,
         relative_to_manifest_dir: &Path,
     ) -> anyhow::Result<SubtargetOrPath> {
-        if matches!(self.config.vendor, VendorConfig::Source(_))
-            || matches!(self.package.source, Source::Local)
-        {
+        if sources_are_local(self.config, self.package) {
             // Path to vendored file looks like "vendor/foo-1.0.0/src/lib.rs"
             let manifest_dir = relative_path(self.third_party_dir, self.manifest_dir);
             let path = manifest_dir.join(relative_to_manifest_dir);
@@ -533,13 +533,34 @@ impl<'meta> Fixups<'meta> {
         ) in cxx_libraries
         {
             let cxx_library_target = if self.config.buck.split {
+                // In non-vendored mode this rule lands in the shared
+                // `vendor/{name}/BUCK`, so its name must be version-prefixed to
+                // avoid colliding with another version of the same crate, and
+                // sources must be archive subtargets rather than on-disk paths.
+                let non_local = !sources_are_local(self.config, self.package);
+                let target_name = if non_local {
+                    Name(format!(
+                        "{}-{}",
+                        collision_info.target_version(self.package),
+                        name,
+                    ))
+                } else {
+                    Name(name.clone())
+                };
+                let src_of = |path: PathBuf| -> anyhow::Result<SubtargetOrPath> {
+                    if non_local {
+                        self.subtarget_or_path(&path)
+                    } else {
+                        Ok(SubtargetOrPath::Path(BuckPath(path)))
+                    }
+                };
                 res.push(Rule::CxxLibrary(CxxLibrary {
                     owner: PackageVersion {
                         name: self.package.name.clone(),
                         version: self.package.version.clone(),
                     },
                     common: Common {
-                        name: Name(name.clone()),
+                        name: target_name.clone(),
                         visibility: Visibility::Custom(vec![
                             format!("//{}:", self.paths.buck_package),
                             format!(
@@ -563,41 +584,36 @@ impl<'meta> Fixups<'meta> {
                     srcs: Globs::new(srcs, exclude)
                         .walk(self.manifest_dir)?
                         .into_iter()
-                        .map(|path| SubtargetOrPath::Path(BuckPath(path)))
-                        .collect(),
+                        .map(&src_of)
+                        .collect::<anyhow::Result<_>>()?,
                     headers: Globs::new(headers, exclude)
                         .walk(self.manifest_dir)?
                         .into_iter()
-                        .map(|path| SubtargetOrPath::Path(BuckPath(path)))
-                        .collect(),
+                        .map(&src_of)
+                        .collect::<anyhow::Result<_>>()?,
                     exported_headers: match exported_headers {
                         ExportedHeaders::Set(exported_headers) => {
                             let exported_header_globs = Globs::new(exported_headers, exclude);
                             let exported_headers = exported_header_globs
                                 .walk(self.manifest_dir)?
                                 .into_iter()
-                                .map(|path| SubtargetOrPath::Path(BuckPath(path)))
-                                .collect();
+                                .map(&src_of)
+                                .collect::<anyhow::Result<_>>()?;
                             SetOrMap::Set(exported_headers)
                         }
                         ExportedHeaders::Map(exported_headers) => SetOrMap::Map(
                             exported_headers
                                 .iter()
                                 .map(|(name, path)| {
-                                    (
-                                        name.clone(),
-                                        SubtargetOrPath::Path(BuckPath(PathBuf::from(
-                                            path.clone(),
-                                        ))),
-                                    )
+                                    Ok((name.clone(), src_of(PathBuf::from(path.clone()))?))
                                 })
-                                .collect(),
+                                .collect::<anyhow::Result<_>>()?,
                         ),
                     },
                     include_directories: fixup_include_paths
                         .iter()
                         .map(|path| {
-                            SubtargetOrPath::Path(BuckPath(PathBuf::from(format!(
+                            Ok(SubtargetOrPath::Path(BuckPath(PathBuf::from(format!(
                                 "//{}{}fixups/{}/{}:include",
                                 self.paths.buck_package,
                                 if self.paths.buck_package.is_empty() {
@@ -607,14 +623,10 @@ impl<'meta> Fixups<'meta> {
                                 },
                                 self.package.name,
                                 path.to_str().unwrap(),
-                            ))))
+                            )))))
                         })
-                        .chain(
-                            include_paths
-                                .iter()
-                                .map(|path| SubtargetOrPath::Path(BuckPath(path.clone()))),
-                        )
-                        .collect(),
+                        .chain(include_paths.iter().map(|path| src_of(path.clone())))
+                        .collect::<anyhow::Result<_>>()?,
                     compiler_flags: compiler_flags.clone(),
                     preprocessor_flags: preprocessor_flags.clone(),
                     header_namespace: header_namespace.clone(),
@@ -627,6 +639,9 @@ impl<'meta> Fixups<'meta> {
                         .platform_compatibility_on_all_targets
                         .then(|| cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
                 }));
+                // Vendored: the rule lives in `vendor/{name}-{version}` (Manifest
+                // Display), so refer to it there. Non-vendored: it shares
+                // `vendor/{name}` and carries the version-prefixed name.
                 RuleRef::new(format!(
                     "//{}{}vendor/{}:{}",
                     self.paths.buck_package,
@@ -635,8 +650,12 @@ impl<'meta> Fixups<'meta> {
                     } else {
                         "/"
                     },
-                    self.package,
-                    name,
+                    if non_local {
+                        self.package.name.clone()
+                    } else {
+                        self.package.to_string()
+                    },
+                    target_name,
                 ))
             } else {
                 let disp = collision_info.target_display(self.package);
@@ -769,7 +788,25 @@ impl<'meta> Fixups<'meta> {
             for static_lib in static_lib_globs.walk(self.manifest_dir)? {
                 let static_lib_file_name = static_lib.file_name().unwrap().to_string_lossy();
                 let prebuilt_cxx_library_target = if self.config.buck.split {
-                    let target_name = Name(format!("{}-{}", name, static_lib_file_name));
+                    // See the cxx_library split branch: in non-vendored mode the
+                    // rule shares `vendor/{name}/BUCK`, so its name is
+                    // version-prefixed and its static_lib is an archive subtarget.
+                    let non_local = !sources_are_local(self.config, self.package);
+                    let target_name = if non_local {
+                        Name(format!(
+                            "{}-{}-{}",
+                            collision_info.target_version(self.package),
+                            name,
+                            static_lib_file_name,
+                        ))
+                    } else {
+                        Name(format!("{}-{}", name, static_lib_file_name))
+                    };
+                    let static_lib = if non_local {
+                        self.subtarget_or_path(&static_lib)?
+                    } else {
+                        SubtargetOrPath::Path(BuckPath(static_lib.to_owned()))
+                    };
                     res.push(Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
                         owner: PackageVersion {
                             name: self.package.name.clone(),
@@ -797,7 +834,7 @@ impl<'meta> Fixups<'meta> {
                                 selects: vec![],
                             },
                         },
-                        static_lib: SubtargetOrPath::Path(BuckPath(static_lib.to_owned())),
+                        static_lib,
                         preferred_linkage: preferred_linkage.clone(),
                         platforms: self.config.buck.platform_compatibility_on_all_targets.then(
                             || {
@@ -816,7 +853,11 @@ impl<'meta> Fixups<'meta> {
                         } else {
                             "/"
                         },
-                        self.package,
+                        if non_local {
+                            self.package.name.clone()
+                        } else {
+                            self.package.to_string()
+                        },
                         target_name,
                     ))
                 } else {
@@ -905,7 +946,11 @@ impl<'meta> Fixups<'meta> {
 
             let manifest_dir = match manifest_dir {
                 None => {
-                    if config.buck.split {
+                    // Only vendored sources need a filegroup over the on-disk
+                    // source dir. In non-vendored mode the manifest dir is the
+                    // extracted archive, referenced via CARGO_MANIFEST_DIR, so
+                    // the genrule needs no manifest_dir target.
+                    if config.buck.split && matches!(config.vendor, VendorConfig::Source(_)) {
                         let manifest_dir_name = Name(format!(
                             "{}-{}.crate",
                             self.package.name, self.package.version,
@@ -1083,20 +1128,27 @@ impl<'meta> Fixups<'meta> {
             )?;
 
             if config.buck.split {
-                let srcs_name = Name("build-script".to_owned());
-                let (base, platform) = split_srcs(
-                    self.paths,
-                    &mut buildscript_build.common,
-                    &buildscript_build.owner,
-                    &srcs_name,
-                );
-                res.push(Rule::Sources(Sources {
-                    owner: buildscript_build.owner.clone(),
-                    name: srcs_name,
-                    base,
-                    platform,
-                    visibility: vendor_crate_visibility(self.paths, &buildscript_build.owner.name),
-                }));
+                if sources_are_local(config, self.package) {
+                    let srcs_name = Name("build-script".to_owned());
+                    let (base, platform) = split_srcs(
+                        self.paths,
+                        &mut buildscript_build.common,
+                        &buildscript_build.owner,
+                        &srcs_name,
+                    );
+                    res.push(Rule::Sources(Sources {
+                        owner: buildscript_build.owner.clone(),
+                        name: srcs_name,
+                        base,
+                        platform,
+                        visibility: vendor_crate_visibility(
+                            self.paths,
+                            &buildscript_build.owner.name,
+                        ),
+                    }));
+                } else {
+                    relabel_fixups_mapped_srcs(self.paths, &mut buildscript_build.common);
+                }
             }
 
             // Emit the build script itself
@@ -1227,6 +1279,22 @@ impl<'meta> Fixups<'meta> {
                 ret.insert(
                     (
                         RuleRef::new(if self.config.buck.split {
+                            // Mirror the cxx_library rule's package/name: vendored
+                            // in `vendor/{name}-{version}:{name}`, non-vendored in
+                            // the shared `vendor/{name}:{version}-{name}`.
+                            let (pkg_dir, dep_name) =
+                                if sources_are_local(self.config, self.package) {
+                                    (self.package.to_string(), name.clone())
+                                } else {
+                                    (
+                                        self.package.name.clone(),
+                                        format!(
+                                            "{}-{}",
+                                            collision_info.target_version(self.package),
+                                            name,
+                                        ),
+                                    )
+                                };
                             format!(
                                 "//{}{}vendor/{}:{}",
                                 self.paths.buck_package,
@@ -1235,8 +1303,8 @@ impl<'meta> Fixups<'meta> {
                                 } else {
                                     "/"
                                 },
-                                self.package,
-                                name,
+                                pkg_dir,
+                                dep_name,
                             )
                         } else {
                             let disp = collision_info.target_display(self.package);
@@ -1265,17 +1333,32 @@ impl<'meta> Fixups<'meta> {
                     ret.insert(
                         (
                             RuleRef::new(if self.config.buck.split {
+                                let file = static_lib.file_name().unwrap().to_string_lossy();
+                                // Mirror the prebuilt_cxx_library rule's package/name.
+                                let (pkg_dir, dep_name) =
+                                    if sources_are_local(self.config, self.package) {
+                                        (self.package.to_string(), format!("{}-{}", name, file))
+                                    } else {
+                                        (
+                                            self.package.name.clone(),
+                                            format!(
+                                                "{}-{}-{}",
+                                                collision_info.target_version(self.package),
+                                                name,
+                                                file,
+                                            ),
+                                        )
+                                    };
                                 format!(
-                                    "//{}{}vendor/{}:{}-{}",
+                                    "//{}{}vendor/{}:{}",
                                     self.paths.buck_package,
                                     if self.paths.buck_package.is_empty() {
                                         ""
                                     } else {
                                         "/"
                                     },
-                                    self.package,
-                                    name,
-                                    static_lib.file_name().unwrap().to_string_lossy(),
+                                    pkg_dir,
+                                    dep_name,
                                 )
                             } else {
                                 let disp = collision_info.target_display(self.package);
@@ -1441,9 +1524,7 @@ impl<'meta> Fixups<'meta> {
             CargoEnv::CARGO_BIN_NAME => StringOrPath::String(target.name.clone()),
             CargoEnv::CARGO_CRATE_NAME => StringOrPath::String(target.name.replace('-', "_")),
             CargoEnv::CARGO_MANIFEST_DIR => {
-                if matches!(self.config.vendor, VendorConfig::Source(_))
-                    || matches!(self.package.source, Source::Local)
-                {
+                if sources_are_local(self.config, self.package) {
                     if self.config.buck.split {
                         StringOrPath::String(".".to_owned())
                     } else {
@@ -1529,10 +1610,7 @@ impl<'meta> Fixups<'meta> {
     ) -> anyhow::Result<BTreeSet<PathBuf>> {
         // This function is only used in vendoring mode, so it's guaranteed that
         // manifest_dir is a subdirectory of third_party_dir.
-        assert!(
-            matches!(self.config.vendor, VendorConfig::Source(_))
-                || matches!(self.package.source, Source::Local)
-        );
+        assert!(sources_are_local(self.config, self.package));
         let manifest_rel = relative_path(self.third_party_dir, self.manifest_dir);
 
         let mut ret = BTreeSet::new();
