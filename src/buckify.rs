@@ -230,10 +230,15 @@ fn generate_rules<'scope, 'env>(
         "start package={pkg} target_req={target_req:?}"
     ));
     if let TargetReq::Sources = target_req {
-        if let Some(nonvendored_sources) =
-            generate_nonvendored_sources_archive(context, pkg).transpose()
-        {
-            let _ = rule_tx.send(nonvendored_sources);
+        match generate_nonvendored_sources_archive(context, pkg) {
+            Ok(rules) => {
+                for rule in rules {
+                    let _ = rule_tx.send(Ok(rule));
+                }
+            }
+            Err(err) => {
+                let _ = rule_tx.send(Err(err));
+            }
         }
         buckify_diagnostic(format_args!(
             "finish package={pkg} target_req={target_req:?} sources-only"
@@ -334,7 +339,7 @@ fn generate_rules<'scope, 'env>(
 fn generate_nonvendored_sources_archive(
     context: &RuleContext,
     pkg: &Manifest,
-) -> anyhow::Result<Option<Rule>> {
+) -> anyhow::Result<Vec<Rule>> {
     let lockfile_package = match context.lockfile.find(pkg) {
         Some(lockfile_package) => lockfile_package,
         None => {
@@ -350,17 +355,19 @@ fn generate_nonvendored_sources_archive(
     };
 
     match &lockfile_package.source {
-        Source::Local => Ok(None),
+        Source::Local => Ok(vec![]),
         Source::CratesIo => match context.config.vendor {
-            VendorConfig::Off => generate_http_archive(context, pkg, lockfile_package).map(Some),
-            VendorConfig::LocalRegistry => Ok(Some(generate_extract_archive(pkg))),
+            VendorConfig::Off => {
+                Ok(vec![generate_http_archive(context, pkg, lockfile_package)?])
+            }
+            VendorConfig::LocalRegistry => Ok(vec![generate_extract_archive(pkg)]),
             VendorConfig::Source(_) => unreachable!(),
         },
         Source::Git {
             repo, commit_hash, ..
         } => match context.config.vendor {
-            VendorConfig::Off => generate_git_fetch(repo, commit_hash).map(Some),
-            VendorConfig::LocalRegistry => Ok(Some(generate_extract_archive(pkg))),
+            VendorConfig::Off => generate_git_fetch(context, pkg, repo, commit_hash),
+            VendorConfig::LocalRegistry => Ok(vec![generate_extract_archive(pkg)]),
             VendorConfig::Source(_) => unreachable!(),
         },
         Source::Unrecognized(_) => {
@@ -428,16 +435,56 @@ fn generate_http_archive(
     }))
 }
 
-fn generate_git_fetch(repo: &str, commit_hash: &str) -> anyhow::Result<Rule> {
+fn generate_git_fetch(
+    context: &RuleContext,
+    pkg: &Manifest,
+    repo: &str,
+    commit_hash: &str,
+) -> anyhow::Result<Vec<Rule>> {
+    let paths = context.paths;
     let short_name = short_name_for_git_repo(repo)?;
+    let git_target = format!("{}.git", short_name);
 
-    Ok(Rule::GitFetch(GitFetch {
-        name: Name(format!("{}.git", short_name)),
-        repo: repo.to_owned(),
-        rev: commit_hash.to_owned(),
-        sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
-        visibility: Visibility::Private,
-    }))
+    // One git repo can source several crates, so the shared git_fetch stays in
+    // the top-level BUCK. In split mode each consuming crate gets a package-local
+    // alias, so its `:{short}.git` / `:{short}.git[path]` references resolve, and
+    // the git_fetch must be visible to those crate packages.
+    if context.config.buck.split {
+        let prefix = if paths.buck_package.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", paths.buck_package)
+        };
+        let mut rules = Vec::with_capacity(2);
+        rules.push(Rule::GitFetch(GitFetch {
+            name: Name(git_target.clone()),
+            repo: repo.to_owned(),
+            rev: commit_hash.to_owned(),
+            sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
+            visibility: Visibility::Custom(vec![format!("//{prefix}vendor/...")]),
+        }));
+        rules.push(Rule::GitFetchAlias(Alias {
+            owner: PackageVersion {
+                name: pkg.name.clone(),
+                version: pkg.version.clone(),
+            },
+            name: Name(git_target.clone()),
+            actual: RuleRef::new(format!("//{}:{git_target}", paths.buck_package)),
+            platforms: None,
+            target_compatible_with: Select::default(),
+            visibility: Visibility::Private,
+            sort_key: Name(git_target),
+        }));
+        Ok(rules)
+    } else {
+        Ok(vec![Rule::GitFetch(GitFetch {
+            name: Name(git_target),
+            repo: repo.to_owned(),
+            rev: commit_hash.to_owned(),
+            sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
+            visibility: Visibility::Private,
+        })])
+    }
 }
 
 /// Create a uniquely hashed directory name for the arbitrary source url
@@ -512,6 +559,13 @@ fn srcfiles(manifest_dir: PathBuf, crate_root: PathBuf) -> Vec<PathBuf> {
     }
 }
 
+/// Whether the crate's sources are files in the repo (vendored sources or a
+/// local path dependency), as opposed to being produced at build time by an
+/// http_archive / extract_archive / git_fetch rule.
+pub(crate) fn sources_are_local(config: &Config, pkg: &Manifest) -> bool {
+    matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local)
+}
+
 /// Visibility scoped to a single crate's own vendor directory.
 ///
 /// In split mode the generated `srcs`/filegroup rules live in
@@ -567,25 +621,8 @@ pub(crate) fn split_srcs(
             let SubtargetOrPath::Path(src) = src else {
                 unimplemented!();
             };
-            let mut components = src.0.components();
-            assert_eq!(
-                components.next(),
-                Some(Component::Normal(OsStr::new("fixups"))),
-            );
-            let rewrite = format!(
-                "//{}{}fixups/{}/{}:{}",
-                paths.buck_package,
-                if paths.buck_package.is_empty() {
-                    ""
-                } else {
-                    "/"
-                },
-                components.next().unwrap().as_os_str().to_str().unwrap(),
-                components.next().unwrap().as_os_str().to_str().unwrap(),
-                components.as_path().to_str().unwrap(),
-            );
             mapped_srcs.insert(
-                SubtargetOrPath::Path(BuckPath(PathBuf::from(rewrite))),
+                SubtargetOrPath::Path(split_fixups_mapped_src_key(paths, &src)),
                 rewrite_src(&mapped),
             );
         }
@@ -601,6 +638,60 @@ pub(crate) fn split_srcs(
     }
 
     (rewrite_platform_sources(&mut common.base), platform_srcs)
+}
+
+/// Turn a mapped-src key that points into the fixups tree into a
+/// package-absolute label, because in split mode `fixups/<crate>/<overlay>/` is
+/// its own buck package. For example
+/// "fixups/cxx/overlay/src/lib.rs" => "//third-party/rust/fixups/cxx/overlay:src/lib.rs".
+fn split_fixups_mapped_src_key(paths: &Paths, src: &BuckPath) -> BuckPath {
+    let mut components = src.0.components();
+    assert_eq!(
+        components.next(),
+        Some(Component::Normal(OsStr::new("fixups"))),
+    );
+    let rewrite = format!(
+        "//{}{}fixups/{}/{}:{}",
+        paths.buck_package,
+        if paths.buck_package.is_empty() {
+            ""
+        } else {
+            "/"
+        },
+        components.next().unwrap().as_os_str().to_str().unwrap(),
+        components.next().unwrap().as_os_str().to_str().unwrap(),
+        components.as_path().to_str().unwrap(),
+    );
+    BuckPath(PathBuf::from(rewrite))
+}
+
+/// Split mode, non-vendored crates: srcs stay archive-target references in the
+/// crate's own package; only mapped_srcs keys that point into the fixups tree
+/// must become package-absolute labels (the overlay BUCK files are written
+/// unconditionally in split mode, so those packages always exist).
+pub(crate) fn relabel_fixups_mapped_srcs(paths: &Paths, common: &mut RustCommon) {
+    for platform in iter::once(&mut common.base).chain(common.platform.values_mut()) {
+        relabel_platform_fixups_mapped_srcs(paths, platform);
+    }
+}
+
+fn relabel_platform_fixups_mapped_srcs(paths: &Paths, platform: &mut PlatformRustCommon) {
+    platform.mapped_srcs = mem::take(&mut platform.mapped_srcs)
+        .into_iter()
+        .map(|(key, value)| {
+            let key = match key {
+                SubtargetOrPath::Path(ref p)
+                    if p.0.components().next()
+                        == Some(Component::Normal(OsStr::new("fixups"))) =>
+                {
+                    SubtargetOrPath::Path(split_fixups_mapped_src_key(paths, p))
+                }
+                // Subtarget into the archive, or user-written label: already correct.
+                other => other,
+            };
+            (key, value)
+        })
+        .collect();
 }
 
 fn buckify_overlay_export_files(config: &Config, paths: &Paths) -> String {
@@ -707,7 +798,7 @@ fn generate_target_rules<'a>(
     let mut manifest_dir_subtarget = None;
     let mapped_manifest_dir;
     let mut crate_root;
-    if matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local) {
+    if sources_are_local(config, pkg) {
         let relative_manifest_dir = match manifest_dir
             .strip_prefix(&paths.third_party_dir)
 			.with_context(|| format!(
@@ -797,7 +888,7 @@ fn generate_target_rules<'a>(
         }
     }
 
-    if matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local) {
+    if sources_are_local(config, pkg) {
         // Get a list of the most obvious sources for the crate. This is either
         // a list of filename, or a list of globs.
         let mut srcs = Vec::new();
@@ -1256,20 +1347,26 @@ fn generate_target_rules<'a>(
             rules.push(Rule::RootPackage(rust_library));
         } else {
             if config.buck.split {
-                let srcs_name = Name("srcs".to_owned());
-                let (base, platform) = split_srcs(
-                    paths,
-                    &mut rust_library.common,
-                    &rust_library.owner,
-                    &srcs_name,
-                );
-                rules.push(Rule::Sources(Sources {
-                    owner: rust_library.owner.clone(),
-                    name: srcs_name,
-                    base,
-                    platform,
-                    visibility: vendor_crate_visibility(paths, &rust_library.owner.name),
-                }));
+                if sources_are_local(config, pkg) {
+                    let srcs_name = Name("srcs".to_owned());
+                    let (base, platform) = split_srcs(
+                        paths,
+                        &mut rust_library.common,
+                        &rust_library.owner,
+                        &srcs_name,
+                    );
+                    rules.push(Rule::Sources(Sources {
+                        owner: rust_library.owner.clone(),
+                        name: srcs_name,
+                        base,
+                        platform,
+                        visibility: vendor_crate_visibility(paths, &rust_library.owner.name),
+                    }));
+                } else {
+                    // No on-disk sources: the srcs stay archive-target
+                    // references, resolved in the crate's own package.
+                    relabel_fixups_mapped_srcs(paths, &mut rust_library.common);
+                }
             }
             rules.push(Rule::Library(rust_library));
         }
@@ -1368,20 +1465,24 @@ fn generate_target_rules<'a>(
         };
 
         if config.buck.split {
-            let srcs_name = Name(format!("bin-{}", tgt.name));
-            let (base, platform) = split_srcs(
-                paths,
-                &mut rust_binary.common,
-                &rust_binary.owner,
-                &srcs_name,
-            );
-            rules.push(Rule::Sources(Sources {
-                owner: rust_binary.owner.clone(),
-                name: srcs_name,
-                base,
-                platform,
-                visibility: vendor_crate_visibility(paths, &rust_binary.owner.name),
-            }));
+            if sources_are_local(config, pkg) {
+                let srcs_name = Name(format!("bin-{}", tgt.name));
+                let (base, platform) = split_srcs(
+                    paths,
+                    &mut rust_binary.common,
+                    &rust_binary.owner,
+                    &srcs_name,
+                );
+                rules.push(Rule::Sources(Sources {
+                    owner: rust_binary.owner.clone(),
+                    name: srcs_name,
+                    base,
+                    platform,
+                    visibility: vendor_crate_visibility(paths, &rust_binary.owner.name),
+                }));
+            } else {
+                relabel_fixups_mapped_srcs(paths, &mut rust_binary.common);
+            }
         }
 
         rules.push(Rule::Binary(rust_binary));
@@ -1411,9 +1512,7 @@ fn generate_target_rules<'a>(
         // For non-disk sources (i.e. non-vendor mode git_fetch and
         // http_archive), `srcs` and `exclude` are ignored because
         // we can't look at the files to match globs.
-        let srcs = if matches!(config.vendor, VendorConfig::Source(_))
-            || matches!(pkg.source, Source::Local)
-        {
+        let srcs = if sources_are_local(config, pkg) {
             if config.buck.split {
                 // e.g. ["src/lib.rs"]
                 FilegroupSources::Set(BTreeSet::from_iter(
@@ -1457,12 +1556,22 @@ fn generate_target_rules<'a>(
             }
         };
         if config.buck.split {
+            // Vendored crates put the filegroup in the versioned source dir
+            // (`vendor/{name}-{version}`), so `filegroup-{name}` is unique
+            // there. Non-vendored crates share `vendor/{name}` across versions,
+            // so the filegroup name and the alias target it points to must be
+            // version-disambiguated.
+            let (filegroup_name, filegroup_package) = if sources_are_local(config, pkg) {
+                (format!("filegroup-{}", name), pkg.to_string())
+            } else {
+                (format!("filegroup-{}-{}", tgt_ver, name), pkg.name.clone())
+            };
             rules.push(Rule::Filegroup(Filegroup {
                 owner: PackageVersion {
                     name: pkg.name.clone(),
                     version: pkg.version.clone(),
                 },
-                name: Name(format!("filegroup-{}", name)),
+                name: Name(filegroup_name.clone()),
                 srcs,
                 visibility: Visibility::Custom(vec![format!("//{}:", paths.buck_package)]),
             }));
@@ -1473,15 +1582,15 @@ fn generate_target_rules<'a>(
                 },
                 name: Name(format!("{}-{}", tgt_disp, name)),
                 actual: RuleRef::new(format!(
-                    "//{}{}vendor/{}:filegroup-{}",
+                    "//{}{}vendor/{}:{}",
                     paths.buck_package,
                     if paths.buck_package.is_empty() {
                         ""
                     } else {
                         "/"
                     },
-                    pkg,
-                    name,
+                    filegroup_package,
+                    filegroup_name,
                 )),
                 platforms: None,
                 target_compatible_with: Select::default(),
@@ -1612,6 +1721,52 @@ fn do_buckify<'a>(context: &'a RuleContext<'a>) -> anyhow::Result<BTreeSet<Rule>
     Ok(rules)
 }
 
+/// Which split-mode BUCK file a rule is written to.
+enum SplitDestination<'a> {
+    /// The third-party-dir top-level BUCK file.
+    TopLevel,
+    /// `vendor/<name>/BUCK`, the crate's own package.
+    CrateDir(&'a String),
+    /// `vendor/<name>-<version>/BUCK`, the versioned source directory (only
+    /// exists in vendored-source mode).
+    VersionDir(&'a PackageVersion),
+    /// The root package's own BUCK file.
+    RootPackage,
+}
+
+fn split_destination<'a>(vendor: &VendorConfig, rule: &'a Rule) -> SplitDestination<'a> {
+    match rule {
+        Rule::Alias(_) | Rule::ExtractArchive(_) | Rule::GitFetch(_) => {
+            SplitDestination::TopLevel
+        }
+        // Non-vendored crates build straight from the downloaded archive, so the
+        // archive lives in the crate's own package where the ":{name}-{ver}.crate"
+        // srcs references resolve. (HttpArchive never exists in vendored mode.)
+        // A GitFetchAlias likewise gives the crate's package a local handle on
+        // the shared top-level git_fetch. (Neither exists in vendored mode.)
+        Rule::HttpArchive(HttpArchive { owner, .. })
+        | Rule::GitFetchAlias(Alias { owner, .. }) => SplitDestination::CrateDir(&owner.name),
+        Rule::Binary(RustBinary { owner, .. })
+        | Rule::Library(RustLibrary { owner, .. })
+        | Rule::BuildscriptBinary(RustBinary { owner, .. })
+        | Rule::BuildscriptGenrule(BuildscriptGenrule { owner, .. }) => {
+            SplitDestination::CrateDir(&owner.name)
+        }
+        // Not emitted in non-vendored mode; always a versioned source dir.
+        Rule::Sources(Sources { owner, .. }) => SplitDestination::VersionDir(owner),
+        Rule::Filegroup(Filegroup { owner, .. })
+        | Rule::CxxLibrary(CxxLibrary { owner, .. })
+        | Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary { owner, .. }) => {
+            if matches!(vendor, VendorConfig::Source(_)) {
+                SplitDestination::VersionDir(owner)
+            } else {
+                SplitDestination::CrateDir(&owner.name)
+            }
+        }
+        Rule::RootPackage(_) => SplitDestination::RootPackage,
+    }
+}
+
 pub(crate) fn buckify(
     config: &Config,
     args: &Args,
@@ -1620,6 +1775,15 @@ pub(crate) fn buckify(
     fast: bool,
 ) -> anyhow::Result<()> {
     buckify_diagnostic(format_args!("buckify start fast={fast} stdout={stdout}"));
+
+    // A vendored local-registry lays out sources as `.crate` files that only
+    // the monolithic BUCK file can reference, so per-crate split output cannot
+    // point at them yet. (`vendor = false` downgrades an unusable local
+    // registry to Off before this point, so this only fires for a real one.)
+    if config.buck.split && matches!(config.vendor, VendorConfig::LocalRegistry) {
+        bail!("`[buck] split = true` does not support `vendor = \"local-registry\"` yet");
+    }
+
     let (lockfile, metadata) = {
         log::info!("Running `cargo metadata`...");
         measure_time::info_time!("Running `cargo metadata`");
@@ -1695,32 +1859,20 @@ pub(crate) fn buckify(
             let mut version_rules = BTreeMap::new();
             let mut root_package_rule = None;
             for rule in &rules {
-                match rule {
-                    Rule::Alias(_)
-                    | Rule::ExtractArchive(_)
-                    | Rule::HttpArchive(_)
-                    | Rule::GitFetch(_) => {
+                match split_destination(&config.vendor, rule) {
+                    SplitDestination::TopLevel => {
                         toplevel_rules.push(rule);
                     }
-                    Rule::Binary(RustBinary { owner, .. })
-                    | Rule::Library(RustLibrary { owner, .. })
-                    | Rule::BuildscriptBinary(RustBinary { owner, .. })
-                    | Rule::BuildscriptGenrule(BuildscriptGenrule { owner, .. }) => {
-                        crate_rules
-                            .entry(&owner.name)
-                            .or_insert_with(Vec::new)
-                            .push(rule);
+                    SplitDestination::CrateDir(name) => {
+                        crate_rules.entry(name).or_insert_with(Vec::new).push(rule);
                     }
-                    Rule::Sources(Sources { owner, .. })
-                    | Rule::Filegroup(Filegroup { owner, .. })
-                    | Rule::CxxLibrary(CxxLibrary { owner, .. })
-                    | Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary { owner, .. }) => {
+                    SplitDestination::VersionDir(owner) => {
                         version_rules
                             .entry(owner)
                             .or_insert_with(Vec::new)
                             .push(rule);
                     }
-                    Rule::RootPackage(_) => {
+                    SplitDestination::RootPackage => {
                         root_package_rule = Some(rule);
                     }
                 }
@@ -1960,12 +2112,42 @@ mod test {
     use std::fs;
     use std::path::PathBuf;
 
+    use std::collections::BTreeMap;
+
+    use semver::Version;
+
+    use super::SplitDestination;
     use super::cleanup_stale_split_vendor_buck_files;
+    use super::relabel_platform_fixups_mapped_srcs;
     use super::short_name_for_git_repo;
+    use super::split_destination;
     use super::vendor_crate_visibility;
     use crate::Paths;
+    use crate::buck::Alias;
+    use crate::buck::BuckPath;
+    use crate::buck::Filegroup;
+    use crate::buck::FilegroupSources;
+    use crate::buck::GitFetch;
+    use crate::buck::HttpArchive;
+    use crate::buck::Name;
+    use crate::buck::PackageVersion;
+    use crate::buck::PlatformRustCommon;
+    use crate::buck::PlatformSources;
+    use crate::buck::Rule;
+    use crate::buck::RuleRef;
+    use crate::buck::Sources;
+    use crate::buck::SubtargetOrPath;
     use crate::buck::Visibility;
+    use crate::collection::Select;
     use crate::config::Config;
+    use crate::config::VendorConfig;
+
+    fn pkg_version(name: &str) -> PackageVersion {
+        PackageVersion {
+            name: name.to_owned(),
+            version: Version::new(1, 0, 0),
+        }
+    }
 
     fn paths_with_buck_package(buck_package: &str) -> Paths {
         Paths {
@@ -2104,6 +2286,144 @@ mod test {
         assert_eq!(
             short_name_for_git_repo("https://gitlab.com/gilrs-project/gilrs.git").unwrap(),
             "gilrs-bbe0e8b5f013041b",
+        );
+    }
+
+    #[test]
+    fn split_destination_routes_rules_by_kind_and_vendor_mode() {
+        let owner = pkg_version("serde");
+
+        let http_archive = Rule::HttpArchive(HttpArchive {
+            owner: owner.clone(),
+            name: Name("serde-1.0.0.crate".to_owned()),
+            sha256: "0".to_owned(),
+            strip_prefix: "serde-1.0.0".to_owned(),
+            sub_targets: BTreeSet::new(),
+            urls: vec![],
+            visibility: Visibility::Private,
+            sort_key: Name("serde-1.0.0".to_owned()),
+        });
+
+        let git_fetch = Rule::GitFetch(GitFetch {
+            name: Name("repo-0.git".to_owned()),
+            repo: "https://example.com/repo".to_owned(),
+            rev: "abc".to_owned(),
+            sub_targets: BTreeSet::new(),
+            visibility: Visibility::Private,
+        });
+
+        let git_fetch_alias = Rule::GitFetchAlias(Alias {
+            owner: owner.clone(),
+            name: Name("repo-0.git".to_owned()),
+            actual: RuleRef::new("//third-party/rust:repo-0.git".to_owned()),
+            platforms: None,
+            target_compatible_with: Select::default(),
+            visibility: Visibility::Private,
+            sort_key: Name("repo-0.git".to_owned()),
+        });
+
+        let sources = Rule::Sources(Sources {
+            owner: owner.clone(),
+            name: Name("srcs".to_owned()),
+            base: PlatformSources::default(),
+            platform: BTreeMap::new(),
+            visibility: Visibility::Private,
+        });
+
+        let filegroup = Rule::Filegroup(Filegroup {
+            owner: owner.clone(),
+            name: Name("filegroup-manifest".to_owned()),
+            srcs: FilegroupSources::Set(BTreeSet::new()),
+            visibility: Visibility::Private,
+        });
+
+        // HttpArchive and GitFetchAlias always route to the crate dir.
+        assert!(matches!(
+            split_destination(&VendorConfig::Off, &http_archive),
+            SplitDestination::CrateDir(name) if name == "serde",
+        ));
+        assert!(matches!(
+            split_destination(&VendorConfig::Off, &git_fetch_alias),
+            SplitDestination::CrateDir(name) if name == "serde",
+        ));
+
+        // GitFetch is shared across crates and stays at top level.
+        assert!(matches!(
+            split_destination(&VendorConfig::Off, &git_fetch),
+            SplitDestination::TopLevel,
+        ));
+
+        // Sources only exist in vendored mode and always go to the versioned dir.
+        assert!(matches!(
+            split_destination(&VendorConfig::Source(Default::default()), &sources),
+            SplitDestination::VersionDir(o) if o == &owner,
+        ));
+
+        // Filegroup (and, sharing its match arm, CxxLibrary / PrebuiltCxxLibrary)
+        // goes to the versioned dir under vendored sources but the crate dir
+        // otherwise.
+        assert!(matches!(
+            split_destination(&VendorConfig::Source(Default::default()), &filegroup),
+            SplitDestination::VersionDir(o) if o == &owner,
+        ));
+        assert!(matches!(
+            split_destination(&VendorConfig::Off, &filegroup),
+            SplitDestination::CrateDir(name) if name == "serde",
+        ));
+    }
+
+    #[test]
+    fn relabel_fixups_mapped_srcs_rewrites_only_fixup_tree_keys() {
+        let paths = paths_with_buck_package("third-party/rust");
+        let mut platform = PlatformRustCommon::default();
+
+        let fixup_key =
+            SubtargetOrPath::Path(BuckPath(PathBuf::from("fixups/foo/overlay/lib.rs")));
+        let fixup_value = BuckPath(PathBuf::from("src/lib.rs"));
+        platform
+            .mapped_srcs
+            .insert(fixup_key, fixup_value.clone());
+
+        let archive_key = SubtargetOrPath::Subtarget(crate::subtarget::Subtarget {
+            target: Name("foo-1.0.0.crate".to_owned()),
+            relative: BuckPath(PathBuf::from("src/generated.rs")),
+        });
+        let archive_value = BuckPath(PathBuf::from("src/generated.rs"));
+        platform
+            .mapped_srcs
+            .insert(archive_key.clone(), archive_value.clone());
+
+        platform.srcs.insert(BuckPath(PathBuf::from("keep.rs")));
+
+        relabel_platform_fixups_mapped_srcs(&paths, &mut platform);
+
+        // The fixups-tree key becomes a package-absolute label; its value is
+        // untouched.
+        let rewritten = SubtargetOrPath::Path(BuckPath(PathBuf::from(
+            "//third-party/rust/fixups/foo/overlay:lib.rs",
+        )));
+        assert_eq!(platform.mapped_srcs.get(&rewritten), Some(&fixup_value));
+
+        // A subtarget into the archive is left exactly as-is.
+        assert_eq!(platform.mapped_srcs.get(&archive_key), Some(&archive_value));
+
+        // srcs are untouched.
+        assert!(platform.srcs.contains(&BuckPath(PathBuf::from("keep.rs"))));
+
+        // No stray key was created.
+        assert_eq!(platform.mapped_srcs.len(), 2);
+    }
+
+    #[test]
+    fn split_fixups_mapped_src_key_handles_empty_buck_package() {
+        let paths = paths_with_buck_package("");
+        let key = super::split_fixups_mapped_src_key(
+            &paths,
+            &BuckPath(PathBuf::from("fixups/foo/overlay/src/lib.rs")),
+        );
+        assert_eq!(
+            key,
+            BuckPath(PathBuf::from("//fixups/foo/overlay:src/lib.rs")),
         );
     }
 }

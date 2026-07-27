@@ -105,7 +105,12 @@ the source code at `src/config.rs` (see `Config`).
   functionality, RFC 3028.
 - `buck.file_name` (string): Name of the `BUCK` file.
 - `buck.split` (bool): Split mode, with each crate getting a separate generated
-  `BUCK` file.
+  `BUCK` file. Works both with vendored sources (each crate's sources live in a
+  `vendor/<name>-<version>/BUCK` package) and with `vendor = false`, where there
+  are no on-disk sources: each crate's `http_archive`/`git_fetch`-backed rules
+  are written into its own `vendor/<name>/BUCK` package and no versioned source
+  directories are created. `vendor = "local-registry"` combined with split mode
+  is not supported and is rejected.
 - `buck.buckfile_imports` (string): Front matter for the generated `BUCK` file.
 - `platform`: See the "Custom platforms" section.
 - `extern_crates`: See the "External Crates" section.
