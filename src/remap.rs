@@ -7,7 +7,6 @@
 
 use std::collections::BTreeMap as Map;
 use std::collections::BTreeSet;
-use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
@@ -39,10 +38,7 @@ pub struct RemapSource {
 
 /// Generate a `.cargo/config.toml` string with source replacement entries
 /// that point all resolved sources to the `vendored-sources` directory.
-pub(crate) fn generate_vendor_config(
-    sources: &BTreeSet<SourceId>,
-    _vendor_dir: &Path,
-) -> anyhow::Result<String> {
+pub(crate) fn generate_vendor_config(sources: &BTreeSet<SourceId>) -> anyhow::Result<String> {
     let mut remap = RemapConfig::default();
     let merged = "vendored-sources";
 
@@ -107,7 +103,6 @@ pub(crate) fn generate_vendor_config(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
-    use std::path::Path;
 
     use crate::remap::generate_vendor_config;
 
@@ -121,8 +116,7 @@ mod tests {
             .expect("valid registry URL"),
         );
 
-        let config =
-            generate_vendor_config(&sources, Path::new("/tmp/absolute/path/vendor")).unwrap();
+        let config = generate_vendor_config(&sources).unwrap();
 
         assert!(
             config.contains("directory = \"vendor\""),
@@ -140,8 +134,7 @@ mod tests {
         // generate_vendor_config must still emit [source.vendored-sources] so
         // that is_vendored() returns true after fast_vendor() runs.
         let sources = BTreeSet::new();
-        let vendor_dir = Path::new("/jellyfish-cove/vendor");
-        let config = generate_vendor_config(&sources, vendor_dir).unwrap();
+        let config = generate_vendor_config(&sources).unwrap();
         assert!(
             config.contains("vendored-sources"),
             "config must contain vendored-sources even for path-only workspaces: {config}",
@@ -157,7 +150,7 @@ mod tests {
                 .expect("valid git URL");
         sources.insert(sid);
 
-        let config = generate_vendor_config(&sources, Path::new("/vendor")).unwrap();
+        let config = generate_vendor_config(&sources).unwrap();
         assert!(
             config.contains("git = \"https://github.com/example/crate.git\""),
             "config must contain git URL: {config}",

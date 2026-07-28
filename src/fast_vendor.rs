@@ -541,7 +541,7 @@ fn fast_vendor(
 
     // Generate .cargo/config.toml with source replacements before mutating the
     // vendor tree so serialization failures are caught early.
-    let vendor_config = generate_vendor_config(&sources, &vendor_dir)?;
+    let vendor_config = generate_vendor_config(&sources)?;
 
     // Compare expected crates in parallel and replace only mismatches.
     // Filters are shared by reference across threads; ChecksumFilter is Sync.
