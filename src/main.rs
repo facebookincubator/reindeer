@@ -40,6 +40,7 @@ mod cargo;
 mod cfg;
 mod collection;
 mod config;
+mod fast_vendor;
 mod fixups;
 mod glob;
 mod index;
@@ -53,7 +54,6 @@ mod srcfiles;
 mod subtarget;
 mod tp_metadata;
 mod unused;
-mod vendor;
 mod version_naming;
 
 #[derive(Debug, Parser)]
@@ -226,7 +226,7 @@ fn try_main() -> anyhow::Result<()> {
             ) {
                 log::warn!("reindeer.toml specifies `vendor = false`, but vendoring anyway");
             }
-            vendor::cargo_vendor(
+            fast_vendor::cargo_vendor(
                 &config,
                 *no_delete,
                 #[cfg(fbcode_build)]
@@ -246,7 +246,7 @@ fn try_main() -> anyhow::Result<()> {
             if matches!(
                 config.vendor,
                 VendorConfig::LocalRegistry | VendorConfig::Source(_)
-            ) && !vendor::is_vendored(&config, &paths)?
+            ) && !fast_vendor::is_vendored(&config, &paths)?
             {
                 if matches!(
                     config.vendor,
@@ -264,7 +264,7 @@ fn try_main() -> anyhow::Result<()> {
             }
             buckify::buckify(&config, &args, &paths, *stdout, *fast)?;
             if *vendor_cleanup {
-                vendor::cleanup_extern_crates(&config, &paths)?;
+                fast_vendor::cleanup_extern_crates(&config, &paths)?;
             }
         }
 
