@@ -517,7 +517,7 @@ pub struct PlatformRustCommon {
     pub mapped_srcs: BTreeMap<SubtargetOrPath, BuckPath>,
     pub rustc_flags: Select<Vec<String>>,
     pub features: BTreeSet<String>,
-    pub deps: BTreeSet<RuleRef>,
+    pub deps: Select<BTreeSet<RuleRef>>,
     pub named_deps: BTreeMap<String, RuleRef>,
     pub env: BTreeMap<String, StringOrPath>,
 

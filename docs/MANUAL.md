@@ -439,9 +439,13 @@ visibility = [...]         # list of strings
 [env]                      # map of string to string
 ENVNAME = "..."
 
-[rustc_flags_select]       # map of string (Buck constraint target) to list of strings
+[[rustc_flags_select]]     # map of string (Buck constraint target) to list of strings
 "DEFAULT" = []
 "ovr_config//third-party/python/constraints:3.12" = ["--cfg=Py_3_12"]
+
+[[extra_deps_select]]      # map of string (Buck constraint target) to list of strings (Buck targets)
+"DEFAULT" = []
+"ovr_config//build_mode:asan" = ["//third-party/asan:runtime"]
 
 [buildscript.build]
 extra_deps = [...]         # list of strings (Buck targets)
@@ -495,6 +499,15 @@ ENVNAME = "..."
 - **`extra_deps`** — List of extra dependencies to add. Often other C/C++
   libraries if this is a `-sys` binding package.
   Example: `extra_deps = ["//third-party/zstd:zstd"]`
+
+---
+
+- **`extra_deps_select`** — Buck constraint-dependent extra dependencies. Where
+  `extra_deps` is resolved while generating the BUCK file, these stay
+  conditional in the generated rule, as `deps = [...] + select({...})`. Useful
+  for a dependency Cargo declares under a `cfg` that corresponds to a Buck
+  constraint rather than to a platform, such as a crate's
+  `[target.'cfg(loom)'.dependencies]`. Cannot be platform-specific.
 
 ---
 
