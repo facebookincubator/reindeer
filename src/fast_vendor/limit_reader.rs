@@ -11,12 +11,12 @@ use std::io::Read;
 /// A [`Read`] wrapper that enforces a byte-count limit and returns an error
 /// when exceeded. Guards against zip-bomb attacks in compressed archives.
 /// Matches the behavior of cargo's internal `LimitErrorReader`.
-pub(crate) struct LimitReader<R> {
+pub(super) struct LimitReader<R> {
     inner: io::Take<R>,
 }
 
 impl<R: Read> LimitReader<R> {
-    pub(crate) fn new(r: R, limit: u64) -> Self {
+    pub fn new(r: R, limit: u64) -> Self {
         LimitReader {
             inner: r.take(limit),
         }

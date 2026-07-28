@@ -15,19 +15,19 @@ use anyhow::Context as _;
 use anyhow::bail;
 use cargo_toml::OptionalFile;
 
-use crate::cargo::ExpectedCrate;
-use crate::cargo::SYNTHESIZED_BUILD_RS;
-use crate::cargo::checksum_json_bytes;
-use crate::cargo::compute_dir_checksums_filtered;
-use crate::cargo::materialization_excluded;
-use crate::cargo::normalize_manifest_path;
-use crate::cargo::prepare_regular_file_target;
-use crate::cargo::remove_existing_path;
-use crate::cargo::write_regular_file;
+use crate::fast_vendor::ExpectedCrate;
+use crate::fast_vendor::SYNTHESIZED_BUILD_RS;
 use crate::fast_vendor::VendorFilters;
+use crate::fast_vendor::checksum_json_bytes;
+use crate::fast_vendor::compute_dir_checksums_filtered;
 use crate::fast_vendor::limit_reader::LimitReader;
+use crate::fast_vendor::materialization_excluded;
+use crate::fast_vendor::normalize_manifest_path;
+use crate::fast_vendor::prepare_regular_file_target;
+use crate::fast_vendor::remove_existing_path;
+use crate::fast_vendor::write_regular_file;
 
-pub(crate) enum Materialization {
+pub(super) enum Materialization {
     RegistryArchive {
         archive: PathBuf,
     },
@@ -38,7 +38,7 @@ pub(crate) enum Materialization {
     },
 }
 
-pub(crate) fn materialize_expected_crate(
+pub(super) fn materialize_expected_crate(
     expected: &ExpectedCrate,
     staging_dst: &Path,
     filters: &VendorFilters,
@@ -291,16 +291,16 @@ mod test {
     use std::fs;
     use std::path::PathBuf;
 
-    use crate::cargo::ExpectedCrate;
-    use crate::cargo::compute_dir_checksums_filtered;
-    use crate::cargo::test::gitignore_filter;
+    use crate::fast_vendor::ExpectedCrate;
     use crate::fast_vendor::VendorFilters;
+    use crate::fast_vendor::compute_dir_checksums_filtered;
     use crate::fast_vendor::fingerprint::vendor_dir_matches_expected_source;
     use crate::fast_vendor::materialization::Materialization;
     use crate::fast_vendor::materialization::copy_vendor_sources;
     use crate::fast_vendor::materialization::postprocess_vendored_crate_dir;
     use crate::fast_vendor::materialization::synthesize_missing_build_rs;
     use crate::fast_vendor::materialization::write_checksum_json;
+    use crate::fast_vendor::tests::gitignore_filter;
 
     #[test]
     fn test_vendor_dir_matches_expected_source_does_not_trust_checksum_json() {

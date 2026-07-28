@@ -18,26 +18,26 @@ use sha2::Digest as _;
 use sha2::Sha256;
 use walkdir::WalkDir;
 
-use crate::cargo::ExpectedCrate;
-use crate::cargo::SYNTHESIZED_BUILD_RS;
-use crate::cargo::VendorFilters;
-use crate::cargo::bytes_sha256;
-use crate::cargo::checksum_excluded;
-use crate::cargo::checksum_json_bytes;
-use crate::cargo::file_sha256;
-use crate::cargo::normalize_manifest_path;
-use crate::cargo::path_file_type_no_follow;
-use crate::cargo::source_excluded;
+use crate::fast_vendor::ExpectedCrate;
+use crate::fast_vendor::SYNTHESIZED_BUILD_RS;
+use crate::fast_vendor::VendorFilters;
+use crate::fast_vendor::bytes_sha256;
+use crate::fast_vendor::checksum_excluded;
+use crate::fast_vendor::checksum_json_bytes;
+use crate::fast_vendor::file_sha256;
 use crate::fast_vendor::limit_reader::LimitReader;
 use crate::fast_vendor::materialization::Materialization;
+use crate::fast_vendor::normalize_manifest_path;
+use crate::fast_vendor::path_file_type_no_follow;
+use crate::fast_vendor::source_excluded;
 
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum TreeEntryFingerprint {
+pub(super) enum TreeEntryFingerprint {
     File(String),
     Symlink(String),
 }
 
-pub(crate) fn vendor_dir_matches_expected_source(
+pub(super) fn vendor_dir_matches_expected_source(
     expected: &ExpectedCrate,
     filters: &VendorFilters,
 ) -> anyhow::Result<bool> {
@@ -353,7 +353,7 @@ mod test {
     use std::fs;
     use std::path::Path;
 
-    use crate::cargo::VendorFilters;
+    use crate::fast_vendor::VendorFilters;
     use crate::fast_vendor::fingerprint::tree_fingerprint;
 
     #[test]
