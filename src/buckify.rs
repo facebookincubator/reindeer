@@ -1989,16 +1989,12 @@ mod test {
         }
     }
 
-    fn split_config() -> Config {
-        toml::from_str("[buck]\nsplit = true\n").expect("test config should parse")
-    }
-
     #[test]
     fn cleanup_stale_split_vendor_buck_files_removes_only_unproduced_generated_buck_files() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths_with_third_party_dir(dir.path().join("third-party/rust"));
         let vendor_dir = paths.third_party_dir.join("vendor");
-        let config = split_config();
+        let config = Config::split_for_test();
         let generated_file_header = &*config.buck.generated_file_header;
 
         let active_buck = vendor_dir.join("active-crate").join("BUCK");

@@ -557,3 +557,22 @@ pub(crate) fn parse_cfg_kv(cfgs: &mut HashMap<String, HashSet<String>>, line: &s
         cfgs.entry(line.to_owned()).or_insert_with(HashSet::default);
     }
 }
+
+impl Config {
+    #[cfg(test)]
+    pub(crate) fn default_for_test() -> Self {
+        let empty_config = toml::Table::new();
+        Config::deserialize(empty_config).unwrap()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn split_for_test() -> Self {
+        Config {
+            buck: BuckConfig {
+                split: true,
+                ..BuckConfig::default()
+            },
+            ..Self::default_for_test()
+        }
+    }
+}
