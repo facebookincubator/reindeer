@@ -305,7 +305,7 @@ impl<T> Display for StringWithDefault<T> {
 impl<T> Debug for StringWithDefault<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_default {
-            formatter.pad(&format!("Default ({:?})", &self.value))
+            formatter.pad(&format!("Default ({:?})", self.value))
         } else {
             Debug::fmt(&self.value, formatter)
         }
