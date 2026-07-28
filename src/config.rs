@@ -236,9 +236,6 @@ pub struct VendorSourceConfig {
     /// this config file.
     #[serde(default)]
     pub gitignore_checksum_exclude: Vec<PathBuf>,
-    /// Set of globs to remove from Cargo's checksum files in vendored dirs
-    #[serde(default)]
-    pub checksum_exclude: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

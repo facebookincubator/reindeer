@@ -12,7 +12,6 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use globset::Glob;
-use globset::GlobBuilder;
 use globset::GlobSetBuilder;
 use ignore::gitignore::GitignoreBuilder;
 
@@ -151,7 +150,6 @@ fn build_filters(
     let checksum_filter = build_checksum_filter(
         config.buck.split,
         &config.buck.file_name,
-        &source_config.checksum_exclude,
         &source_config.gitignore_checksum_exclude,
         &paths.third_party_dir,
     )?;
@@ -169,33 +167,23 @@ fn build_filters(
 fn build_checksum_filter(
     buck_split: bool,
     buck_file_name: &str,
-    checksum_exclude: &[String],
     gitignore_checksum_exclude: &[PathBuf],
     third_party_dir: &Path,
 ) -> anyhow::Result<Option<ChecksumFilter>> {
     // Build a checksum filter when there are explicit excludes configured, or
     // when split mode is enabled (BUCK files must be excluded from checksums to
     // match the on-disk exclusion that split mode also applies).
-    let needs_filter =
-        !checksum_exclude.is_empty() || !gitignore_checksum_exclude.is_empty() || buck_split;
+    let needs_filter = !gitignore_checksum_exclude.is_empty() || buck_split;
     if !needs_filter {
         return Ok(None);
     }
 
     log::debug!(
-        "vendor.gitignore_checksum_exclude = {:?} vendor.checksum_exclude = {:?}",
+        "vendor.gitignore_checksum_exclude = {:?}",
         gitignore_checksum_exclude,
-        checksum_exclude
     );
 
     let mut remove_globs = GlobSetBuilder::new();
-    for glob in checksum_exclude {
-        let glob = GlobBuilder::new(glob)
-            .literal_separator(true)
-            .build()
-            .with_context(|| format!("Invalid checksum exclude glob `{}`", glob))?;
-        remove_globs.add(glob);
-    }
     // Exclude the BUCK file from checksums only when split mode is enabled.
     // This keeps checksum exclusion aligned with on-disk exclusion: both are
     // gated on the same split-mode condition.
@@ -314,7 +302,7 @@ mod tests {
         // When split=true and no other excludes, the filter must still be built
         // and BUCK must be in the remove set (to align with on-disk exclusion).
         let dir = tempfile::tempdir().expect("tempdir");
-        let filter = build_checksum_filter(true, "BUCK", &[], &[], dir.path())
+        let filter = build_checksum_filter(true, "BUCK", &[], dir.path())
             .expect("build_checksum_filter should succeed");
 
         let filter = filter.expect("filter should be Some when split=true");
@@ -328,7 +316,7 @@ mod tests {
     fn test_build_checksum_filter_split_false_no_excludes() {
         // When split=false and no other excludes, no filter is needed.
         let dir = tempfile::tempdir().expect("tempdir");
-        let filter = build_checksum_filter(false, "BUCK", &[], &[], dir.path())
+        let filter = build_checksum_filter(false, "BUCK", &[], dir.path())
             .expect("build_checksum_filter should succeed");
 
         assert!(
@@ -338,47 +326,9 @@ mod tests {
     }
 
     #[test]
-    fn test_build_checksum_filter_split_false_with_checksum_exclude() {
-        // When split=false but checksum_exclude is non-empty, a filter is built
-        // but BUCK must NOT be in it (split mode is what gates BUCK exclusion).
-        let dir = tempfile::tempdir().expect("tempdir");
-        let filter = build_checksum_filter(false, "BUCK", &["*.json".to_owned()], &[], dir.path())
-            .expect("build_checksum_filter should succeed");
-
-        let filter = filter.expect("filter should be Some when checksum_exclude is non-empty");
-        assert!(
-            !filter.remove_globs.is_match("BUCK"),
-            "BUCK must NOT be in checksum exclusion when split=false"
-        );
-        assert!(
-            filter.remove_globs.is_match("something.json"),
-            "configured checksum_exclude glob should still match"
-        );
-    }
-
-    #[test]
-    fn test_build_checksum_filter_split_true_with_checksum_exclude() {
-        // When split=true AND checksum_exclude is set, both BUCK and the
-        // configured globs must be in the filter.
-        let dir = tempfile::tempdir().expect("tempdir");
-        let filter = build_checksum_filter(true, "BUCK", &["*.json".to_owned()], &[], dir.path())
-            .expect("build_checksum_filter should succeed");
-
-        let filter = filter.expect("filter should be Some");
-        assert!(
-            filter.remove_globs.is_match("BUCK"),
-            "BUCK must be in checksum exclusion when split=true"
-        );
-        assert!(
-            filter.remove_globs.is_match("something.json"),
-            "configured checksum_exclude glob should also match"
-        );
-    }
-
-    #[test]
     fn test_build_checksum_filter_split_true_invalid_buck_glob_errors() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let result = build_checksum_filter(true, "[", &[], &[], dir.path());
+        let result = build_checksum_filter(true, "[", &[], dir.path());
 
         assert!(result.is_err(), "invalid buck.file_name glob should error");
         let err = result.err().expect("error should be present");
