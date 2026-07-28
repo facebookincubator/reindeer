@@ -5,6 +5,8 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+pub(crate) mod limit_reader;
+
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;

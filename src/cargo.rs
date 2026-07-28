@@ -69,6 +69,7 @@ use crate::Args;
 use crate::Paths;
 use crate::config::Config;
 use crate::config::VendorConfig;
+use crate::fast_vendor::limit_reader::LimitReader;
 use crate::lockfile::Lockfile;
 use crate::platform::PlatformExpr;
 use crate::remap::RemapConfig;
@@ -2765,39 +2766,11 @@ fn unpack_package_archive(
     Ok(())
 }
 
-/// A [`Read`] wrapper that enforces a byte-count limit and returns an error
-/// when exceeded. Guards against zip-bomb attacks in compressed archives.
-/// Matches the behavior of cargo's internal `LimitErrorReader`.
-struct LimitReader<R> {
-    inner: io::Take<R>,
-}
-
-impl<R: Read> LimitReader<R> {
-    fn new(r: R, limit: u64) -> Self {
-        LimitReader {
-            inner: r.take(limit),
-        }
-    }
-}
-
-impl<R: Read> Read for LimitReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match self.inner.read(buf) {
-            Ok(0) if self.inner.limit() == 0 => {
-                Err(io::Error::other("maximum limit reached when reading"))
-            }
-            e => e,
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
     use std::fs;
-    use std::io::Cursor;
-    use std::io::Read;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -2811,7 +2784,6 @@ mod test {
     use super::CrateType;
     use super::DepKind;
     use super::ExpectedCrate;
-    use super::LimitReader;
     use super::ManifestTarget;
     use super::Materialization;
     use super::NodeDepKind;
@@ -3692,34 +3664,6 @@ build = "scripts/build.rs"
             bin_name: None,
         };
         dep.target_req();
-    }
-
-    // Invariant: LimitReader returns data normally when under the limit
-    #[test]
-    fn test_limit_reader_under_limit() {
-        let data = b"hello world";
-        let mut reader = LimitReader::new(Cursor::new(data), 100);
-        let mut buf = Vec::new();
-        reader.read_to_end(&mut buf).unwrap();
-        assert_eq!(buf, data);
-    }
-
-    // Invariant: LimitReader returns an error when the byte limit is reached
-    #[test]
-    fn test_limit_reader_at_limit_errors() {
-        let data = b"hello world";
-        let mut reader = LimitReader::new(Cursor::new(data), 5);
-        let mut buf = [0u8; 32];
-        let n = reader.read(&mut buf).unwrap();
-        assert_eq!(n, 5);
-        let result = reader.read(&mut buf);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("maximum limit reached"),
-        );
     }
 
     // Invariant: make_staging_destination creates a unique directory under the parent
