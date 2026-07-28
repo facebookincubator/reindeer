@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+pub(crate) mod fingerprint;
 pub(crate) mod limit_reader;
 
 use std::fs;
