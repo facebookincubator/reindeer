@@ -1450,8 +1450,7 @@ fn materialize_expected_crate(
 ) -> anyhow::Result<()> {
     match &expected.materialization {
         Materialization::RegistryArchive { archive } => {
-            let include = |rel: &Path| !materialization_excluded(rel, filters);
-            unpack_package_archive(archive, staging_dst, &include).with_context(|| {
+            unpack_package_archive(archive, staging_dst, filters).with_context(|| {
                 format!(
                     "failed to unpack {} into {}",
                     archive.display(),
@@ -2722,10 +2721,10 @@ impl<'de> DeserializeAs<'de, PackageId> for PackageIdFromSpec {
 /// relative to the crate root. Replicates cargo's zip-bomb and path-traversal
 /// protections. Size limit: 512 MiB minimum, or 20x the compressed archive
 /// size (matching cargo's defaults).
-pub(crate) fn unpack_package_archive(
+fn unpack_package_archive(
     archive: &Path,
     dst: &Path,
-    include: &dyn Fn(&Path) -> bool,
+    filters: &VendorFilters,
 ) -> anyhow::Result<()> {
     let tarball =
         fs::File::open(archive).with_context(|| format!("failed to open {}", archive.display()))?;
@@ -2745,14 +2744,11 @@ pub(crate) fn unpack_package_archive(
             .context("failed to read entry path")?
             .into_owned();
 
-        let relative = match entry_path.strip_prefix(prefix) {
-            Ok(rel) => rel.to_owned(),
-            Err(_) => {
-                anyhow::bail!("invalid tarball: entry at {entry_path:?} is not under {prefix:?}",)
-            }
+        let Ok(relative) = entry_path.strip_prefix(prefix) else {
+            bail!("invalid tarball: entry at {entry_path:?} is not under {prefix:?}");
         };
 
-        if !include(&relative) {
+        if materialization_excluded(relative, filters) {
             continue;
         }
 
