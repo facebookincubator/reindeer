@@ -11,9 +11,9 @@ use std::path::Path;
 
 use walkdir::WalkDir;
 
-use crate::fast_vendor::ChecksumFilter;
 use crate::fast_vendor::bytes_sha256;
 use crate::fast_vendor::checksum_excluded;
+use crate::fast_vendor::filter::ChecksumFilter;
 use crate::fast_vendor::gitignore_excluded;
 use crate::fast_vendor::vendor_this;
 
@@ -81,8 +81,8 @@ mod tests {
     use ignore::gitignore::GitignoreBuilder;
     use sha2::Digest as _;
 
-    use crate::fast_vendor::ChecksumFilter;
     use crate::fast_vendor::cargo_checksum::compute_dir_checksums_filtered;
+    use crate::fast_vendor::filter::ChecksumFilter;
     use crate::fast_vendor::tests::gitignore_filter;
 
     // Build a ChecksumFilter that matches a single glob pattern.

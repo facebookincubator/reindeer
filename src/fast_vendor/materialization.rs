@@ -17,9 +17,9 @@ use cargo_toml::OptionalFile;
 
 use crate::fast_vendor::ExpectedCrate;
 use crate::fast_vendor::SYNTHESIZED_BUILD_RS;
-use crate::fast_vendor::VendorFilters;
 use crate::fast_vendor::cargo_checksum::checksum_json_bytes;
 use crate::fast_vendor::cargo_checksum::compute_dir_checksums_filtered;
+use crate::fast_vendor::filter::VendorFilters;
 use crate::fast_vendor::limit_reader::LimitReader;
 use crate::fast_vendor::materialization_excluded;
 use crate::fast_vendor::normalize_manifest_path;
@@ -292,8 +292,8 @@ mod test {
     use std::path::PathBuf;
 
     use crate::fast_vendor::ExpectedCrate;
-    use crate::fast_vendor::VendorFilters;
     use crate::fast_vendor::cargo_checksum::compute_dir_checksums_filtered;
+    use crate::fast_vendor::filter::VendorFilters;
     use crate::fast_vendor::fingerprint::vendor_dir_matches_expected_source;
     use crate::fast_vendor::materialization::Materialization;
     use crate::fast_vendor::materialization::copy_vendor_sources;

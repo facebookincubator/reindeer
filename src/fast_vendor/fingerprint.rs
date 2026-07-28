@@ -20,11 +20,11 @@ use walkdir::WalkDir;
 
 use crate::fast_vendor::ExpectedCrate;
 use crate::fast_vendor::SYNTHESIZED_BUILD_RS;
-use crate::fast_vendor::VendorFilters;
 use crate::fast_vendor::bytes_sha256;
 use crate::fast_vendor::cargo_checksum::checksum_json_bytes;
 use crate::fast_vendor::checksum_excluded;
 use crate::fast_vendor::file_sha256;
+use crate::fast_vendor::filter::VendorFilters;
 use crate::fast_vendor::limit_reader::LimitReader;
 use crate::fast_vendor::materialization::Materialization;
 use crate::fast_vendor::normalize_manifest_path;
@@ -353,7 +353,7 @@ mod test {
     use std::fs;
     use std::path::Path;
 
-    use crate::fast_vendor::VendorFilters;
+    use crate::fast_vendor::filter::VendorFilters;
     use crate::fast_vendor::fingerprint::tree_fingerprint;
 
     #[test]
