@@ -25,11 +25,9 @@ use std::thread;
 
 use anyhow::Context;
 use anyhow::bail;
-use cargo::core::GitReference;
 use cargo::core::Package;
 use cargo::core::PackageId;
 use cargo::core::SourceId;
-use cargo::sources::CRATES_IO_REGISTRY;
 use cargo::util::cache_lock::CacheLockMode;
 use globset::Glob;
 use globset::GlobSet;
@@ -51,6 +49,7 @@ use crate::fast_vendor::materialization::Materialization;
 use crate::fast_vendor::materialization::materialize_expected_crate;
 use crate::remap::RemapConfig;
 use crate::remap::RemapSource;
+use crate::remap::generate_vendor_config;
 
 static STAGING_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
 const SYNTHESIZED_BUILD_RS: &[u8] = b"fn main() {}\n";
@@ -1027,73 +1026,6 @@ fn replace_vendor_dir(staged_dst: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Generate a `.cargo/config.toml` string with source replacement entries
-/// that point all resolved sources to the `vendored-sources` directory.
-fn generate_vendor_config(
-    sources: &BTreeSet<SourceId>,
-    _vendor_dir: &Path,
-) -> anyhow::Result<String> {
-    let mut remap = RemapConfig::default();
-    let merged = "vendored-sources";
-
-    for sid in sources {
-        let name = if sid.is_crates_io() {
-            CRATES_IO_REGISTRY.to_string()
-        } else {
-            sid.without_precise().as_url().to_string()
-        };
-
-        let source = if sid.is_crates_io() {
-            RemapSource {
-                replace_with: Some(merged.to_owned()),
-                ..RemapSource::default()
-            }
-        } else if sid.is_remote_registry() {
-            RemapSource {
-                registry: Some(sid.url().to_string()),
-                replace_with: Some(merged.to_owned()),
-                ..RemapSource::default()
-            }
-        } else if sid.is_git() {
-            let mut branch = None;
-            let mut tag = None;
-            let mut rev = None;
-            if let Some(reference) = sid.git_reference() {
-                match reference {
-                    GitReference::Branch(b) => branch = Some(b.clone()),
-                    GitReference::Tag(t) => tag = Some(t.clone()),
-                    GitReference::Rev(r) => rev = Some(r.clone()),
-                    GitReference::DefaultBranch => {}
-                }
-            }
-            RemapSource {
-                git: Some(sid.url().to_string()),
-                branch,
-                tag,
-                rev,
-                replace_with: Some(merged.to_owned()),
-                ..RemapSource::default()
-            }
-        } else {
-            anyhow::bail!("unsupported source type: {}", sid);
-        };
-
-        remap.sources.insert(name, source);
-    }
-
-    // Always write [source.vendored-sources] so that is_vendored() returns true
-    // even for workspaces with only path dependencies (where sources is empty).
-    remap.sources.insert(
-        merged.to_owned(),
-        RemapSource {
-            directory: Some(PathBuf::from("vendor")),
-            ..RemapSource::default()
-        },
-    );
-
-    toml::to_string(&remap).context("failed to serialize vendor config")
-}
-
 /// Extract crate name from a versioned directory
 fn extract_crate_name(dir_name: &str) -> &str {
     let dot_pos = dir_name.find('.').unwrap_or(dir_name.len());
@@ -1156,7 +1088,6 @@ mod tests {
     use crate::fast_vendor::extract_crate_name;
     use crate::fast_vendor::file_sha256;
     use crate::fast_vendor::find_cached_registry_archive_by_tarball;
-    use crate::fast_vendor::generate_vendor_config;
     use crate::fast_vendor::is_split_buck_file;
     use crate::fast_vendor::make_staging_destination;
     use crate::fast_vendor::remove_expected_vendor_entries_from_cleanup;
@@ -1243,43 +1174,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_generate_vendor_config_uses_relative_vendor_dir() {
-        let mut sources = BTreeSet::new();
-        sources.insert(
-            cargo::core::SourceId::from_url(
-                "registry+https://github.com/rust-lang/crates.io-index",
-            )
-            .expect("valid registry URL"),
-        );
-
-        let config =
-            generate_vendor_config(&sources, Path::new("/tmp/absolute/path/vendor")).unwrap();
-
-        assert!(
-            config.contains("directory = \"vendor\""),
-            "config should write a relative vendor directory: {config}"
-        );
-        assert!(
-            !config.contains("/tmp/absolute/path/vendor"),
-            "config should not embed an absolute vendor path: {config}"
-        );
-    }
-
-    #[test]
-    fn test_generate_vendor_config_path_only_workspace() {
-        // A workspace with only path dependencies has an empty sources set.
-        // generate_vendor_config must still emit [source.vendored-sources] so
-        // that is_vendored() returns true after fast_vendor() runs.
-        let sources = BTreeSet::new();
-        let vendor_dir = Path::new("/jellyfish-cove/vendor");
-        let config = generate_vendor_config(&sources, vendor_dir).unwrap();
-        assert!(
-            config.contains("vendored-sources"),
-            "config must contain vendored-sources even for path-only workspaces: {config}",
-        );
-    }
-
     // Invariant: vendor_this excludes .gitattributes, .gitignore, .git, .cargo-ok
     #[test]
     fn test_vendor_this_excludes_dotfiles() {
@@ -1301,30 +1195,6 @@ mod tests {
         assert!(vendor_this(Path::new("README.md")));
         assert!(vendor_this(Path::new("build.rs")));
         assert!(vendor_this(Path::new(".cargo/config.toml")));
-    }
-
-    // Invariant: generate_vendor_config emits git source replacement with branch/tag/rev fields
-    #[test]
-    fn test_generate_vendor_config_git_source() {
-        let mut sources = BTreeSet::new();
-        let sid =
-            cargo::core::SourceId::from_url("git+https://github.com/example/crate.git?branch=main")
-                .expect("valid git URL");
-        sources.insert(sid);
-
-        let config = generate_vendor_config(&sources, Path::new("/vendor")).unwrap();
-        assert!(
-            config.contains("git = \"https://github.com/example/crate.git\""),
-            "config must contain git URL: {config}",
-        );
-        assert!(
-            config.contains("branch = \"main\""),
-            "config must contain branch: {config}",
-        );
-        assert!(
-            config.contains("replace-with = \"vendored-sources\""),
-            "config must redirect to vendored-sources: {config}",
-        );
     }
 
     // Invariant: make_staging_destination creates a unique directory under the parent
