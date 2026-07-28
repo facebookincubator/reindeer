@@ -7,6 +7,7 @@
 
 pub(crate) mod fingerprint;
 pub(crate) mod limit_reader;
+pub(crate) mod materialization;
 
 use std::fs;
 use std::io::ErrorKind;

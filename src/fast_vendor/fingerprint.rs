@@ -19,7 +19,6 @@ use sha2::Sha256;
 use walkdir::WalkDir;
 
 use crate::cargo::ExpectedCrate;
-use crate::cargo::Materialization;
 use crate::cargo::SYNTHESIZED_BUILD_RS;
 use crate::cargo::VendorFilters;
 use crate::cargo::bytes_sha256;
@@ -30,6 +29,7 @@ use crate::cargo::normalize_manifest_path;
 use crate::cargo::path_file_type_no_follow;
 use crate::cargo::source_excluded;
 use crate::fast_vendor::limit_reader::LimitReader;
+use crate::fast_vendor::materialization::Materialization;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum TreeEntryFingerprint {
