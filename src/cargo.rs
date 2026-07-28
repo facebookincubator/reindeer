@@ -1528,7 +1528,7 @@ fn vendor_this(relative: &Path) -> bool {
     !relative.components().any(|component| {
         matches!(
             component.as_os_str().to_str(),
-            Some(".gitattributes" | ".gitignore" | ".git" | ".cargo-ok")
+            Some(".gitattributes" | ".gitignore" | ".git" | ".hg" | ".cargo-ok")
         )
     })
 }
