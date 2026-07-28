@@ -14,6 +14,8 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 
+use crate::buck::BuckPath;
+
 // normalize a/b/../c => a/c and a/./b => a/b
 pub fn normalize_path(path: &Path) -> PathBuf {
     let max_len = path.as_os_str().len();
@@ -66,7 +68,7 @@ pub fn relative_path(mut base: &Path, to: &Path) -> PathBuf {
     )
 }
 
-pub fn buck_package(third_party_dir: &Path) -> Result<String> {
+pub fn buck_package(third_party_dir: &Path) -> Result<BuckPath> {
     let mut dir = third_party_dir;
     loop {
         if fs::exists(dir.join(".buckconfig"))? || fs::exists(dir.join(".buckroot"))? {
@@ -77,20 +79,14 @@ pub fn buck_package(third_party_dir: &Path) -> Result<String> {
                     dir.display(),
                 );
             };
-            let Some(package_str) = package.to_str() else {
-                bail!(
-                    "output directory relative to Buck root ({}) is not a UTF-8 path",
-                    package.display(),
-                );
-            };
-            return Ok(package_str.to_owned());
+            return Ok(BuckPath(package.to_owned()));
         }
         if let Some(parent) = dir.parent() {
             dir = parent;
         } else {
             // Someone may be experimenting with reindeer before setting up a
             // Buck repo. Assume output directory would be the repo root.
-            return Ok(String::new());
+            return Ok(BuckPath(PathBuf::new()));
         }
     }
 }

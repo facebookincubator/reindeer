@@ -1958,18 +1958,20 @@ fn is_generated_buck_file(config: &Config, buckpath: &Path) -> anyhow::Result<bo
 mod test {
     use std::collections::BTreeSet;
     use std::fs;
+    use std::path::Path;
     use std::path::PathBuf;
 
     use super::cleanup_stale_split_vendor_buck_files;
     use super::short_name_for_git_repo;
     use super::vendor_crate_visibility;
     use crate::Paths;
+    use crate::buck::BuckPath;
     use crate::buck::Visibility;
     use crate::config::Config;
 
     fn paths_with_buck_package(buck_package: &str) -> Paths {
         Paths {
-            buck_package: buck_package.to_owned(),
+            buck_package: BuckPath(PathBuf::from(buck_package)),
             third_party_dir: PathBuf::new(),
             manifest_path: PathBuf::new(),
             lockfile_path: PathBuf::new(),
@@ -1979,7 +1981,7 @@ mod test {
 
     fn paths_with_third_party_dir(third_party_dir: PathBuf) -> Paths {
         Paths {
-            buck_package: "third-party/rust".to_owned(),
+            buck_package: BuckPath(Path::new("third-party").join("rust")),
             third_party_dir,
             manifest_path: PathBuf::new(),
             lockfile_path: PathBuf::new(),

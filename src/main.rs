@@ -26,6 +26,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use clap::Subcommand;
 
+use crate::buck::BuckPath;
 use crate::config::VendorConfig;
 use crate::config::VendorSourceConfig;
 use crate::path::buck_package;
@@ -130,7 +131,7 @@ enum SubCommand {
 #[derive(Debug)]
 pub struct Paths {
     /// Value of `native.package_name()` in the top-level BUCK file.
-    buck_package: String,
+    buck_package: BuckPath,
     third_party_dir: PathBuf,
     manifest_path: PathBuf,
     lockfile_path: PathBuf,
