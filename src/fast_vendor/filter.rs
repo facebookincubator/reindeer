@@ -33,7 +33,7 @@ pub(crate) struct ChecksumFilter {
 /// Controls which files are excluded from the vendor directory and checksums.
 pub(crate) struct VendorFilters {
     /// Glob/gitignore rules for files to omit from `.cargo-checksum.json`.
-    pub checksum_filter: Option<ChecksumFilter>,
+    pub checksum_filter: ChecksumFilter,
 }
 
 pub(crate) fn build_filters(
@@ -53,22 +53,14 @@ pub(crate) fn build_filters(
 
 /// Build the checksum filter from primitive inputs.
 ///
-/// Returns `None` when no filtering is needed. Extracted from `build_filters`
-/// so the logic can be tested without constructing `Config` or `Paths`.
+/// Extracted from `build_filters` so the logic can be tested without
+/// constructing `Config` or `Paths`.
 fn build_checksum_filter(
     buck_split: bool,
     buck_file_name: &str,
     gitignore_checksum_exclude: &[PathBuf],
     third_party_dir: &Path,
-) -> anyhow::Result<Option<ChecksumFilter>> {
-    // Build a checksum filter when there are explicit excludes configured, or
-    // when split mode is enabled (BUCK files must be excluded from checksums to
-    // match the on-disk exclusion that split mode also applies).
-    let needs_filter = !gitignore_checksum_exclude.is_empty() || buck_split;
-    if !needs_filter {
-        return Ok(None);
-    }
-
+) -> anyhow::Result<ChecksumFilter> {
     log::debug!(
         "vendor.gitignore_checksum_exclude = {:?}",
         gitignore_checksum_exclude,
@@ -103,10 +95,10 @@ fn build_checksum_filter(
         gitignore
     );
 
-    Ok(Some(ChecksumFilter {
+    Ok(ChecksumFilter {
         remove_globs,
         gitignore,
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -121,7 +113,6 @@ mod tests {
         let filter = build_checksum_filter(true, "BUCK", &[], dir.path())
             .expect("build_checksum_filter should succeed");
 
-        let filter = filter.expect("filter should be Some when split=true");
         assert!(
             filter.remove_globs.is_match("BUCK"),
             "BUCK must be in checksum exclusion when split=true"
@@ -136,8 +127,8 @@ mod tests {
             .expect("build_checksum_filter should succeed");
 
         assert!(
-            filter.is_none(),
-            "filter should be None when split=false and no excludes"
+            !filter.remove_globs.is_match("BUCK"),
+            "BUCK must not be in checksum exclusion when split=false"
         );
     }
 

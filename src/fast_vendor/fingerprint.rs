@@ -305,7 +305,7 @@ fn maybe_insert_checksum(
     hash: &str,
     filters: &VendorFilters,
 ) {
-    if checksum_excluded(pkgdir, relative, key, filters.checksum_filter.as_ref()) {
+    if checksum_excluded(pkgdir, relative, key, &filters.checksum_filter) {
         return;
     }
     file_cksums.insert(key.to_owned(), hash.to_owned());
@@ -364,6 +364,7 @@ mod test {
     use crate::config::Config;
     use crate::fast_vendor::filter::VendorFilters;
     use crate::fast_vendor::fingerprint::tree_fingerprint;
+    use crate::fast_vendor::tests::empty_filter;
 
     #[test]
     fn test_tree_fingerprint_ignores_empty_directories() {
@@ -373,7 +374,7 @@ mod test {
         fs::create_dir(root.join("empty")).unwrap();
 
         let filters = VendorFilters {
-            checksum_filter: None,
+            checksum_filter: empty_filter(),
         };
         let fingerprint =
             tree_fingerprint(&config, root, Path::new("vendor/example-0.1.0"), &filters).unwrap();

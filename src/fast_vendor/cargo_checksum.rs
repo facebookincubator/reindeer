@@ -25,7 +25,7 @@ use crate::fast_vendor::vendor_this;
 pub(crate) fn compute_dir_checksums_filtered(
     root: &Path,
     pkgdir: &Path,
-    filter: Option<&ChecksumFilter>,
+    filter: &ChecksumFilter,
 ) -> anyhow::Result<BTreeMap<String, String>> {
     WalkDir::new(root)
         .into_iter()
@@ -78,11 +78,12 @@ mod tests {
 
     use globset::GlobBuilder;
     use globset::GlobSetBuilder;
-    use ignore::gitignore::GitignoreBuilder;
+    use ignore::gitignore::Gitignore;
     use sha2::Digest as _;
 
     use crate::fast_vendor::cargo_checksum::compute_dir_checksums_filtered;
     use crate::fast_vendor::filter::ChecksumFilter;
+    use crate::fast_vendor::tests::empty_filter;
     use crate::fast_vendor::tests::gitignore_filter;
 
     // Build a ChecksumFilter that matches a single glob pattern.
@@ -94,10 +95,9 @@ mod tests {
                 .build()
                 .unwrap(),
         );
-        let gitignore = GitignoreBuilder::new("/").build().unwrap();
         ChecksumFilter {
             remove_globs: builder.build().unwrap(),
-            gitignore,
+            gitignore: Gitignore::empty(),
         }
     }
 
@@ -117,8 +117,8 @@ mod tests {
         let filter = glob_filter("BUCK");
         let pkgdir = std::path::Path::new("vendor/sourdough-starter-1.0.0");
 
-        let cksums = compute_dir_checksums_filtered(root, pkgdir, Some(&filter))
-            .expect("checksums computed");
+        let cksums =
+            compute_dir_checksums_filtered(root, pkgdir, &filter).expect("checksums computed");
 
         // lib.rs and Cargo.toml should be present; BUCK should not be.
         assert!(
@@ -142,8 +142,10 @@ mod tests {
         fs::write(root.join("lib.rs"), b"fn main() {}").unwrap();
         fs::write(root.join(".cargo-checksum.json"), b"not source").unwrap();
 
+        let filter = empty_filter();
         let cksums =
-            compute_dir_checksums_filtered(root, Path::new("vendor/example-0.1.0"), None).unwrap();
+            compute_dir_checksums_filtered(root, Path::new("vendor/example-0.1.0"), &filter)
+                .unwrap();
 
         assert!(cksums.contains_key("lib.rs"));
         assert!(
@@ -166,8 +168,8 @@ mod tests {
         let filter = glob_filter("*.h");
         let pkgdir = std::path::Path::new("vendor/flux-capacitor-1.21.0");
 
-        let cksums = compute_dir_checksums_filtered(root, pkgdir, Some(&filter))
-            .expect("checksums computed");
+        let cksums =
+            compute_dir_checksums_filtered(root, pkgdir, &filter).expect("checksums computed");
 
         assert!(
             !cksums.contains_key("pancake-stack.h"),
@@ -204,8 +206,8 @@ mod tests {
         let filter = gitignore_filter("vendor/*/Cargo.toml.orig");
         let pkgdir = std::path::Path::new("vendor/fb-procfs-0.9.0");
 
-        let cksums = compute_dir_checksums_filtered(root, pkgdir, Some(&filter))
-            .expect("checksums computed");
+        let cksums =
+            compute_dir_checksums_filtered(root, pkgdir, &filter).expect("checksums computed");
 
         assert!(
             !cksums.contains_key("Cargo.toml.orig"),
@@ -226,8 +228,9 @@ mod tests {
         std::fs::create_dir(tmp.path().join("sub")).unwrap();
         std::fs::write(tmp.path().join("sub/b.txt"), b"world").unwrap();
 
+        let filter = empty_filter();
         let cksums =
-            compute_dir_checksums_filtered(tmp.path(), Path::new("vendor/example-0.1.0"), None)
+            compute_dir_checksums_filtered(tmp.path(), Path::new("vendor/example-0.1.0"), &filter)
                 .unwrap();
         assert_eq!(cksums.len(), 2);
         assert!(cksums.contains_key("a.txt"));

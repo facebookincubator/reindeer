@@ -225,8 +225,7 @@ fn postprocess_vendored_crate_dir(
     remove_split_buck_file(config, crate_dir)?;
     remove_existing_path(&crate_dir.join(".cargo-checksum.json"))?;
     synthesize_missing_build_rs(crate_dir)?;
-    let file_cksums =
-        compute_dir_checksums_filtered(crate_dir, pkgdir, filters.checksum_filter.as_ref())?;
+    let file_cksums = compute_dir_checksums_filtered(crate_dir, pkgdir, &filters.checksum_filter)?;
     write_checksum_json(crate_dir, pkg_cksum, &file_cksums)
 }
 
@@ -301,6 +300,7 @@ mod test {
     use crate::fast_vendor::materialization::postprocess_vendored_crate_dir;
     use crate::fast_vendor::materialization::synthesize_missing_build_rs;
     use crate::fast_vendor::materialization::write_checksum_json;
+    use crate::fast_vendor::tests::empty_filter;
     use crate::fast_vendor::tests::gitignore_filter;
 
     #[test]
@@ -339,7 +339,7 @@ build = "build.rs"
         fs::write(actual.join("lib.rs"), b"pub fn example() {}\n").unwrap();
 
         let filters = VendorFilters {
-            checksum_filter: None,
+            checksum_filter: empty_filter(),
         };
         let pkgdir = PathBuf::from("vendor/example-0.1.0");
         postprocess_vendored_crate_dir(
@@ -405,7 +405,7 @@ version = "0.1.0"
         fs::write(actual.join("lib.rs"), b"pub fn example() {}\n").unwrap();
 
         let filters = VendorFilters {
-            checksum_filter: Some(gitignore_filter("vendor/*/Cargo.lock")),
+            checksum_filter: gitignore_filter("vendor/*/Cargo.lock"),
         };
         let pkgdir = PathBuf::from("vendor/example-0.1.0");
         postprocess_vendored_crate_dir(
@@ -468,7 +468,7 @@ build = "./build.rs"
         fs::write(actual.join("build.rs"), b"fn main() {}\n").unwrap();
 
         let filters = VendorFilters {
-            checksum_filter: None,
+            checksum_filter: empty_filter(),
         };
         let pkgdir = PathBuf::from("vendor/example-0.1.0");
         postprocess_vendored_crate_dir(
@@ -537,8 +537,9 @@ build = "build.rs"
         );
 
         let pkgdir = std::path::Path::new("vendor/dragon-breath-0.1.0");
+        let filter = empty_filter();
         let cksums =
-            compute_dir_checksums_filtered(root, pkgdir, None).expect("checksums computed");
+            compute_dir_checksums_filtered(root, pkgdir, &filter).expect("checksums computed");
         assert!(
             cksums.contains_key("build.rs"),
             "synthesized build.rs must be included in .cargo-checksum.json"

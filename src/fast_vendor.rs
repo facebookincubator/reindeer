@@ -691,15 +691,8 @@ fn process_expected_crate(
     result
 }
 
-fn checksum_excluded(
-    pkgdir: &Path,
-    relative: &Path,
-    key: &str,
-    filter: Option<&ChecksumFilter>,
-) -> bool {
-    filter.is_some_and(|filter| {
-        filter.remove_globs.is_match(key) || gitignore_excluded(pkgdir, relative, Some(filter))
-    })
+fn checksum_excluded(pkgdir: &Path, relative: &Path, key: &str, filter: &ChecksumFilter) -> bool {
+    filter.remove_globs.is_match(key) || gitignore_excluded(pkgdir, relative, filter)
 }
 
 fn source_excluded(
@@ -709,20 +702,18 @@ fn source_excluded(
     filters: &VendorFilters,
 ) -> bool {
     materialization_excluded(config, relative)
-        || gitignore_excluded(pkgdir, relative, filters.checksum_filter.as_ref())
+        || gitignore_excluded(pkgdir, relative, &filters.checksum_filter)
 }
 
 fn materialization_excluded(config: &Config, relative: &Path) -> bool {
     !vendor_this(relative) || is_split_buck_file(config, relative)
 }
 
-fn gitignore_excluded(pkgdir: &Path, relative: &Path, filter: Option<&ChecksumFilter>) -> bool {
-    filter.is_some_and(|filter| {
-        filter
-            .gitignore
-            .matched_path_or_any_parents(pkgdir.join(relative), false)
-            .is_ignore()
-    })
+fn gitignore_excluded(pkgdir: &Path, relative: &Path, filter: &ChecksumFilter) -> bool {
+    filter
+        .gitignore
+        .matched_path_or_any_parents(pkgdir.join(relative), false)
+        .is_ignore()
 }
 
 /// Returns `true` if this relative path should be included in the vendor dir.
@@ -984,7 +975,8 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use globset::GlobSetBuilder;
+    use globset::GlobSet;
+    use ignore::gitignore::Gitignore;
     use ignore::gitignore::GitignoreBuilder;
 
     use crate::config::Config;
@@ -998,13 +990,19 @@ mod tests {
     use crate::fast_vendor::remove_expected_vendor_entries_from_cleanup;
     use crate::fast_vendor::vendor_this;
 
+    pub(crate) fn empty_filter() -> ChecksumFilter {
+        ChecksumFilter {
+            remove_globs: GlobSet::empty(),
+            gitignore: Gitignore::empty(),
+        }
+    }
+
     pub(crate) fn gitignore_filter(pattern: &str) -> ChecksumFilter {
-        let remove_globs = GlobSetBuilder::new().build().unwrap();
         let mut builder = GitignoreBuilder::new("/");
         builder.add_line(None, pattern).unwrap();
         let gitignore = builder.build().unwrap();
         ChecksumFilter {
-            remove_globs,
+            remove_globs: GlobSet::empty(),
             gitignore,
         }
     }
