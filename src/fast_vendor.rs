@@ -268,11 +268,11 @@ fn fast_vendor(
             .expect("dst is always under third_party_dir")
             .to_path_buf();
         remove_expected_vendor_entries_from_cleanup(
+            config,
             &mut to_remove,
             &vendor_dir,
             &dst,
             pkg_id.name().as_str(),
-            filters.buck_file_name.as_deref(),
         );
         sources.insert(pkg_id.source_id());
 
@@ -458,7 +458,7 @@ fn fast_vendor(
             .map(|chunk| {
                 s.spawn(move || {
                     for expected in chunk {
-                        process_expected_crate(expected, filters)
+                        process_expected_crate(config, expected, filters)
                             .with_context(|| format!("failed to vendor {}", expected.dst_name))?;
                         let completed = progress.fetch_add(1, Ordering::Relaxed) + 1;
                         if completed == total || completed.is_multiple_of(250) {
@@ -611,14 +611,14 @@ fn collect_vendor_cleanup_entries(vendor_dir: &Path) -> anyhow::Result<BTreeSet<
 }
 
 fn remove_expected_vendor_entries_from_cleanup(
+    config: &Config,
     to_remove: &mut BTreeSet<PathBuf>,
     vendor_dir: &Path,
     source_dir: &Path,
     package_name: &str,
-    buck_file_name: Option<&str>,
 ) {
     to_remove.remove(source_dir);
-    if buck_file_name.is_some() {
+    if config.buck.split {
         to_remove.remove(&vendor_dir.join(package_name));
     }
 }
@@ -668,18 +668,22 @@ fn find_cached_registry_archive_by_tarball(
     Ok(None)
 }
 
-fn is_split_buck_file(relative: &Path, buck_file_name: Option<&str>) -> bool {
-    buck_file_name.is_some_and(|name| relative == Path::new(name))
+fn is_split_buck_file(config: &Config, relative: &Path) -> bool {
+    config.buck.split && *relative == *config.buck.file_name
 }
 
-fn process_expected_crate(expected: &ExpectedCrate, filters: &VendorFilters) -> anyhow::Result<()> {
-    if vendor_dir_matches_expected_source(expected, filters)? {
+fn process_expected_crate(
+    config: &Config,
+    expected: &ExpectedCrate,
+    filters: &VendorFilters,
+) -> anyhow::Result<()> {
+    if vendor_dir_matches_expected_source(config, expected, filters)? {
         return Ok(());
     }
 
     let (staging_root, staging_dst) = make_staging_destination(&expected.dst)?;
     let result = (|| -> anyhow::Result<()> {
-        materialize_expected_crate(expected, &staging_dst, filters)?;
+        materialize_expected_crate(config, expected, &staging_dst, filters)?;
         replace_vendor_dir(&staging_dst, &expected.dst)?;
         Ok(())
     })();
@@ -698,13 +702,18 @@ fn checksum_excluded(
     })
 }
 
-fn source_excluded(pkgdir: &Path, relative: &Path, filters: &VendorFilters) -> bool {
-    materialization_excluded(relative, filters)
+fn source_excluded(
+    config: &Config,
+    pkgdir: &Path,
+    relative: &Path,
+    filters: &VendorFilters,
+) -> bool {
+    materialization_excluded(config, relative)
         || gitignore_excluded(pkgdir, relative, filters.checksum_filter.as_ref())
 }
 
-fn materialization_excluded(relative: &Path, filters: &VendorFilters) -> bool {
-    !vendor_this(relative) || is_split_buck_file(relative, filters.buck_file_name.as_deref())
+fn materialization_excluded(config: &Config, relative: &Path) -> bool {
+    !vendor_this(relative) || is_split_buck_file(config, relative)
 }
 
 fn gitignore_excluded(pkgdir: &Path, relative: &Path, filter: Option<&ChecksumFilter>) -> bool {
@@ -978,6 +987,7 @@ mod tests {
     use globset::GlobSetBuilder;
     use ignore::gitignore::GitignoreBuilder;
 
+    use crate::config::Config;
     use crate::fast_vendor::collect_vendor_cleanup_entries;
     use crate::fast_vendor::extract_crate_name;
     use crate::fast_vendor::file_sha256;
@@ -1163,10 +1173,13 @@ mod tests {
 
     #[test]
     fn test_is_split_buck_file_matches_only_root_configured_name() {
-        assert!(is_split_buck_file(Path::new("BUCK"), Some("BUCK")));
-        assert!(!is_split_buck_file(Path::new("src/BUCK"), Some("BUCK")));
-        assert!(!is_split_buck_file(Path::new("BUCK.v2"), Some("BUCK")));
-        assert!(!is_split_buck_file(Path::new("BUCK"), None));
+        let config = Config::split_for_test();
+        assert!(is_split_buck_file(&config, Path::new("BUCK")));
+        assert!(!is_split_buck_file(&config, Path::new("src/BUCK")));
+        assert!(!is_split_buck_file(&config, Path::new("BUCK.v2")));
+
+        let config = Config::default_for_test();
+        assert!(!is_split_buck_file(&config, Path::new("BUCK")));
     }
 
     #[test]
@@ -1267,6 +1280,7 @@ mod tests {
 
     #[test]
     fn test_remove_expected_vendor_entries_from_cleanup_preserves_split_buck_package() {
+        let config = Config::split_for_test();
         let dir = tempfile::tempdir().expect("tempdir");
         let vendor_dir = dir.path();
         let source_dir = vendor_dir.join("example-0.1.0");
@@ -1279,11 +1293,11 @@ mod tests {
         ]);
 
         remove_expected_vendor_entries_from_cleanup(
+            &config,
             &mut to_remove,
             vendor_dir,
             &source_dir,
             "example",
-            Some("BUCK"),
         );
 
         assert_eq!(

@@ -15,6 +15,7 @@ use anyhow::Context as _;
 use anyhow::bail;
 use cargo_toml::OptionalFile;
 
+use crate::config::Config;
 use crate::fast_vendor::ExpectedCrate;
 use crate::fast_vendor::SYNTHESIZED_BUILD_RS;
 use crate::fast_vendor::cargo_checksum::checksum_json_bytes;
@@ -39,13 +40,14 @@ pub(super) enum Materialization {
 }
 
 pub(super) fn materialize_expected_crate(
+    config: &Config,
     expected: &ExpectedCrate,
     staging_dst: &Path,
     filters: &VendorFilters,
 ) -> anyhow::Result<()> {
     match &expected.materialization {
         Materialization::RegistryArchive { archive } => {
-            unpack_package_archive(archive, staging_dst, filters).with_context(|| {
+            unpack_package_archive(config, archive, staging_dst).with_context(|| {
                 format!(
                     "failed to unpack {} into {}",
                     archive.display(),
@@ -59,15 +61,16 @@ pub(super) fn materialize_expected_crate(
             normalized_cargo_toml,
         } => {
             copy_vendor_sources(
+                config,
                 src_root,
                 file_paths,
                 normalized_cargo_toml.as_deref(),
                 staging_dst,
-                filters,
             )?;
         }
     }
     postprocess_vendored_crate_dir(
+        config,
         staging_dst,
         &expected.pkgdir,
         filters,
@@ -77,23 +80,23 @@ pub(super) fn materialize_expected_crate(
 
 /// Copy source files from a non-registry package into the vendor directory.
 ///
-/// BUCK files (when `filters.buck_file_name` is set) and VCS bookkeeping files
-/// are excluded from the copy entirely. Files matched by checksum globs or
+/// BUCK files (when `config.buck.split` is set) and VCS bookkeeping files are
+/// excluded from the copy entirely. Files matched by checksum globs or
 /// configured gitignore rules are copied to disk and handled later when
 /// `.cargo-checksum.json` is rewritten.
 fn copy_vendor_sources(
+    config: &Config,
     src_root: &Path,
     file_paths: &[PathBuf],
     normalized_cargo_toml: Option<&str>,
     dst: &Path,
-    filters: &VendorFilters,
 ) -> anyhow::Result<()> {
     for src_path in file_paths {
         let relative = src_path.strip_prefix(src_root).with_context(|| {
             format!("{} is not under {}", src_path.display(), src_root.display(),)
         })?;
 
-        if materialization_excluded(relative, filters) {
+        if materialization_excluded(config, relative) {
             continue;
         }
 
@@ -158,12 +161,12 @@ fn write_vendored_source_file(
         .with_context(|| format!("failed to write {}", dst_path.display()))
 }
 
-fn remove_split_buck_file(crate_dir: &Path, buck_file_name: Option<&str>) -> anyhow::Result<()> {
-    let Some(buck_file_name) = buck_file_name else {
-        return Ok(());
-    };
-    let buck_path = crate_dir.join(buck_file_name);
-    remove_existing_path(&buck_path)
+fn remove_split_buck_file(config: &Config, crate_dir: &Path) -> anyhow::Result<()> {
+    if config.buck.split {
+        let buck_path = crate_dir.join(&*config.buck.file_name);
+        remove_existing_path(&buck_path)?;
+    }
+    Ok(())
 }
 
 /// Synthesize a stub `build.rs` if the manifest declares a build script path
@@ -213,12 +216,13 @@ fn synthesize_missing_build_rs(crate_dir: &Path) -> anyhow::Result<()> {
 }
 
 fn postprocess_vendored_crate_dir(
+    config: &Config,
     crate_dir: &Path,
     pkgdir: &Path,
     filters: &VendorFilters,
     pkg_cksum: Option<&str>,
 ) -> anyhow::Result<()> {
-    remove_split_buck_file(crate_dir, filters.buck_file_name.as_deref())?;
+    remove_split_buck_file(config, crate_dir)?;
     remove_existing_path(&crate_dir.join(".cargo-checksum.json"))?;
     synthesize_missing_build_rs(crate_dir)?;
     let file_cksums =
@@ -241,11 +245,7 @@ fn write_checksum_json(
 /// relative to the crate root. Replicates cargo's zip-bomb and path-traversal
 /// protections. Size limit: 512 MiB minimum, or 20x the compressed archive
 /// size (matching cargo's defaults).
-fn unpack_package_archive(
-    archive: &Path,
-    dst: &Path,
-    filters: &VendorFilters,
-) -> anyhow::Result<()> {
+fn unpack_package_archive(config: &Config, archive: &Path, dst: &Path) -> anyhow::Result<()> {
     let tarball =
         fs::File::open(archive).with_context(|| format!("failed to open {}", archive.display()))?;
     let archive_size = tarball.metadata()?.len();
@@ -268,7 +268,7 @@ fn unpack_package_archive(
             bail!("invalid tarball: entry at {entry_path:?} is not under {prefix:?}");
         };
 
-        if materialization_excluded(relative, filters) {
+        if materialization_excluded(config, relative) {
             continue;
         }
 
@@ -291,6 +291,7 @@ mod test {
     use std::fs;
     use std::path::PathBuf;
 
+    use crate::config::Config;
     use crate::fast_vendor::ExpectedCrate;
     use crate::fast_vendor::cargo_checksum::compute_dir_checksums_filtered;
     use crate::fast_vendor::filter::VendorFilters;
@@ -304,6 +305,7 @@ mod test {
 
     #[test]
     fn test_vendor_dir_matches_expected_source_does_not_trust_checksum_json() {
+        let config = Config::default_for_test();
         let dir = tempfile::tempdir().expect("tempdir");
         let src = dir.path().join("source");
         let actual = dir.path().join("actual");
@@ -337,12 +339,17 @@ build = "build.rs"
         fs::write(actual.join("lib.rs"), b"pub fn example() {}\n").unwrap();
 
         let filters = VendorFilters {
-            buck_file_name: None,
             checksum_filter: None,
         };
         let pkgdir = PathBuf::from("vendor/example-0.1.0");
-        postprocess_vendored_crate_dir(&actual, &pkgdir, &filters, Some("package-checksum"))
-            .unwrap();
+        postprocess_vendored_crate_dir(
+            &config,
+            &actual,
+            &pkgdir,
+            &filters,
+            Some("package-checksum"),
+        )
+        .unwrap();
 
         let expected = ExpectedCrate {
             dst_name: "example-0.1.0".to_owned(),
@@ -361,7 +368,7 @@ build = "build.rs"
         };
 
         assert!(
-            vendor_dir_matches_expected_source(&expected, &filters).unwrap(),
+            vendor_dir_matches_expected_source(&config, &expected, &filters).unwrap(),
             "matching source contents should take the fast no-op path"
         );
 
@@ -372,13 +379,14 @@ build = "build.rs"
         .unwrap();
 
         assert!(
-            !vendor_dir_matches_expected_source(&expected, &filters).unwrap(),
+            !vendor_dir_matches_expected_source(&config, &expected, &filters).unwrap(),
             "editing checksum metadata must invalidate the fast no-op path"
         );
     }
 
     #[test]
     fn test_vendor_dir_matches_expected_source_ignores_gitignore_filtered_files() {
+        let config = Config::default_for_test();
         let dir = tempfile::tempdir().expect("tempdir");
         let src = dir.path().join("source");
         let actual = dir.path().join("actual");
@@ -397,12 +405,17 @@ version = "0.1.0"
         fs::write(actual.join("lib.rs"), b"pub fn example() {}\n").unwrap();
 
         let filters = VendorFilters {
-            buck_file_name: None,
             checksum_filter: Some(gitignore_filter("vendor/*/Cargo.lock")),
         };
         let pkgdir = PathBuf::from("vendor/example-0.1.0");
-        postprocess_vendored_crate_dir(&actual, &pkgdir, &filters, Some("package-checksum"))
-            .unwrap();
+        postprocess_vendored_crate_dir(
+            &config,
+            &actual,
+            &pkgdir,
+            &filters,
+            Some("package-checksum"),
+        )
+        .unwrap();
 
         let expected = ExpectedCrate {
             dst_name: "example-0.1.0".to_owned(),
@@ -421,19 +434,20 @@ version = "0.1.0"
         };
 
         assert!(
-            vendor_dir_matches_expected_source(&expected, &filters).unwrap(),
+            vendor_dir_matches_expected_source(&config, &expected, &filters).unwrap(),
             "gitignore-filtered source files missing from actual should not invalidate no-op"
         );
 
         fs::write(actual.join("Cargo.lock"), b"actual lockfile\n").unwrap();
         assert!(
-            vendor_dir_matches_expected_source(&expected, &filters).unwrap(),
+            vendor_dir_matches_expected_source(&config, &expected, &filters).unwrap(),
             "gitignore-filtered actual files should not invalidate no-op"
         );
     }
 
     #[test]
     fn test_vendor_dir_matches_expected_source_normalizes_build_script_path() {
+        let config = Config::default_for_test();
         let dir = tempfile::tempdir().expect("tempdir");
         let src = dir.path().join("source");
         let actual = dir.path().join("actual");
@@ -454,12 +468,17 @@ build = "./build.rs"
         fs::write(actual.join("build.rs"), b"fn main() {}\n").unwrap();
 
         let filters = VendorFilters {
-            buck_file_name: None,
             checksum_filter: None,
         };
         let pkgdir = PathBuf::from("vendor/example-0.1.0");
-        postprocess_vendored_crate_dir(&actual, &pkgdir, &filters, Some("package-checksum"))
-            .unwrap();
+        postprocess_vendored_crate_dir(
+            &config,
+            &actual,
+            &pkgdir,
+            &filters,
+            Some("package-checksum"),
+        )
+        .unwrap();
 
         let expected = ExpectedCrate {
             dst_name: "example-0.1.0".to_owned(),
@@ -478,7 +497,7 @@ build = "./build.rs"
         };
 
         assert!(
-            vendor_dir_matches_expected_source(&expected, &filters).unwrap(),
+            vendor_dir_matches_expected_source(&config, &expected, &filters).unwrap(),
             "`./build.rs` in Cargo.toml should match `build.rs` in the vendor tree"
         );
     }
@@ -581,6 +600,7 @@ build = "scripts/build.rs"
 
     #[test]
     fn test_copy_vendor_sources_excludes_buck_file() {
+        let config = Config::split_for_test();
         let src_dir = tempfile::tempdir().expect("src tempdir");
         let dst_dir = tempfile::tempdir().expect("dst tempdir");
         let src = src_dir.path();
@@ -590,12 +610,8 @@ build = "scripts/build.rs"
         fs::write(src.join("BUCK"), b"rust_library(name=\"fell-off-a-truck\")").unwrap();
 
         let file_paths = vec![src.join("lib.rs"), src.join("BUCK")];
-        let filters = VendorFilters {
-            buck_file_name: Some("BUCK".to_owned()),
-            checksum_filter: None,
-        };
 
-        copy_vendor_sources(src, &file_paths, None, dst, &filters).expect("copy succeeded");
+        copy_vendor_sources(&config, src, &file_paths, None, dst).expect("copy succeeded");
 
         assert!(
             dst.join("lib.rs").exists(),
@@ -609,6 +625,7 @@ build = "scripts/build.rs"
 
     #[test]
     fn test_copy_vendor_sources_gitignore_filter_keeps_source_file() {
+        let config = Config::default_for_test();
         let src_dir = tempfile::tempdir().expect("src tempdir");
         let dst_dir = tempfile::tempdir().expect("dst tempdir");
         let src = src_dir.path();
@@ -622,12 +639,8 @@ build = "scripts/build.rs"
         fs::write(src.join("Cargo.toml.orig"), b"[package]\nname = \"orig\"\n").unwrap();
 
         let file_paths = vec![src.join("Cargo.toml"), src.join("Cargo.toml.orig")];
-        let filters = VendorFilters {
-            buck_file_name: None,
-            checksum_filter: Some(gitignore_filter("vendor/*/Cargo.toml.orig")),
-        };
 
-        copy_vendor_sources(src, &file_paths, None, dst, &filters).expect("copy succeeded");
+        copy_vendor_sources(&config, src, &file_paths, None, dst).expect("copy succeeded");
 
         assert!(
             dst.join("Cargo.toml.orig").exists(),
@@ -637,6 +650,7 @@ build = "scripts/build.rs"
 
     #[test]
     fn test_copy_vendor_sources_uses_normalized_cargo_toml() {
+        let config = Config::default_for_test();
         let src_dir = tempfile::tempdir().expect("src tempdir");
         let dst_dir = tempfile::tempdir().expect("dst tempdir");
         let src = src_dir.path();
@@ -650,14 +664,10 @@ build = "scripts/build.rs"
         fs::write(src.join("lib.rs"), b"pub fn example() {}\n").unwrap();
 
         let file_paths = vec![src.join("Cargo.toml"), src.join("lib.rs")];
-        let filters = VendorFilters {
-            buck_file_name: None,
-            checksum_filter: None,
-        };
         let normalized =
             "# THIS FILE IS AUTOMATICALLY GENERATED BY CARGO\n\n[package]\nname = \"example\"\n";
 
-        copy_vendor_sources(src, &file_paths, Some(normalized), dst, &filters)
+        copy_vendor_sources(&config, src, &file_paths, Some(normalized), dst)
             .expect("copy succeeded");
 
         assert_eq!(
@@ -697,6 +707,7 @@ build = "scripts/build.rs"
     // Invariant: copy_vendor_sources copies files while skipping excluded paths.
     #[test]
     fn test_copy_vendor_sources() {
+        let config = Config::default_for_test();
         let src_dir = tempfile::tempdir().unwrap();
         std::fs::write(src_dir.path().join("lib.rs"), b"fn main() {}").unwrap();
         std::fs::write(src_dir.path().join(".gitignore"), b"/target").unwrap();
@@ -709,11 +720,7 @@ build = "scripts/build.rs"
             src_dir.path().join("Cargo.toml"),
         ];
 
-        let filters = VendorFilters {
-            buck_file_name: None,
-            checksum_filter: None,
-        };
-        copy_vendor_sources(src_dir.path(), &file_paths, None, dst_dir.path(), &filters).unwrap();
+        copy_vendor_sources(&config, src_dir.path(), &file_paths, None, dst_dir.path()).unwrap();
 
         assert!(dst_dir.path().join("lib.rs").exists());
         assert!(!dst_dir.path().join(".gitignore").exists());

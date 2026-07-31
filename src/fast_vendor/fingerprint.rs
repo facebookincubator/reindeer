@@ -18,6 +18,7 @@ use sha2::Digest as _;
 use sha2::Sha256;
 use walkdir::WalkDir;
 
+use crate::config::Config;
 use crate::fast_vendor::ExpectedCrate;
 use crate::fast_vendor::SYNTHESIZED_BUILD_RS;
 use crate::fast_vendor::bytes_sha256;
@@ -38,6 +39,7 @@ pub(super) enum TreeEntryFingerprint {
 }
 
 pub(super) fn vendor_dir_matches_expected_source(
+    config: &Config,
     expected: &ExpectedCrate,
     filters: &VendorFilters,
 ) -> anyhow::Result<bool> {
@@ -48,16 +50,18 @@ pub(super) fn vendor_dir_matches_expected_source(
         return Ok(false);
     }
 
-    Ok(expected_tree_fingerprint(expected, filters)?
-        == tree_fingerprint(&expected.dst, &expected.pkgdir, filters)?)
+    Ok(expected_tree_fingerprint(config, expected, filters)?
+        == tree_fingerprint(config, &expected.dst, &expected.pkgdir, filters)?)
 }
 
 fn expected_tree_fingerprint(
+    config: &Config,
     expected: &ExpectedCrate,
     filters: &VendorFilters,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
     match &expected.materialization {
         Materialization::RegistryArchive { archive } => expected_registry_archive_fingerprint(
+            config,
             expected,
             archive,
             filters,
@@ -68,6 +72,7 @@ fn expected_tree_fingerprint(
             file_paths,
             normalized_cargo_toml,
         } => expected_copy_source_fingerprint(
+            config,
             src_root,
             file_paths,
             normalized_cargo_toml.as_deref(),
@@ -79,6 +84,7 @@ fn expected_tree_fingerprint(
 }
 
 fn expected_registry_archive_fingerprint(
+    config: &Config,
     expected: &ExpectedCrate,
     archive: &Path,
     filters: &VendorFilters,
@@ -106,7 +112,7 @@ fn expected_registry_archive_fingerprint(
             format!("invalid tarball: entry at {entry_path:?} is not under {prefix:?}")
         })?;
 
-        if source_excluded(&expected.pkgdir, relative, filters)
+        if source_excluded(config, &expected.pkgdir, relative, filters)
             || relative == Path::new(".cargo-checksum.json")
         {
             continue;
@@ -175,6 +181,7 @@ fn expected_registry_archive_fingerprint(
 }
 
 fn expected_copy_source_fingerprint(
+    config: &Config,
     src_root: &Path,
     file_paths: &[PathBuf],
     normalized_cargo_toml: Option<&str>,
@@ -191,7 +198,7 @@ fn expected_copy_source_fingerprint(
             format!("{} is not under {}", src_path.display(), src_root.display(),)
         })?;
 
-        if source_excluded(pkgdir, relative, filters)
+        if source_excluded(config, pkgdir, relative, filters)
             || relative == Path::new(".cargo-checksum.json")
         {
             continue;
@@ -312,6 +319,7 @@ fn path_key(path: &Path) -> anyhow::Result<String> {
 }
 
 fn tree_fingerprint(
+    config: &Config,
     root: &Path,
     pkgdir: &Path,
     filters: &VendorFilters,
@@ -326,7 +334,7 @@ fn tree_fingerprint(
         let relative = path
             .strip_prefix(root)
             .expect("walkdir entry must be under root");
-        if source_excluded(pkgdir, relative, filters) {
+        if source_excluded(config, pkgdir, relative, filters) {
             continue;
         }
         let relative = relative.to_string_lossy().replace('\\', "/");
@@ -353,21 +361,22 @@ mod test {
     use std::fs;
     use std::path::Path;
 
+    use crate::config::Config;
     use crate::fast_vendor::filter::VendorFilters;
     use crate::fast_vendor::fingerprint::tree_fingerprint;
 
     #[test]
     fn test_tree_fingerprint_ignores_empty_directories() {
+        let config = Config::default_for_test();
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
         fs::create_dir(root.join("empty")).unwrap();
 
         let filters = VendorFilters {
-            buck_file_name: None,
             checksum_filter: None,
         };
         let fingerprint =
-            tree_fingerprint(root, Path::new("vendor/example-0.1.0"), &filters).unwrap();
+            tree_fingerprint(&config, root, Path::new("vendor/example-0.1.0"), &filters).unwrap();
 
         assert!(
             !fingerprint.contains_key("empty"),

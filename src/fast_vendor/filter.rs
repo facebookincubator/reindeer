@@ -32,9 +32,6 @@ pub(crate) struct ChecksumFilter {
 ///
 /// Controls which files are excluded from the vendor directory and checksums.
 pub(crate) struct VendorFilters {
-    /// Name of the BUCK file to exclude from extraction and checksums (e.g. `"BUCK"`).
-    /// `None` means no exclusion (split mode is disabled).
-    pub buck_file_name: Option<String>,
     /// Glob/gitignore rules for files to omit from `.cargo-checksum.json`.
     pub checksum_filter: Option<ChecksumFilter>,
 }
@@ -44,12 +41,6 @@ pub(crate) fn build_filters(
     paths: &Paths,
     source_config: &VendorSourceConfig,
 ) -> anyhow::Result<VendorFilters> {
-    let buck_file_name = if config.buck.split {
-        Some((*config.buck.file_name).clone())
-    } else {
-        None
-    };
-
     let checksum_filter = build_checksum_filter(
         config.buck.split,
         &config.buck.file_name,
@@ -57,10 +48,7 @@ pub(crate) fn build_filters(
         &paths.third_party_dir,
     )?;
 
-    Ok(VendorFilters {
-        buck_file_name,
-        checksum_filter,
-    })
+    Ok(VendorFilters { checksum_filter })
 }
 
 /// Build the checksum filter from primitive inputs.
