@@ -23,7 +23,6 @@ use crate::fast_vendor::ExpectedCrate;
 use crate::fast_vendor::SYNTHESIZED_BUILD_RS;
 use crate::fast_vendor::bytes_sha256;
 use crate::fast_vendor::cargo_checksum::checksum_json_bytes;
-use crate::fast_vendor::checksum_excluded;
 use crate::fast_vendor::file_sha256;
 use crate::fast_vendor::filter::VendorFilter;
 use crate::fast_vendor::is_split_buck_file;
@@ -149,15 +148,7 @@ fn expected_registry_archive_fingerprint(
                 }
             }
             fingerprint.insert(key.clone(), TreeEntryFingerprint::File(hash.clone()));
-            maybe_insert_checksum(
-                config,
-                &mut file_cksums,
-                &expected.pkgdir,
-                relative,
-                &key,
-                &hash,
-                filter,
-            );
+            file_cksums.insert(key, hash);
         } else if entry_type.is_symlink() {
             let target = entry
                 .link_name()
@@ -172,15 +163,7 @@ fn expected_registry_archive_fingerprint(
         }
     }
 
-    finish_expected_fingerprint(
-        config,
-        fingerprint,
-        file_cksums,
-        &expected.pkgdir,
-        filter,
-        pkg_cksum,
-        cargo_toml.as_deref(),
-    )
+    finish_expected_fingerprint(fingerprint, file_cksums, pkg_cksum, cargo_toml.as_deref())
 }
 
 fn expected_copy_source_fingerprint(
@@ -224,45 +207,19 @@ fn expected_copy_source_fingerprint(
             }
         }
         fingerprint.insert(key.clone(), TreeEntryFingerprint::File(hash.clone()));
-        maybe_insert_checksum(
-            config,
-            &mut file_cksums,
-            pkgdir,
-            relative,
-            &key,
-            &hash,
-            filter,
-        );
+        file_cksums.insert(key, hash);
     }
 
-    finish_expected_fingerprint(
-        config,
-        fingerprint,
-        file_cksums,
-        pkgdir,
-        filter,
-        pkg_cksum,
-        cargo_toml.as_deref(),
-    )
+    finish_expected_fingerprint(fingerprint, file_cksums, pkg_cksum, cargo_toml.as_deref())
 }
 
 fn finish_expected_fingerprint(
-    config: &Config,
     mut fingerprint: BTreeMap<String, TreeEntryFingerprint>,
     mut file_cksums: BTreeMap<String, String>,
-    pkgdir: &Path,
-    filter: &VendorFilter,
     pkg_cksum: Option<&str>,
     cargo_toml: Option<&str>,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
-    synthesize_missing_build_rs_fingerprint(
-        config,
-        &mut fingerprint,
-        &mut file_cksums,
-        pkgdir,
-        filter,
-        cargo_toml,
-    )?;
+    synthesize_missing_build_rs_fingerprint(&mut fingerprint, &mut file_cksums, cargo_toml)?;
     let checksum_json = checksum_json_bytes(pkg_cksum, &file_cksums)?;
     fingerprint.insert(
         ".cargo-checksum.json".to_owned(),
@@ -272,11 +229,8 @@ fn finish_expected_fingerprint(
 }
 
 fn synthesize_missing_build_rs_fingerprint(
-    config: &Config,
     fingerprint: &mut BTreeMap<String, TreeEntryFingerprint>,
     file_cksums: &mut BTreeMap<String, String>,
-    pkgdir: &Path,
-    filter: &VendorFilter,
     cargo_toml: Option<&str>,
 ) -> anyhow::Result<()> {
     type TomlManifest = cargo_toml::Manifest<serde::de::IgnoredAny>;
@@ -301,31 +255,8 @@ fn synthesize_missing_build_rs_fingerprint(
 
     let hash = bytes_sha256(SYNTHESIZED_BUILD_RS);
     fingerprint.insert(key.clone(), TreeEntryFingerprint::File(hash.clone()));
-    maybe_insert_checksum(
-        config,
-        file_cksums,
-        pkgdir,
-        &build_script_path,
-        &key,
-        &hash,
-        filter,
-    );
+    file_cksums.insert(key, hash);
     Ok(())
-}
-
-fn maybe_insert_checksum(
-    config: &Config,
-    file_cksums: &mut BTreeMap<String, String>,
-    pkgdir: &Path,
-    relative: &Path,
-    key: &str,
-    hash: &str,
-    filter: &VendorFilter,
-) {
-    if checksum_excluded(config, pkgdir, relative, filter) {
-        return;
-    }
-    file_cksums.insert(key.to_owned(), hash.to_owned());
 }
 
 fn path_key(path: &Path) -> anyhow::Result<String> {

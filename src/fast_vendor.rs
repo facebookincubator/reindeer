@@ -683,15 +683,6 @@ fn process_expected_crate(
     Ok(())
 }
 
-fn checksum_excluded(
-    config: &Config,
-    pkgdir: &Path,
-    relative: &Path,
-    filter: &VendorFilter,
-) -> bool {
-    is_split_buck_file(config, relative) || gitignore_excluded(pkgdir, relative, filter)
-}
-
 fn materialization_excluded(
     config: &Config,
     pkgdir: &Path,
