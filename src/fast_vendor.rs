@@ -692,12 +692,15 @@ fn checksum_excluded(
     is_split_buck_file(config, relative) || gitignore_excluded(pkgdir, relative, filter)
 }
 
-fn source_excluded(config: &Config, pkgdir: &Path, relative: &Path, filter: &VendorFilter) -> bool {
-    materialization_excluded(config, relative) || gitignore_excluded(pkgdir, relative, filter)
-}
-
-fn materialization_excluded(config: &Config, relative: &Path) -> bool {
-    !vendor_this(relative) || is_split_buck_file(config, relative)
+fn materialization_excluded(
+    config: &Config,
+    pkgdir: &Path,
+    relative: &Path,
+    filter: &VendorFilter,
+) -> bool {
+    !vendor_this(relative)
+        || is_split_buck_file(config, relative)
+        || gitignore_excluded(pkgdir, relative, filter)
 }
 
 fn gitignore_excluded(pkgdir: &Path, relative: &Path, filter: &VendorFilter) -> bool {
@@ -936,7 +939,6 @@ mod tests {
     use std::path::Path;
 
     use ignore::gitignore::Gitignore;
-    use ignore::gitignore::GitignoreBuilder;
 
     use crate::config::Config;
     use crate::fast_vendor::collect_vendor_cleanup_entries;
@@ -952,13 +954,6 @@ mod tests {
         VendorFilter {
             gitignore: Gitignore::empty(),
         }
-    }
-
-    pub(crate) fn gitignore_filter(pattern: &str) -> VendorFilter {
-        let mut builder = GitignoreBuilder::new("/");
-        builder.add_line(None, pattern).unwrap();
-        let gitignore = builder.build().unwrap();
-        VendorFilter { gitignore }
     }
 
     #[test]

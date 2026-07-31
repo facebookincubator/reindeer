@@ -26,11 +26,12 @@ use crate::fast_vendor::cargo_checksum::checksum_json_bytes;
 use crate::fast_vendor::checksum_excluded;
 use crate::fast_vendor::file_sha256;
 use crate::fast_vendor::filter::VendorFilter;
+use crate::fast_vendor::is_split_buck_file;
 use crate::fast_vendor::limit_reader::LimitReader;
 use crate::fast_vendor::materialization::Materialization;
+use crate::fast_vendor::materialization_excluded;
 use crate::fast_vendor::normalize_manifest_path;
 use crate::fast_vendor::path_file_type_no_follow;
-use crate::fast_vendor::source_excluded;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum TreeEntryFingerprint {
@@ -51,7 +52,7 @@ pub(super) fn vendor_dir_matches_expected_source(
     }
 
     Ok(expected_tree_fingerprint(config, expected, filter)?
-        == tree_fingerprint(config, &expected.dst, &expected.pkgdir, filter)?)
+        == tree_fingerprint(config, &expected.dst)?)
 }
 
 fn expected_tree_fingerprint(
@@ -112,7 +113,7 @@ fn expected_registry_archive_fingerprint(
             format!("invalid tarball: entry at {entry_path:?} is not under {prefix:?}")
         })?;
 
-        if source_excluded(config, &expected.pkgdir, relative, filter)
+        if materialization_excluded(config, &expected.pkgdir, relative, filter)
             || relative == Path::new(".cargo-checksum.json")
         {
             continue;
@@ -200,7 +201,7 @@ fn expected_copy_source_fingerprint(
             format!("{} is not under {}", src_path.display(), src_root.display(),)
         })?;
 
-        if source_excluded(config, pkgdir, relative, filter)
+        if materialization_excluded(config, pkgdir, relative, filter)
             || relative == Path::new(".cargo-checksum.json")
         {
             continue;
@@ -337,8 +338,6 @@ fn path_key(path: &Path) -> anyhow::Result<String> {
 fn tree_fingerprint(
     config: &Config,
     root: &Path,
-    pkgdir: &Path,
-    filter: &VendorFilter,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
     let mut entries = BTreeMap::new();
     for entry in WalkDir::new(root).into_iter() {
@@ -350,7 +349,7 @@ fn tree_fingerprint(
         let relative = path
             .strip_prefix(root)
             .expect("walkdir entry must be under root");
-        if source_excluded(config, pkgdir, relative, filter) {
+        if is_split_buck_file(config, relative) {
             continue;
         }
         let relative = relative.to_string_lossy().replace('\\', "/");
@@ -375,11 +374,9 @@ fn tree_fingerprint(
 #[cfg(test)]
 mod test {
     use std::fs;
-    use std::path::Path;
 
     use crate::config::Config;
     use crate::fast_vendor::fingerprint::tree_fingerprint;
-    use crate::fast_vendor::tests::empty_filter;
 
     #[test]
     fn test_tree_fingerprint_ignores_empty_directories() {
@@ -388,9 +385,7 @@ mod test {
         let root = dir.path();
         fs::create_dir(root.join("empty")).unwrap();
 
-        let filter = empty_filter();
-        let fingerprint =
-            tree_fingerprint(&config, root, Path::new("vendor/example-0.1.0"), &filter).unwrap();
+        let fingerprint = tree_fingerprint(&config, root).unwrap();
 
         assert!(
             !fingerprint.contains_key("empty"),

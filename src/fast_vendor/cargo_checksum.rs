@@ -13,10 +13,7 @@ use walkdir::WalkDir;
 
 use crate::config::Config;
 use crate::fast_vendor::bytes_sha256;
-use crate::fast_vendor::checksum_excluded;
-use crate::fast_vendor::filter::VendorFilter;
-use crate::fast_vendor::gitignore_excluded;
-use crate::fast_vendor::vendor_this;
+use crate::fast_vendor::is_split_buck_file;
 
 /// Walk a directory and compute SHA256 checksums for all regular files.
 ///
@@ -26,8 +23,6 @@ use crate::fast_vendor::vendor_this;
 pub(crate) fn compute_dir_checksums_filtered(
     config: &Config,
     root: &Path,
-    pkgdir: &Path,
-    filter: &VendorFilter,
 ) -> anyhow::Result<BTreeMap<String, String>> {
     WalkDir::new(root)
         .into_iter()
@@ -43,15 +38,7 @@ pub(crate) fn compute_dir_checksums_filtered(
                 .strip_prefix(root)
                 .expect("walkdir entry must be under root");
             let key = relative.to_str().expect("non-UTF8 path").replace('\\', "/");
-            if key == ".cargo-checksum.json" {
-                return Ok(None);
-            }
-            if !vendor_this(relative) || gitignore_excluded(pkgdir, relative, filter) {
-                log::trace!("checksum: skipping source-excluded file {}", key);
-                return Ok(None);
-            }
-            if checksum_excluded(config, pkgdir, relative, filter) {
-                log::trace!("checksum: skipping excluded file {}", key);
+            if key == ".cargo-checksum.json" || is_split_buck_file(config, relative) {
                 return Ok(None);
             }
             let contents = fs::read(path)?;
@@ -76,14 +63,11 @@ pub(crate) fn checksum_json_bytes(
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
 
     use sha2::Digest as _;
 
     use crate::config::Config;
     use crate::fast_vendor::cargo_checksum::compute_dir_checksums_filtered;
-    use crate::fast_vendor::tests::empty_filter;
-    use crate::fast_vendor::tests::gitignore_filter;
 
     #[test]
     fn test_checksum_excludes_buck_entry() {
@@ -98,11 +82,7 @@ mod tests {
         fs::write(root.join("lib.rs"), b"fn main() {}").unwrap();
         fs::write(root.join("Cargo.toml"), b"[package]").unwrap();
 
-        let filter = empty_filter();
-        let pkgdir = std::path::Path::new("vendor/sourdough-starter-1.0.0");
-
-        let cksums = compute_dir_checksums_filtered(&config, root, pkgdir, &filter)
-            .expect("checksums computed");
+        let cksums = compute_dir_checksums_filtered(&config, root).expect("checksums computed");
 
         // lib.rs and Cargo.toml should be present; BUCK should not be.
         assert!(
@@ -127,52 +107,12 @@ mod tests {
         fs::write(root.join("lib.rs"), b"fn main() {}").unwrap();
         fs::write(root.join(".cargo-checksum.json"), b"not source").unwrap();
 
-        let filter = empty_filter();
-        let cksums = compute_dir_checksums_filtered(
-            &config,
-            root,
-            Path::new("vendor/example-0.1.0"),
-            &filter,
-        )
-        .unwrap();
+        let cksums = compute_dir_checksums_filtered(&config, root).unwrap();
 
         assert!(cksums.contains_key("lib.rs"));
         assert!(
             !cksums.contains_key(".cargo-checksum.json"),
             "checksum metadata is generated, not source content"
-        );
-    }
-
-    #[test]
-    fn test_checksum_filter_gitignore_excludes_source_file() {
-        let config = Config::default_for_test();
-        let dir = tempfile::tempdir().expect("tempdir");
-        let root = dir.path();
-
-        fs::write(
-            root.join("Cargo.toml.orig"),
-            b"[package]\nname = \"orig\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("Cargo.toml"),
-            b"[package]\nname = \"normalized\"\n",
-        )
-        .unwrap();
-
-        let filter = gitignore_filter("vendor/*/Cargo.toml.orig");
-        let pkgdir = std::path::Path::new("vendor/fb-procfs-0.9.0");
-
-        let cksums = compute_dir_checksums_filtered(&config, root, pkgdir, &filter)
-            .expect("checksums computed");
-
-        assert!(
-            !cksums.contains_key("Cargo.toml.orig"),
-            "gitignore-matched Cargo.toml.orig should be excluded from checksum map"
-        );
-        assert!(
-            cksums.contains_key("Cargo.toml"),
-            "Cargo.toml should remain in checksum map"
         );
     }
 
@@ -186,14 +126,7 @@ mod tests {
         std::fs::create_dir(tmp.path().join("sub")).unwrap();
         std::fs::write(tmp.path().join("sub/b.txt"), b"world").unwrap();
 
-        let filter = empty_filter();
-        let cksums = compute_dir_checksums_filtered(
-            &config,
-            tmp.path(),
-            Path::new("vendor/example-0.1.0"),
-            &filter,
-        )
-        .unwrap();
+        let cksums = compute_dir_checksums_filtered(&config, tmp.path()).unwrap();
         assert_eq!(cksums.len(), 2);
         assert!(cksums.contains_key("a.txt"));
         assert!(cksums.contains_key("sub/b.txt"));

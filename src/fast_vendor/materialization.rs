@@ -47,7 +47,7 @@ pub(super) fn materialize_expected_crate(
 ) -> anyhow::Result<()> {
     match &expected.materialization {
         Materialization::RegistryArchive { archive } => {
-            unpack_package_archive(config, archive, dst).with_context(|| {
+            unpack_package_archive(config, archive, dst, filter).with_context(|| {
                 format!(
                     "failed to unpack {} into {}",
                     archive.display(),
@@ -66,16 +66,11 @@ pub(super) fn materialize_expected_crate(
                 file_paths,
                 normalized_cargo_toml.as_deref(),
                 dst,
+                filter,
             )?;
         }
     }
-    postprocess_vendored_crate_dir(
-        config,
-        dst,
-        &expected.pkgdir,
-        filter,
-        expected.pkg_cksum.as_deref(),
-    )
+    postprocess_vendored_crate_dir(config, dst, expected.pkg_cksum.as_deref())
 }
 
 /// Copy source files from a non-registry package into the vendor directory.
@@ -90,13 +85,14 @@ fn copy_vendor_sources(
     file_paths: &[PathBuf],
     normalized_cargo_toml: Option<&str>,
     dst: &Path,
+    filter: &VendorFilter,
 ) -> anyhow::Result<()> {
     for src_path in file_paths {
         let relative = src_path.strip_prefix(src_root).with_context(|| {
             format!("{} is not under {}", src_path.display(), src_root.display(),)
         })?;
 
-        if materialization_excluded(config, relative) {
+        if materialization_excluded(config, dst, relative, filter) {
             continue;
         }
 
@@ -161,14 +157,6 @@ fn write_vendored_source_file(
         .with_context(|| format!("failed to write {}", dst_path.display()))
 }
 
-fn remove_split_buck_file(config: &Config, crate_dir: &Path) -> anyhow::Result<()> {
-    if config.buck.split {
-        let buck_path = crate_dir.join(&*config.buck.file_name);
-        remove_existing_path(&buck_path)?;
-    }
-    Ok(())
-}
-
 /// Synthesize a stub `build.rs` if the manifest declares a build script path
 /// that does not exist on disk.
 ///
@@ -218,14 +206,11 @@ fn synthesize_missing_build_rs(crate_dir: &Path) -> anyhow::Result<()> {
 fn postprocess_vendored_crate_dir(
     config: &Config,
     crate_dir: &Path,
-    pkgdir: &Path,
-    filter: &VendorFilter,
     pkg_cksum: Option<&str>,
 ) -> anyhow::Result<()> {
-    remove_split_buck_file(config, crate_dir)?;
     remove_existing_path(&crate_dir.join(".cargo-checksum.json"))?;
     synthesize_missing_build_rs(crate_dir)?;
-    let file_cksums = compute_dir_checksums_filtered(config, crate_dir, pkgdir, filter)?;
+    let file_cksums = compute_dir_checksums_filtered(config, crate_dir)?;
     write_checksum_json(crate_dir, pkg_cksum, &file_cksums)
 }
 
@@ -244,7 +229,12 @@ fn write_checksum_json(
 /// relative to the crate root. Replicates cargo's zip-bomb and path-traversal
 /// protections. Size limit: 512 MiB minimum, or 20x the compressed archive
 /// size (matching cargo's defaults).
-fn unpack_package_archive(config: &Config, archive: &Path, dst: &Path) -> anyhow::Result<()> {
+fn unpack_package_archive(
+    config: &Config,
+    archive: &Path,
+    dst: &Path,
+    filter: &VendorFilter,
+) -> anyhow::Result<()> {
     let tarball =
         fs::File::open(archive).with_context(|| format!("failed to open {}", archive.display()))?;
     let archive_size = tarball.metadata()?.len();
@@ -267,12 +257,7 @@ fn unpack_package_archive(config: &Config, archive: &Path, dst: &Path) -> anyhow
             bail!("invalid tarball: entry at {entry_path:?} is not under {prefix:?}");
         };
 
-        if materialization_excluded(config, relative) {
-            continue;
-        }
-
-        // Skip `.cargo-ok` -- cargo's unpack-success marker file.
-        if entry_path.file_name().is_some_and(|n| n == ".cargo-ok") {
+        if materialization_excluded(config, dst, relative, filter) {
             continue;
         }
 
@@ -300,7 +285,6 @@ mod test {
     use crate::fast_vendor::materialization::synthesize_missing_build_rs;
     use crate::fast_vendor::materialization::write_checksum_json;
     use crate::fast_vendor::tests::empty_filter;
-    use crate::fast_vendor::tests::gitignore_filter;
 
     #[test]
     fn test_vendor_dir_matches_expected_source_does_not_trust_checksum_json() {
@@ -339,14 +323,7 @@ build = "build.rs"
 
         let filter = empty_filter();
         let pkgdir = PathBuf::from("vendor/example-0.1.0");
-        postprocess_vendored_crate_dir(
-            &config,
-            &actual,
-            &pkgdir,
-            &filter,
-            Some("package-checksum"),
-        )
-        .unwrap();
+        postprocess_vendored_crate_dir(&config, &actual, Some("package-checksum")).unwrap();
 
         let expected = ExpectedCrate {
             dst_name: "example-0.1.0".to_owned(),
@@ -382,65 +359,6 @@ build = "build.rs"
     }
 
     #[test]
-    fn test_vendor_dir_matches_expected_source_ignores_gitignore_filtered_files() {
-        let config = Config::default_for_test();
-        let dir = tempfile::tempdir().expect("tempdir");
-        let src = dir.path().join("source");
-        let actual = dir.path().join("actual");
-        fs::create_dir_all(&src).unwrap();
-        fs::create_dir_all(&actual).unwrap();
-
-        let cargo_toml = r#"[package]
-name = "example"
-version = "0.1.0"
-"#;
-        fs::write(src.join("Cargo.toml"), cargo_toml).unwrap();
-        fs::write(src.join("lib.rs"), b"pub fn example() {}\n").unwrap();
-        fs::write(src.join("Cargo.lock"), b"source lockfile\n").unwrap();
-
-        fs::write(actual.join("Cargo.toml"), cargo_toml).unwrap();
-        fs::write(actual.join("lib.rs"), b"pub fn example() {}\n").unwrap();
-
-        let filter = gitignore_filter("vendor/*/Cargo.lock");
-        let pkgdir = PathBuf::from("vendor/example-0.1.0");
-        postprocess_vendored_crate_dir(
-            &config,
-            &actual,
-            &pkgdir,
-            &filter,
-            Some("package-checksum"),
-        )
-        .unwrap();
-
-        let expected = ExpectedCrate {
-            dst_name: "example-0.1.0".to_owned(),
-            dst: actual.clone(),
-            pkgdir,
-            pkg_cksum: Some("package-checksum".to_owned()),
-            materialization: Materialization::CopyFiles {
-                src_root: src.clone(),
-                file_paths: vec![
-                    src.join("Cargo.toml"),
-                    src.join("lib.rs"),
-                    src.join("Cargo.lock"),
-                ],
-                normalized_cargo_toml: None,
-            },
-        };
-
-        assert!(
-            vendor_dir_matches_expected_source(&config, &expected, &filter).unwrap(),
-            "gitignore-filtered source files missing from actual should not invalidate no-op"
-        );
-
-        fs::write(actual.join("Cargo.lock"), b"actual lockfile\n").unwrap();
-        assert!(
-            vendor_dir_matches_expected_source(&config, &expected, &filter).unwrap(),
-            "gitignore-filtered actual files should not invalidate no-op"
-        );
-    }
-
-    #[test]
     fn test_vendor_dir_matches_expected_source_normalizes_build_script_path() {
         let config = Config::default_for_test();
         let dir = tempfile::tempdir().expect("tempdir");
@@ -464,14 +382,7 @@ build = "./build.rs"
 
         let filter = empty_filter();
         let pkgdir = PathBuf::from("vendor/example-0.1.0");
-        postprocess_vendored_crate_dir(
-            &config,
-            &actual,
-            &pkgdir,
-            &filter,
-            Some("package-checksum"),
-        )
-        .unwrap();
+        postprocess_vendored_crate_dir(&config, &actual, Some("package-checksum")).unwrap();
 
         let expected = ExpectedCrate {
             dst_name: "example-0.1.0".to_owned(),
@@ -530,10 +441,7 @@ build = "build.rs"
             "stub should contain only a main function"
         );
 
-        let pkgdir = std::path::Path::new("vendor/dragon-breath-0.1.0");
-        let filter = empty_filter();
-        let cksums = compute_dir_checksums_filtered(&config, root, pkgdir, &filter)
-            .expect("checksums computed");
+        let cksums = compute_dir_checksums_filtered(&config, root).expect("checksums computed");
         assert!(
             cksums.contains_key("build.rs"),
             "synthesized build.rs must be included in .cargo-checksum.json"
@@ -606,7 +514,8 @@ build = "scripts/build.rs"
 
         let file_paths = vec![src.join("lib.rs"), src.join("BUCK")];
 
-        copy_vendor_sources(&config, src, &file_paths, None, dst).expect("copy succeeded");
+        let filter = empty_filter();
+        copy_vendor_sources(&config, src, &file_paths, None, dst, &filter).expect("copy succeeded");
 
         assert!(
             dst.join("lib.rs").exists(),
@@ -635,7 +544,8 @@ build = "scripts/build.rs"
 
         let file_paths = vec![src.join("Cargo.toml"), src.join("Cargo.toml.orig")];
 
-        copy_vendor_sources(&config, src, &file_paths, None, dst).expect("copy succeeded");
+        let filter = empty_filter();
+        copy_vendor_sources(&config, src, &file_paths, None, dst, &filter).expect("copy succeeded");
 
         assert!(
             dst.join("Cargo.toml.orig").exists(),
@@ -662,7 +572,8 @@ build = "scripts/build.rs"
         let normalized =
             "# THIS FILE IS AUTOMATICALLY GENERATED BY CARGO\n\n[package]\nname = \"example\"\n";
 
-        copy_vendor_sources(&config, src, &file_paths, Some(normalized), dst)
+        let filter = empty_filter();
+        copy_vendor_sources(&config, src, &file_paths, Some(normalized), dst, &filter)
             .expect("copy succeeded");
 
         assert_eq!(
@@ -715,7 +626,16 @@ build = "scripts/build.rs"
             src_dir.path().join("Cargo.toml"),
         ];
 
-        copy_vendor_sources(&config, src_dir.path(), &file_paths, None, dst_dir.path()).unwrap();
+        let filter = empty_filter();
+        copy_vendor_sources(
+            &config,
+            src_dir.path(),
+            &file_paths,
+            None,
+            dst_dir.path(),
+            &filter,
+        )
+        .unwrap();
 
         assert!(dst_dir.path().join("lib.rs").exists());
         assert!(!dst_dir.path().join(".gitignore").exists());
