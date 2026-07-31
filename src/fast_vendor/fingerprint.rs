@@ -25,7 +25,7 @@ use crate::fast_vendor::bytes_sha256;
 use crate::fast_vendor::cargo_checksum::checksum_json_bytes;
 use crate::fast_vendor::checksum_excluded;
 use crate::fast_vendor::file_sha256;
-use crate::fast_vendor::filter::VendorFilters;
+use crate::fast_vendor::filter::VendorFilter;
 use crate::fast_vendor::limit_reader::LimitReader;
 use crate::fast_vendor::materialization::Materialization;
 use crate::fast_vendor::normalize_manifest_path;
@@ -41,7 +41,7 @@ pub(super) enum TreeEntryFingerprint {
 pub(super) fn vendor_dir_matches_expected_source(
     config: &Config,
     expected: &ExpectedCrate,
-    filters: &VendorFilters,
+    filter: &VendorFilter,
 ) -> anyhow::Result<bool> {
     let Some(actual_type) = path_file_type_no_follow(&expected.dst)? else {
         return Ok(false);
@@ -50,21 +50,21 @@ pub(super) fn vendor_dir_matches_expected_source(
         return Ok(false);
     }
 
-    Ok(expected_tree_fingerprint(config, expected, filters)?
-        == tree_fingerprint(config, &expected.dst, &expected.pkgdir, filters)?)
+    Ok(expected_tree_fingerprint(config, expected, filter)?
+        == tree_fingerprint(config, &expected.dst, &expected.pkgdir, filter)?)
 }
 
 fn expected_tree_fingerprint(
     config: &Config,
     expected: &ExpectedCrate,
-    filters: &VendorFilters,
+    filter: &VendorFilter,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
     match &expected.materialization {
         Materialization::RegistryArchive { archive } => expected_registry_archive_fingerprint(
             config,
             expected,
             archive,
-            filters,
+            filter,
             expected.pkg_cksum.as_deref(),
         ),
         Materialization::CopyFiles {
@@ -77,7 +77,7 @@ fn expected_tree_fingerprint(
             file_paths,
             normalized_cargo_toml.as_deref(),
             &expected.pkgdir,
-            filters,
+            filter,
             expected.pkg_cksum.as_deref(),
         ),
     }
@@ -87,7 +87,7 @@ fn expected_registry_archive_fingerprint(
     config: &Config,
     expected: &ExpectedCrate,
     archive: &Path,
-    filters: &VendorFilters,
+    filter: &VendorFilter,
     pkg_cksum: Option<&str>,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
     let tarball =
@@ -112,7 +112,7 @@ fn expected_registry_archive_fingerprint(
             format!("invalid tarball: entry at {entry_path:?} is not under {prefix:?}")
         })?;
 
-        if source_excluded(config, &expected.pkgdir, relative, filters)
+        if source_excluded(config, &expected.pkgdir, relative, filter)
             || relative == Path::new(".cargo-checksum.json")
         {
             continue;
@@ -154,7 +154,7 @@ fn expected_registry_archive_fingerprint(
                 relative,
                 &key,
                 &hash,
-                filters,
+                filter,
             );
         } else if entry_type.is_symlink() {
             let target = entry
@@ -174,7 +174,7 @@ fn expected_registry_archive_fingerprint(
         fingerprint,
         file_cksums,
         &expected.pkgdir,
-        filters,
+        filter,
         pkg_cksum,
         cargo_toml.as_deref(),
     )
@@ -186,7 +186,7 @@ fn expected_copy_source_fingerprint(
     file_paths: &[PathBuf],
     normalized_cargo_toml: Option<&str>,
     pkgdir: &Path,
-    filters: &VendorFilters,
+    filter: &VendorFilter,
     pkg_cksum: Option<&str>,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
     let mut fingerprint = BTreeMap::new();
@@ -198,7 +198,7 @@ fn expected_copy_source_fingerprint(
             format!("{} is not under {}", src_path.display(), src_root.display(),)
         })?;
 
-        if source_excluded(config, pkgdir, relative, filters)
+        if source_excluded(config, pkgdir, relative, filter)
             || relative == Path::new(".cargo-checksum.json")
         {
             continue;
@@ -221,14 +221,14 @@ fn expected_copy_source_fingerprint(
             }
         }
         fingerprint.insert(key.clone(), TreeEntryFingerprint::File(hash.clone()));
-        maybe_insert_checksum(&mut file_cksums, pkgdir, relative, &key, &hash, filters);
+        maybe_insert_checksum(&mut file_cksums, pkgdir, relative, &key, &hash, filter);
     }
 
     finish_expected_fingerprint(
         fingerprint,
         file_cksums,
         pkgdir,
-        filters,
+        filter,
         pkg_cksum,
         cargo_toml.as_deref(),
     )
@@ -238,7 +238,7 @@ fn finish_expected_fingerprint(
     mut fingerprint: BTreeMap<String, TreeEntryFingerprint>,
     mut file_cksums: BTreeMap<String, String>,
     pkgdir: &Path,
-    filters: &VendorFilters,
+    filter: &VendorFilter,
     pkg_cksum: Option<&str>,
     cargo_toml: Option<&str>,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
@@ -246,7 +246,7 @@ fn finish_expected_fingerprint(
         &mut fingerprint,
         &mut file_cksums,
         pkgdir,
-        filters,
+        filter,
         cargo_toml,
     )?;
     let checksum_json = checksum_json_bytes(pkg_cksum, &file_cksums)?;
@@ -261,7 +261,7 @@ fn synthesize_missing_build_rs_fingerprint(
     fingerprint: &mut BTreeMap<String, TreeEntryFingerprint>,
     file_cksums: &mut BTreeMap<String, String>,
     pkgdir: &Path,
-    filters: &VendorFilters,
+    filter: &VendorFilter,
     cargo_toml: Option<&str>,
 ) -> anyhow::Result<()> {
     type TomlManifest = cargo_toml::Manifest<serde::de::IgnoredAny>;
@@ -286,14 +286,7 @@ fn synthesize_missing_build_rs_fingerprint(
 
     let hash = bytes_sha256(SYNTHESIZED_BUILD_RS);
     fingerprint.insert(key.clone(), TreeEntryFingerprint::File(hash.clone()));
-    maybe_insert_checksum(
-        file_cksums,
-        pkgdir,
-        &build_script_path,
-        &key,
-        &hash,
-        filters,
-    );
+    maybe_insert_checksum(file_cksums, pkgdir, &build_script_path, &key, &hash, filter);
     Ok(())
 }
 
@@ -303,9 +296,9 @@ fn maybe_insert_checksum(
     relative: &Path,
     key: &str,
     hash: &str,
-    filters: &VendorFilters,
+    filter: &VendorFilter,
 ) {
-    if checksum_excluded(pkgdir, relative, key, &filters.checksum_filter) {
+    if checksum_excluded(pkgdir, relative, key, filter) {
         return;
     }
     file_cksums.insert(key.to_owned(), hash.to_owned());
@@ -322,7 +315,7 @@ fn tree_fingerprint(
     config: &Config,
     root: &Path,
     pkgdir: &Path,
-    filters: &VendorFilters,
+    filter: &VendorFilter,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
     let mut entries = BTreeMap::new();
     for entry in WalkDir::new(root).into_iter() {
@@ -334,7 +327,7 @@ fn tree_fingerprint(
         let relative = path
             .strip_prefix(root)
             .expect("walkdir entry must be under root");
-        if source_excluded(config, pkgdir, relative, filters) {
+        if source_excluded(config, pkgdir, relative, filter) {
             continue;
         }
         let relative = relative.to_string_lossy().replace('\\', "/");
@@ -362,7 +355,6 @@ mod test {
     use std::path::Path;
 
     use crate::config::Config;
-    use crate::fast_vendor::filter::VendorFilters;
     use crate::fast_vendor::fingerprint::tree_fingerprint;
     use crate::fast_vendor::tests::empty_filter;
 
@@ -373,11 +365,9 @@ mod test {
         let root = dir.path();
         fs::create_dir(root.join("empty")).unwrap();
 
-        let filters = VendorFilters {
-            checksum_filter: empty_filter(),
-        };
+        let filter = empty_filter();
         let fingerprint =
-            tree_fingerprint(&config, root, Path::new("vendor/example-0.1.0"), &filters).unwrap();
+            tree_fingerprint(&config, root, Path::new("vendor/example-0.1.0"), &filter).unwrap();
 
         assert!(
             !fingerprint.contains_key("empty"),

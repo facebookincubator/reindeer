@@ -19,48 +19,37 @@ use crate::Paths;
 use crate::config::Config;
 use crate::config::VendorSourceConfig;
 
-/// Glob and gitignore rules for files to omit from `.cargo-checksum.json`.
+/// Filtering parameters passed into `fast_vendor`.
 ///
-/// Both `GlobSet` and `Gitignore` are `Sync`, so this struct can be shared
-/// across threads via a shared reference.
-pub(crate) struct ChecksumFilter {
+/// Controls which files are excluded from the vendor directory and checksums.
+pub(crate) struct VendorFilter {
     pub remove_globs: GlobSet,
     pub gitignore: Gitignore,
 }
 
-/// Filtering parameters passed into `fast_vendor`.
-///
-/// Controls which files are excluded from the vendor directory and checksums.
-pub(crate) struct VendorFilters {
-    /// Glob/gitignore rules for files to omit from `.cargo-checksum.json`.
-    pub checksum_filter: ChecksumFilter,
-}
-
-pub(crate) fn build_filters(
+pub(crate) fn build_filter(
     config: &Config,
     paths: &Paths,
     source_config: &VendorSourceConfig,
-) -> anyhow::Result<VendorFilters> {
-    let checksum_filter = build_checksum_filter(
+) -> anyhow::Result<VendorFilter> {
+    do_build_filter(
         config.buck.split,
         &config.buck.file_name,
         &source_config.gitignore_checksum_exclude,
         &paths.third_party_dir,
-    )?;
-
-    Ok(VendorFilters { checksum_filter })
+    )
 }
 
 /// Build the checksum filter from primitive inputs.
 ///
 /// Extracted from `build_filters` so the logic can be tested without
 /// constructing `Config` or `Paths`.
-fn build_checksum_filter(
+fn do_build_filter(
     buck_split: bool,
     buck_file_name: &str,
     gitignore_checksum_exclude: &[PathBuf],
     third_party_dir: &Path,
-) -> anyhow::Result<ChecksumFilter> {
+) -> anyhow::Result<VendorFilter> {
     log::debug!(
         "vendor.gitignore_checksum_exclude = {:?}",
         gitignore_checksum_exclude,
@@ -95,7 +84,7 @@ fn build_checksum_filter(
         gitignore
     );
 
-    Ok(ChecksumFilter {
+    Ok(VendorFilter {
         remove_globs,
         gitignore,
     })
@@ -103,15 +92,15 @@ fn build_checksum_filter(
 
 #[cfg(test)]
 mod tests {
-    use crate::fast_vendor::filter::build_checksum_filter;
+    use crate::fast_vendor::filter::do_build_filter;
 
     #[test]
-    fn test_build_checksum_filter_split_true_no_other_excludes() {
+    fn test_build_filter_split_true_no_other_excludes() {
         // When split=true and no other excludes, the filter must still be built
         // and BUCK must be in the remove set (to align with on-disk exclusion).
         let dir = tempfile::tempdir().expect("tempdir");
-        let filter = build_checksum_filter(true, "BUCK", &[], dir.path())
-            .expect("build_checksum_filter should succeed");
+        let filter =
+            do_build_filter(true, "BUCK", &[], dir.path()).expect("do_build_filter should succeed");
 
         assert!(
             filter.remove_globs.is_match("BUCK"),
@@ -120,11 +109,11 @@ mod tests {
     }
 
     #[test]
-    fn test_build_checksum_filter_split_false_no_excludes() {
+    fn test_build_filter_split_false_no_excludes() {
         // When split=false and no other excludes, no filter is needed.
         let dir = tempfile::tempdir().expect("tempdir");
-        let filter = build_checksum_filter(false, "BUCK", &[], dir.path())
-            .expect("build_checksum_filter should succeed");
+        let filter = do_build_filter(false, "BUCK", &[], dir.path())
+            .expect("do_build_filter should succeed");
 
         assert!(
             !filter.remove_globs.is_match("BUCK"),
@@ -133,9 +122,9 @@ mod tests {
     }
 
     #[test]
-    fn test_build_checksum_filter_split_true_invalid_buck_glob_errors() {
+    fn test_build_filter_split_true_invalid_buck_glob_errors() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let result = build_checksum_filter(true, "[", &[], dir.path());
+        let result = do_build_filter(true, "[", &[], dir.path());
 
         assert!(result.is_err(), "invalid buck.file_name glob should error");
         let err = result.err().expect("error should be present");

@@ -20,7 +20,7 @@ use crate::fast_vendor::ExpectedCrate;
 use crate::fast_vendor::SYNTHESIZED_BUILD_RS;
 use crate::fast_vendor::cargo_checksum::checksum_json_bytes;
 use crate::fast_vendor::cargo_checksum::compute_dir_checksums_filtered;
-use crate::fast_vendor::filter::VendorFilters;
+use crate::fast_vendor::filter::VendorFilter;
 use crate::fast_vendor::limit_reader::LimitReader;
 use crate::fast_vendor::materialization_excluded;
 use crate::fast_vendor::normalize_manifest_path;
@@ -43,7 +43,7 @@ pub(super) fn materialize_expected_crate(
     config: &Config,
     expected: &ExpectedCrate,
     staging_dst: &Path,
-    filters: &VendorFilters,
+    filter: &VendorFilter,
 ) -> anyhow::Result<()> {
     match &expected.materialization {
         Materialization::RegistryArchive { archive } => {
@@ -73,7 +73,7 @@ pub(super) fn materialize_expected_crate(
         config,
         staging_dst,
         &expected.pkgdir,
-        filters,
+        filter,
         expected.pkg_cksum.as_deref(),
     )
 }
@@ -219,13 +219,13 @@ fn postprocess_vendored_crate_dir(
     config: &Config,
     crate_dir: &Path,
     pkgdir: &Path,
-    filters: &VendorFilters,
+    filter: &VendorFilter,
     pkg_cksum: Option<&str>,
 ) -> anyhow::Result<()> {
     remove_split_buck_file(config, crate_dir)?;
     remove_existing_path(&crate_dir.join(".cargo-checksum.json"))?;
     synthesize_missing_build_rs(crate_dir)?;
-    let file_cksums = compute_dir_checksums_filtered(crate_dir, pkgdir, &filters.checksum_filter)?;
+    let file_cksums = compute_dir_checksums_filtered(crate_dir, pkgdir, filter)?;
     write_checksum_json(crate_dir, pkg_cksum, &file_cksums)
 }
 
@@ -293,7 +293,6 @@ mod test {
     use crate::config::Config;
     use crate::fast_vendor::ExpectedCrate;
     use crate::fast_vendor::cargo_checksum::compute_dir_checksums_filtered;
-    use crate::fast_vendor::filter::VendorFilters;
     use crate::fast_vendor::fingerprint::vendor_dir_matches_expected_source;
     use crate::fast_vendor::materialization::Materialization;
     use crate::fast_vendor::materialization::copy_vendor_sources;
@@ -338,15 +337,13 @@ build = "build.rs"
         .unwrap();
         fs::write(actual.join("lib.rs"), b"pub fn example() {}\n").unwrap();
 
-        let filters = VendorFilters {
-            checksum_filter: empty_filter(),
-        };
+        let filter = empty_filter();
         let pkgdir = PathBuf::from("vendor/example-0.1.0");
         postprocess_vendored_crate_dir(
             &config,
             &actual,
             &pkgdir,
-            &filters,
+            &filter,
             Some("package-checksum"),
         )
         .unwrap();
@@ -368,7 +365,7 @@ build = "build.rs"
         };
 
         assert!(
-            vendor_dir_matches_expected_source(&config, &expected, &filters).unwrap(),
+            vendor_dir_matches_expected_source(&config, &expected, &filter).unwrap(),
             "matching source contents should take the fast no-op path"
         );
 
@@ -379,7 +376,7 @@ build = "build.rs"
         .unwrap();
 
         assert!(
-            !vendor_dir_matches_expected_source(&config, &expected, &filters).unwrap(),
+            !vendor_dir_matches_expected_source(&config, &expected, &filter).unwrap(),
             "editing checksum metadata must invalidate the fast no-op path"
         );
     }
@@ -404,15 +401,13 @@ version = "0.1.0"
         fs::write(actual.join("Cargo.toml"), cargo_toml).unwrap();
         fs::write(actual.join("lib.rs"), b"pub fn example() {}\n").unwrap();
 
-        let filters = VendorFilters {
-            checksum_filter: gitignore_filter("vendor/*/Cargo.lock"),
-        };
+        let filter = gitignore_filter("vendor/*/Cargo.lock");
         let pkgdir = PathBuf::from("vendor/example-0.1.0");
         postprocess_vendored_crate_dir(
             &config,
             &actual,
             &pkgdir,
-            &filters,
+            &filter,
             Some("package-checksum"),
         )
         .unwrap();
@@ -434,13 +429,13 @@ version = "0.1.0"
         };
 
         assert!(
-            vendor_dir_matches_expected_source(&config, &expected, &filters).unwrap(),
+            vendor_dir_matches_expected_source(&config, &expected, &filter).unwrap(),
             "gitignore-filtered source files missing from actual should not invalidate no-op"
         );
 
         fs::write(actual.join("Cargo.lock"), b"actual lockfile\n").unwrap();
         assert!(
-            vendor_dir_matches_expected_source(&config, &expected, &filters).unwrap(),
+            vendor_dir_matches_expected_source(&config, &expected, &filter).unwrap(),
             "gitignore-filtered actual files should not invalidate no-op"
         );
     }
@@ -467,15 +462,13 @@ build = "./build.rs"
         fs::write(actual.join("lib.rs"), b"pub fn example() {}\n").unwrap();
         fs::write(actual.join("build.rs"), b"fn main() {}\n").unwrap();
 
-        let filters = VendorFilters {
-            checksum_filter: empty_filter(),
-        };
+        let filter = empty_filter();
         let pkgdir = PathBuf::from("vendor/example-0.1.0");
         postprocess_vendored_crate_dir(
             &config,
             &actual,
             &pkgdir,
-            &filters,
+            &filter,
             Some("package-checksum"),
         )
         .unwrap();
@@ -497,7 +490,7 @@ build = "./build.rs"
         };
 
         assert!(
-            vendor_dir_matches_expected_source(&config, &expected, &filters).unwrap(),
+            vendor_dir_matches_expected_source(&config, &expected, &filter).unwrap(),
             "`./build.rs` in Cargo.toml should match `build.rs` in the vendor tree"
         );
     }

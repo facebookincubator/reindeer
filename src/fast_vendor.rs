@@ -39,9 +39,8 @@ use crate::cargo::make_gctx;
 use crate::cargo::run_cargo;
 use crate::config::Config;
 use crate::config::VendorConfig;
-use crate::fast_vendor::filter::ChecksumFilter;
-use crate::fast_vendor::filter::VendorFilters;
-use crate::fast_vendor::filter::build_filters;
+use crate::fast_vendor::filter::VendorFilter;
+use crate::fast_vendor::filter::build_filter;
 use crate::fast_vendor::fingerprint::vendor_dir_matches_expected_source;
 use crate::fast_vendor::materialization::Materialization;
 use crate::fast_vendor::materialization::materialize_expected_crate;
@@ -126,8 +125,8 @@ pub(crate) fn cargo_vendor(
         }
         VendorConfig::Source(source_config) => {
             log::info!("Running fast vendor (library mode)");
-            let filters = build_filters(config, paths, source_config)?;
-            fast_vendor(config, no_delete, args, paths, filters)?;
+            let filter = build_filter(config, paths, source_config)?;
+            fast_vendor(config, no_delete, args, paths, filter)?;
             assert!(is_vendored(config, paths)?);
         }
     }
@@ -194,7 +193,7 @@ fn fast_vendor(
     no_delete: bool,
     args: &Args,
     paths: &Paths,
-    filters: VendorFilters,
+    filter: VendorFilter,
 ) -> anyhow::Result<()> {
     let vendor_dir = paths.third_party_dir.join("vendor");
     let cargo_config_path = paths.cargo_home.join("config.toml");
@@ -440,10 +439,9 @@ fn fast_vendor(
     let vendor_config = generate_vendor_config(&sources)?;
 
     // Compare expected crates in parallel and replace only mismatches.
-    // Filters are shared by reference across threads; ChecksumFilter is Sync.
     let num_threads = std::thread::available_parallelism().map_or(8, |n| n.get());
     let chunk_size = expected_crates.len().div_ceil(num_threads.max(1));
-    let filters = &filters;
+    let filter = &filter;
     let total = expected_crates.len();
     let progress = AtomicUsize::new(0);
 
@@ -458,7 +456,7 @@ fn fast_vendor(
             .map(|chunk| {
                 s.spawn(move || {
                     for expected in chunk {
-                        process_expected_crate(config, expected, filters)
+                        process_expected_crate(config, expected, filter)
                             .with_context(|| format!("failed to vendor {}", expected.dst_name))?;
                         let completed = progress.fetch_add(1, Ordering::Relaxed) + 1;
                         if completed == total || completed.is_multiple_of(250) {
@@ -675,15 +673,15 @@ fn is_split_buck_file(config: &Config, relative: &Path) -> bool {
 fn process_expected_crate(
     config: &Config,
     expected: &ExpectedCrate,
-    filters: &VendorFilters,
+    filter: &VendorFilter,
 ) -> anyhow::Result<()> {
-    if vendor_dir_matches_expected_source(config, expected, filters)? {
+    if vendor_dir_matches_expected_source(config, expected, filter)? {
         return Ok(());
     }
 
     let (staging_root, staging_dst) = make_staging_destination(&expected.dst)?;
     let result = (|| -> anyhow::Result<()> {
-        materialize_expected_crate(config, expected, &staging_dst, filters)?;
+        materialize_expected_crate(config, expected, &staging_dst, filter)?;
         replace_vendor_dir(&staging_dst, &expected.dst)?;
         Ok(())
     })();
@@ -691,25 +689,19 @@ fn process_expected_crate(
     result
 }
 
-fn checksum_excluded(pkgdir: &Path, relative: &Path, key: &str, filter: &ChecksumFilter) -> bool {
+fn checksum_excluded(pkgdir: &Path, relative: &Path, key: &str, filter: &VendorFilter) -> bool {
     filter.remove_globs.is_match(key) || gitignore_excluded(pkgdir, relative, filter)
 }
 
-fn source_excluded(
-    config: &Config,
-    pkgdir: &Path,
-    relative: &Path,
-    filters: &VendorFilters,
-) -> bool {
-    materialization_excluded(config, relative)
-        || gitignore_excluded(pkgdir, relative, &filters.checksum_filter)
+fn source_excluded(config: &Config, pkgdir: &Path, relative: &Path, filter: &VendorFilter) -> bool {
+    materialization_excluded(config, relative) || gitignore_excluded(pkgdir, relative, filter)
 }
 
 fn materialization_excluded(config: &Config, relative: &Path) -> bool {
     !vendor_this(relative) || is_split_buck_file(config, relative)
 }
 
-fn gitignore_excluded(pkgdir: &Path, relative: &Path, filter: &ChecksumFilter) -> bool {
+fn gitignore_excluded(pkgdir: &Path, relative: &Path, filter: &VendorFilter) -> bool {
     filter
         .gitignore
         .matched_path_or_any_parents(pkgdir.join(relative), false)
@@ -983,25 +975,25 @@ mod tests {
     use crate::fast_vendor::collect_vendor_cleanup_entries;
     use crate::fast_vendor::extract_crate_name;
     use crate::fast_vendor::file_sha256;
-    use crate::fast_vendor::filter::ChecksumFilter;
+    use crate::fast_vendor::filter::VendorFilter;
     use crate::fast_vendor::find_cached_registry_archive_by_tarball;
     use crate::fast_vendor::is_split_buck_file;
     use crate::fast_vendor::make_staging_destination;
     use crate::fast_vendor::remove_expected_vendor_entries_from_cleanup;
     use crate::fast_vendor::vendor_this;
 
-    pub(crate) fn empty_filter() -> ChecksumFilter {
-        ChecksumFilter {
+    pub(crate) fn empty_filter() -> VendorFilter {
+        VendorFilter {
             remove_globs: GlobSet::empty(),
             gitignore: Gitignore::empty(),
         }
     }
 
-    pub(crate) fn gitignore_filter(pattern: &str) -> ChecksumFilter {
+    pub(crate) fn gitignore_filter(pattern: &str) -> VendorFilter {
         let mut builder = GitignoreBuilder::new("/");
         builder.add_line(None, pattern).unwrap();
         let gitignore = builder.build().unwrap();
-        ChecksumFilter {
+        VendorFilter {
             remove_globs: GlobSet::empty(),
             gitignore,
         }

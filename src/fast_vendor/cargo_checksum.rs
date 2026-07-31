@@ -13,7 +13,7 @@ use walkdir::WalkDir;
 
 use crate::fast_vendor::bytes_sha256;
 use crate::fast_vendor::checksum_excluded;
-use crate::fast_vendor::filter::ChecksumFilter;
+use crate::fast_vendor::filter::VendorFilter;
 use crate::fast_vendor::gitignore_excluded;
 use crate::fast_vendor::vendor_this;
 
@@ -25,7 +25,7 @@ use crate::fast_vendor::vendor_this;
 pub(crate) fn compute_dir_checksums_filtered(
     root: &Path,
     pkgdir: &Path,
-    filter: &ChecksumFilter,
+    filter: &VendorFilter,
 ) -> anyhow::Result<BTreeMap<String, String>> {
     WalkDir::new(root)
         .into_iter()
@@ -82,12 +82,12 @@ mod tests {
     use sha2::Digest as _;
 
     use crate::fast_vendor::cargo_checksum::compute_dir_checksums_filtered;
-    use crate::fast_vendor::filter::ChecksumFilter;
+    use crate::fast_vendor::filter::VendorFilter;
     use crate::fast_vendor::tests::empty_filter;
     use crate::fast_vendor::tests::gitignore_filter;
 
-    // Build a ChecksumFilter that matches a single glob pattern.
-    fn glob_filter(pattern: &str) -> ChecksumFilter {
+    // Build a VendorFilter that matches a single glob pattern.
+    fn glob_filter(pattern: &str) -> VendorFilter {
         let mut builder = GlobSetBuilder::new();
         builder.add(
             GlobBuilder::new(pattern)
@@ -95,7 +95,7 @@ mod tests {
                 .build()
                 .unwrap(),
         );
-        ChecksumFilter {
+        VendorFilter {
             remove_globs: builder.build().unwrap(),
             gitignore: Gitignore::empty(),
         }
