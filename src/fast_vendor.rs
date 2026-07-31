@@ -13,6 +13,7 @@ mod materialization;
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::io::ErrorKind;
@@ -689,7 +690,7 @@ fn materialization_excluded(
     relative: &Path,
     filter: &VendorFilter,
 ) -> bool {
-    is_split_buck_file(config, relative)
+    relative.file_name() == Some(OsStr::new(&*config.buck.file_name))
         || relative == ".cargo-checksum.json"
         || relative.components().any(|component| {
             // Exclude VCS bookkeeping files anywhere in the package. Cargo's own
