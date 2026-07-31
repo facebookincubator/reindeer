@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use anyhow::bail;
 use cargo_toml::OptionalFile;
+use ignore::gitignore::Gitignore;
 use sha2::Digest as _;
 use sha2::Sha256;
 use walkdir::WalkDir;
@@ -24,7 +25,6 @@ use crate::fast_vendor::SYNTHESIZED_BUILD_RS;
 use crate::fast_vendor::bytes_sha256;
 use crate::fast_vendor::cargo_checksum::checksum_json_bytes;
 use crate::fast_vendor::file_sha256;
-use crate::fast_vendor::filter::VendorFilter;
 use crate::fast_vendor::is_split_buck_file;
 use crate::fast_vendor::limit_reader::LimitReader;
 use crate::fast_vendor::materialization::Materialization;
@@ -41,7 +41,7 @@ pub(super) enum TreeEntryFingerprint {
 pub(super) fn vendor_dir_matches_expected_source(
     config: &Config,
     expected: &ExpectedCrate,
-    filter: &VendorFilter,
+    gitignore: &Gitignore,
 ) -> anyhow::Result<bool> {
     let Some(actual_type) = path_file_type_no_follow(&expected.dst)? else {
         return Ok(false);
@@ -50,21 +50,21 @@ pub(super) fn vendor_dir_matches_expected_source(
         return Ok(false);
     }
 
-    Ok(expected_tree_fingerprint(config, expected, filter)?
+    Ok(expected_tree_fingerprint(config, expected, gitignore)?
         == tree_fingerprint(config, &expected.dst)?)
 }
 
 fn expected_tree_fingerprint(
     config: &Config,
     expected: &ExpectedCrate,
-    filter: &VendorFilter,
+    gitignore: &Gitignore,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
     match &expected.materialization {
         Materialization::RegistryArchive { archive } => expected_registry_archive_fingerprint(
             config,
             expected,
             archive,
-            filter,
+            gitignore,
             expected.pkg_cksum.as_deref(),
         ),
         Materialization::CopyFiles {
@@ -77,7 +77,7 @@ fn expected_tree_fingerprint(
             file_paths,
             normalized_cargo_toml.as_deref(),
             &expected.pkgdir,
-            filter,
+            gitignore,
             expected.pkg_cksum.as_deref(),
         ),
     }
@@ -87,7 +87,7 @@ fn expected_registry_archive_fingerprint(
     config: &Config,
     expected: &ExpectedCrate,
     archive: &Path,
-    filter: &VendorFilter,
+    gitignore: &Gitignore,
     pkg_cksum: Option<&str>,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
     let tarball =
@@ -112,7 +112,7 @@ fn expected_registry_archive_fingerprint(
             format!("invalid tarball: entry at {entry_path:?} is not under {prefix:?}")
         })?;
 
-        if materialization_excluded(config, &expected.pkgdir, relative, filter) {
+        if materialization_excluded(config, &expected.pkgdir, relative, gitignore) {
             continue;
         }
 
@@ -170,7 +170,7 @@ fn expected_copy_source_fingerprint(
     file_paths: &[PathBuf],
     normalized_cargo_toml: Option<&str>,
     pkgdir: &Path,
-    filter: &VendorFilter,
+    gitignore: &Gitignore,
     pkg_cksum: Option<&str>,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
     let mut fingerprint = BTreeMap::new();
@@ -182,7 +182,7 @@ fn expected_copy_source_fingerprint(
             format!("{} is not under {}", src_path.display(), src_root.display(),)
         })?;
 
-        if materialization_excluded(config, pkgdir, relative, filter) {
+        if materialization_excluded(config, pkgdir, relative, gitignore) {
             continue;
         }
 

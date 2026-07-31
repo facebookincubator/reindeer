@@ -11,17 +11,10 @@ use ignore::gitignore::GitignoreBuilder;
 use crate::Paths;
 use crate::config::VendorSourceConfig;
 
-/// Filtering parameters passed into `fast_vendor`.
-///
-/// Controls which files are excluded from the vendor directory and checksums.
-pub(crate) struct VendorFilter {
-    pub gitignore: Gitignore,
-}
-
-pub(crate) fn build_filter(
+pub(crate) fn load_gitignore(
     paths: &Paths,
     source_config: &VendorSourceConfig,
-) -> anyhow::Result<VendorFilter> {
+) -> anyhow::Result<Gitignore> {
     let mut gitignore = GitignoreBuilder::new(&paths.third_party_dir);
     for ignore in &source_config.gitignore_checksum_exclude {
         if let Some(err) = gitignore.add(paths.third_party_dir.join(ignore)) {
@@ -36,5 +29,5 @@ pub(crate) fn build_filter(
 
     log::debug!("gitignore {:#?}", gitignore);
 
-    Ok(VendorFilter { gitignore })
+    Ok(gitignore)
 }

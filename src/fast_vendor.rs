@@ -31,6 +31,7 @@ use cargo::core::Package;
 use cargo::core::PackageId;
 use cargo::core::SourceId;
 use cargo::util::cache_lock::CacheLockMode;
+use ignore::gitignore::Gitignore;
 use sha2::Digest as _;
 
 use crate::Args;
@@ -40,8 +41,7 @@ use crate::cargo::make_gctx;
 use crate::cargo::run_cargo;
 use crate::config::Config;
 use crate::config::VendorConfig;
-use crate::fast_vendor::filter::VendorFilter;
-use crate::fast_vendor::filter::build_filter;
+use crate::fast_vendor::filter::load_gitignore;
 use crate::fast_vendor::fingerprint::vendor_dir_matches_expected_source;
 use crate::fast_vendor::materialization::Materialization;
 use crate::fast_vendor::materialization::materialize_expected_crate;
@@ -125,8 +125,8 @@ pub(crate) fn cargo_vendor(
         }
         VendorConfig::Source(source_config) => {
             log::info!("Running fast vendor (library mode)");
-            let filter = build_filter(paths, source_config)?;
-            fast_vendor(config, no_delete, args, paths, filter)?;
+            let gitignore = load_gitignore(paths, source_config)?;
+            fast_vendor(config, no_delete, args, paths, &gitignore)?;
             assert!(is_vendored(config, paths)?);
         }
     }
@@ -193,7 +193,7 @@ fn fast_vendor(
     no_delete: bool,
     args: &Args,
     paths: &Paths,
-    filter: VendorFilter,
+    gitignore: &Gitignore,
 ) -> anyhow::Result<()> {
     let vendor_dir = paths.third_party_dir.join("vendor");
     let cargo_config_path = paths.cargo_home.join("config.toml");
@@ -441,7 +441,6 @@ fn fast_vendor(
     // Compare expected crates in parallel and replace only mismatches.
     let num_threads = std::thread::available_parallelism().map_or(8, |n| n.get());
     let chunk_size = expected_crates.len().div_ceil(num_threads.max(1));
-    let filter = &filter;
     let total = expected_crates.len();
     let progress = AtomicUsize::new(0);
 
@@ -456,7 +455,7 @@ fn fast_vendor(
             .map(|chunk| {
                 s.spawn(move || {
                     for expected in chunk {
-                        process_expected_crate(config, expected, filter)
+                        process_expected_crate(config, expected, gitignore)
                             .with_context(|| format!("failed to vendor {}", expected.dst_name))?;
                         let completed = progress.fetch_add(1, Ordering::Relaxed) + 1;
                         if completed == total || completed.is_multiple_of(250) {
@@ -673,14 +672,14 @@ fn is_split_buck_file(config: &Config, relative: &Path) -> bool {
 fn process_expected_crate(
     config: &Config,
     expected: &ExpectedCrate,
-    filter: &VendorFilter,
+    gitignore: &Gitignore,
 ) -> anyhow::Result<()> {
-    if vendor_dir_matches_expected_source(config, expected, filter)? {
+    if vendor_dir_matches_expected_source(config, expected, gitignore)? {
         return Ok(());
     }
 
     remove_existing_path(&expected.dst)?;
-    materialize_expected_crate(config, expected, &expected.dst, filter)?;
+    materialize_expected_crate(config, expected, &expected.dst, gitignore)?;
     Ok(())
 }
 
@@ -688,7 +687,7 @@ fn materialization_excluded(
     config: &Config,
     pkgdir: &Path,
     relative: &Path,
-    filter: &VendorFilter,
+    gitignore: &Gitignore,
 ) -> bool {
     relative.file_name() == Some(OsStr::new(&*config.buck.file_name))
         || relative == ".cargo-checksum.json"
@@ -702,8 +701,7 @@ fn materialization_excluded(
                 Some(".gitattributes" | ".gitignore" | ".git" | ".hg" | ".cargo-ok")
             )
         })
-        || filter
-            .gitignore
+        || gitignore
             .matched_path_or_any_parents(pkgdir.join(relative), false)
             .is_ignore()
 }
@@ -921,22 +919,13 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use ignore::gitignore::Gitignore;
-
     use crate::config::Config;
     use crate::fast_vendor::collect_vendor_cleanup_entries;
     use crate::fast_vendor::extract_crate_name;
     use crate::fast_vendor::file_sha256;
-    use crate::fast_vendor::filter::VendorFilter;
     use crate::fast_vendor::find_cached_registry_archive_by_tarball;
     use crate::fast_vendor::is_split_buck_file;
     use crate::fast_vendor::remove_expected_vendor_entries_from_cleanup;
-
-    pub(crate) fn empty_filter() -> VendorFilter {
-        VendorFilter {
-            gitignore: Gitignore::empty(),
-        }
-    }
 
     #[test]
     fn test_extract_crate_name() {
