@@ -48,7 +48,6 @@ use crate::remap::RemapConfig;
 use crate::remap::RemapSource;
 use crate::remap::generate_vendor_config;
 
-static STAGING_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
 const SYNTHESIZED_BUILD_RS: &[u8] = b"fn main() {}\n";
 
 struct ExpectedCrate {
@@ -679,14 +678,9 @@ fn process_expected_crate(
         return Ok(());
     }
 
-    let (staging_root, staging_dst) = make_staging_destination(&expected.dst)?;
-    let result = (|| -> anyhow::Result<()> {
-        materialize_expected_crate(config, expected, &staging_dst, filter)?;
-        replace_vendor_dir(&staging_dst, &expected.dst)?;
-        Ok(())
-    })();
-    let _ = fs::remove_dir_all(&staging_root);
-    result
+    remove_existing_path(&expected.dst)?;
+    materialize_expected_crate(config, expected, &expected.dst, filter)?;
+    Ok(())
 }
 
 fn checksum_excluded(
@@ -888,37 +882,6 @@ fn normalize_manifest_path(path: &Path) -> PathBuf {
     normalized
 }
 
-fn make_staging_destination(dst: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
-    let parent = dst
-        .parent()
-        .context("vendor destination must have a parent")?;
-    let leaf = dst
-        .file_name()
-        .context("vendor destination must have a file name")?;
-    let suffix = STAGING_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let staging_root = parent.join(format!(
-        ".reindeer-staging-{}-{}",
-        std::process::id(),
-        suffix,
-    ));
-    let _ = fs::remove_dir_all(&staging_root);
-    fs::create_dir_all(&staging_root)
-        .with_context(|| format!("failed to create {}", staging_root.display()))?;
-    Ok((staging_root.clone(), staging_root.join(leaf)))
-}
-
-fn replace_vendor_dir(staged_dst: &Path, dst: &Path) -> anyhow::Result<()> {
-    remove_existing_path(dst)?;
-    fs::rename(staged_dst, dst).with_context(|| {
-        format!(
-            "failed to move staged vendor dir {} into {}",
-            staged_dst.display(),
-            dst.display(),
-        )
-    })?;
-    Ok(())
-}
-
 /// Extract crate name from a versioned directory
 fn extract_crate_name(dir_name: &str) -> &str {
     let dot_pos = dir_name.find('.').unwrap_or(dir_name.len());
@@ -982,7 +945,6 @@ mod tests {
     use crate::fast_vendor::filter::VendorFilter;
     use crate::fast_vendor::find_cached_registry_archive_by_tarball;
     use crate::fast_vendor::is_split_buck_file;
-    use crate::fast_vendor::make_staging_destination;
     use crate::fast_vendor::remove_expected_vendor_entries_from_cleanup;
     use crate::fast_vendor::vendor_this;
 
@@ -1050,21 +1012,6 @@ mod tests {
         assert!(vendor_this(Path::new(".cargo/config.toml")));
     }
 
-    // Invariant: make_staging_destination creates a unique directory under the parent
-    #[test]
-    fn test_make_staging_destination() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dst = tmp.path().join("my-crate-1.0.0");
-
-        let (staging_root, staging_dst) = make_staging_destination(&dst).unwrap();
-        assert!(staging_root.exists());
-        assert!(staging_root.starts_with(tmp.path()));
-        assert_eq!(staging_dst.file_name().unwrap(), "my-crate-1.0.0");
-        assert!(staging_dst.starts_with(&staging_root));
-
-        std::fs::remove_dir_all(&staging_root).unwrap();
-    }
-
     #[test]
     fn test_write_regular_file_replaces_directory() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1099,65 +1046,6 @@ mod tests {
         assert!(
             fs::symlink_metadata(&path).unwrap().file_type().is_file(),
             "repaired path should be a regular file"
-        );
-    }
-
-    #[test]
-    fn test_replace_vendor_dir_replaces_preexisting_file() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let staged_dst = dir.path().join("staged");
-        let dst = dir.path().join("vendor-crate");
-        fs::create_dir(&staged_dst).unwrap();
-        fs::write(staged_dst.join("lib.rs"), b"pub fn rise() {}\n").unwrap();
-        fs::write(&dst, b"old").unwrap();
-
-        super::replace_vendor_dir(&staged_dst, &dst).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(dst.join("lib.rs")).unwrap(),
-            "pub fn rise() {}\n",
-            "replace_vendor_dir should repair preexisting files at the destination"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_replace_vendor_dir_replaces_preexisting_symlink() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let staged_dst = dir.path().join("staged");
-        let dst = dir.path().join("vendor-crate");
-        let target = dir.path().join("target");
-        fs::create_dir(&staged_dst).unwrap();
-        fs::write(staged_dst.join("lib.rs"), b"pub fn rise() {}\n").unwrap();
-        fs::create_dir(&target).unwrap();
-        std::os::unix::fs::symlink(&target, &dst).unwrap();
-
-        super::replace_vendor_dir(&staged_dst, &dst).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(dst.join("lib.rs")).unwrap(),
-            "pub fn rise() {}\n",
-            "replace_vendor_dir should repair preexisting symlinks at the destination"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_replace_vendor_dir_replaces_dangling_symlink() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let staged_dst = dir.path().join("staged");
-        let dst = dir.path().join("vendor-crate");
-        let target = dir.path().join("missing-target");
-        fs::create_dir(&staged_dst).unwrap();
-        fs::write(staged_dst.join("lib.rs"), b"pub fn rise() {}\n").unwrap();
-        std::os::unix::fs::symlink(&target, &dst).unwrap();
-
-        super::replace_vendor_dir(&staged_dst, &dst).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(dst.join("lib.rs")).unwrap(),
-            "pub fn rise() {}\n",
-            "replace_vendor_dir should repair dangling symlinks at the destination"
         );
     }
 
@@ -1228,23 +1116,15 @@ mod tests {
     fn test_collect_vendor_cleanup_entries_removes_old_stamp_files() {
         let dir = tempfile::tempdir().expect("tempdir");
         let vendor_dir = dir.path();
-        fs::write(vendor_dir.join(".reindeer-vendor-stamp"), b"{}").unwrap();
-        fs::write(vendor_dir.join(".reindeer-vendor-stamps"), b"{}").unwrap();
         fs::write(vendor_dir.join(".junk"), b"crumbs").unwrap();
-        fs::create_dir(vendor_dir.join(".reindeer-staging-123-0")).unwrap();
         fs::create_dir(vendor_dir.join("sourdough-1.0.0")).unwrap();
 
-        let expected = BTreeSet::from([
-            vendor_dir.join(".junk"),
-            vendor_dir.join(".reindeer-vendor-stamp"),
-            vendor_dir.join(".reindeer-vendor-stamps"),
-            vendor_dir.join(".reindeer-staging-123-0"),
-            vendor_dir.join("sourdough-1.0.0"),
-        ]);
+        let expected =
+            BTreeSet::from([vendor_dir.join(".junk"), vendor_dir.join("sourdough-1.0.0")]);
         assert_eq!(
             collect_vendor_cleanup_entries(vendor_dir).unwrap(),
             expected,
-            "repair cleanup should remove hidden junk, stale staging dirs, and old stamp files"
+            "repair cleanup should remove hidden junk",
         );
     }
 

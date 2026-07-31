@@ -42,16 +42,16 @@ pub(super) enum Materialization {
 pub(super) fn materialize_expected_crate(
     config: &Config,
     expected: &ExpectedCrate,
-    staging_dst: &Path,
+    dst: &Path,
     filter: &VendorFilter,
 ) -> anyhow::Result<()> {
     match &expected.materialization {
         Materialization::RegistryArchive { archive } => {
-            unpack_package_archive(config, archive, staging_dst).with_context(|| {
+            unpack_package_archive(config, archive, dst).with_context(|| {
                 format!(
                     "failed to unpack {} into {}",
                     archive.display(),
-                    staging_dst.display(),
+                    dst.display(),
                 )
             })?;
         }
@@ -65,13 +65,13 @@ pub(super) fn materialize_expected_crate(
                 src_root,
                 file_paths,
                 normalized_cargo_toml.as_deref(),
-                staging_dst,
+                dst,
             )?;
         }
     }
     postprocess_vendored_crate_dir(
         config,
-        staging_dst,
+        dst,
         &expected.pkgdir,
         filter,
         expected.pkg_cksum.as_deref(),
