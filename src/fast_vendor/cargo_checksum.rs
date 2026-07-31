@@ -11,6 +11,7 @@ use std::path::Path;
 
 use walkdir::WalkDir;
 
+use crate::config::Config;
 use crate::fast_vendor::bytes_sha256;
 use crate::fast_vendor::checksum_excluded;
 use crate::fast_vendor::filter::VendorFilter;
@@ -23,6 +24,7 @@ use crate::fast_vendor::vendor_this;
 /// returned map. VCS bookkeeping files and configured gitignore matches are
 /// treated as absent from the vendored source tree.
 pub(crate) fn compute_dir_checksums_filtered(
+    config: &Config,
     root: &Path,
     pkgdir: &Path,
     filter: &VendorFilter,
@@ -48,7 +50,7 @@ pub(crate) fn compute_dir_checksums_filtered(
                 log::trace!("checksum: skipping source-excluded file {}", key);
                 return Ok(None);
             }
-            if checksum_excluded(pkgdir, relative, &key, filter) {
+            if checksum_excluded(config, pkgdir, relative, filter) {
                 log::trace!("checksum: skipping excluded file {}", key);
                 return Ok(None);
             }
@@ -76,30 +78,12 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use globset::GlobBuilder;
-    use globset::GlobSetBuilder;
-    use ignore::gitignore::Gitignore;
     use sha2::Digest as _;
 
+    use crate::config::Config;
     use crate::fast_vendor::cargo_checksum::compute_dir_checksums_filtered;
-    use crate::fast_vendor::filter::VendorFilter;
     use crate::fast_vendor::tests::empty_filter;
     use crate::fast_vendor::tests::gitignore_filter;
-
-    // Build a VendorFilter that matches a single glob pattern.
-    fn glob_filter(pattern: &str) -> VendorFilter {
-        let mut builder = GlobSetBuilder::new();
-        builder.add(
-            GlobBuilder::new(pattern)
-                .literal_separator(true)
-                .build()
-                .unwrap(),
-        );
-        VendorFilter {
-            remove_globs: builder.build().unwrap(),
-            gitignore: Gitignore::empty(),
-        }
-    }
 
     #[test]
     fn test_checksum_excludes_buck_entry() {
@@ -107,18 +91,18 @@ mod tests {
         // from the checksum map (it was skipped at extraction time by the
         // include filter, so it won't be on disk here -- but even if it were,
         // a glob on "BUCK" would exclude it).
+        let config = Config::split_for_test();
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
 
         fs::write(root.join("lib.rs"), b"fn main() {}").unwrap();
         fs::write(root.join("Cargo.toml"), b"[package]").unwrap();
 
-        // Use a glob filter that matches the BUCK file name.
-        let filter = glob_filter("BUCK");
+        let filter = empty_filter();
         let pkgdir = std::path::Path::new("vendor/sourdough-starter-1.0.0");
 
-        let cksums =
-            compute_dir_checksums_filtered(root, pkgdir, &filter).expect("checksums computed");
+        let cksums = compute_dir_checksums_filtered(&config, root, pkgdir, &filter)
+            .expect("checksums computed");
 
         // lib.rs and Cargo.toml should be present; BUCK should not be.
         assert!(
@@ -137,15 +121,20 @@ mod tests {
 
     #[test]
     fn test_checksum_computation_skips_checksum_file() {
+        let config = Config::default_for_test();
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
         fs::write(root.join("lib.rs"), b"fn main() {}").unwrap();
         fs::write(root.join(".cargo-checksum.json"), b"not source").unwrap();
 
         let filter = empty_filter();
-        let cksums =
-            compute_dir_checksums_filtered(root, Path::new("vendor/example-0.1.0"), &filter)
-                .unwrap();
+        let cksums = compute_dir_checksums_filtered(
+            &config,
+            root,
+            Path::new("vendor/example-0.1.0"),
+            &filter,
+        )
+        .unwrap();
 
         assert!(cksums.contains_key("lib.rs"));
         assert!(
@@ -155,40 +144,8 @@ mod tests {
     }
 
     #[test]
-    fn test_checksum_filter_glob_keeps_file_on_disk() {
-        // Files matched by checksum_exclude globs should remain on disk
-        // but be absent from the checksum map.
-        let dir = tempfile::tempdir().expect("tempdir");
-        let root = dir.path();
-
-        fs::write(root.join("pancake-stack.h"), b"// header").unwrap();
-        fs::write(root.join("lib.rs"), b"fn main() {}").unwrap();
-
-        // Filter that excludes all .h files.
-        let filter = glob_filter("*.h");
-        let pkgdir = std::path::Path::new("vendor/flux-capacitor-1.21.0");
-
-        let cksums =
-            compute_dir_checksums_filtered(root, pkgdir, &filter).expect("checksums computed");
-
-        assert!(
-            !cksums.contains_key("pancake-stack.h"),
-            ".h files should be excluded from checksum map"
-        );
-        assert!(
-            cksums.contains_key("lib.rs"),
-            "lib.rs should be in checksum map"
-        );
-
-        // File must still exist on disk (checksum_exclude only affects the map).
-        assert!(
-            root.join("pancake-stack.h").exists(),
-            ".h file should remain on disk"
-        );
-    }
-
-    #[test]
     fn test_checksum_filter_gitignore_excludes_source_file() {
+        let config = Config::default_for_test();
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
 
@@ -206,8 +163,8 @@ mod tests {
         let filter = gitignore_filter("vendor/*/Cargo.toml.orig");
         let pkgdir = std::path::Path::new("vendor/fb-procfs-0.9.0");
 
-        let cksums =
-            compute_dir_checksums_filtered(root, pkgdir, &filter).expect("checksums computed");
+        let cksums = compute_dir_checksums_filtered(&config, root, pkgdir, &filter)
+            .expect("checksums computed");
 
         assert!(
             !cksums.contains_key("Cargo.toml.orig"),
@@ -223,15 +180,20 @@ mod tests {
     // files in a tree.
     #[test]
     fn test_compute_dir_checksums() {
+        let config = Config::default_for_test();
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("a.txt"), b"hello").unwrap();
         std::fs::create_dir(tmp.path().join("sub")).unwrap();
         std::fs::write(tmp.path().join("sub/b.txt"), b"world").unwrap();
 
         let filter = empty_filter();
-        let cksums =
-            compute_dir_checksums_filtered(tmp.path(), Path::new("vendor/example-0.1.0"), &filter)
-                .unwrap();
+        let cksums = compute_dir_checksums_filtered(
+            &config,
+            tmp.path(),
+            Path::new("vendor/example-0.1.0"),
+            &filter,
+        )
+        .unwrap();
         assert_eq!(cksums.len(), 2);
         assert!(cksums.contains_key("a.txt"));
         assert!(cksums.contains_key("sub/b.txt"));

@@ -125,7 +125,7 @@ pub(crate) fn cargo_vendor(
         }
         VendorConfig::Source(source_config) => {
             log::info!("Running fast vendor (library mode)");
-            let filter = build_filter(config, paths, source_config)?;
+            let filter = build_filter(paths, source_config)?;
             fast_vendor(config, no_delete, args, paths, filter)?;
             assert!(is_vendored(config, paths)?);
         }
@@ -689,8 +689,13 @@ fn process_expected_crate(
     result
 }
 
-fn checksum_excluded(pkgdir: &Path, relative: &Path, key: &str, filter: &VendorFilter) -> bool {
-    filter.remove_globs.is_match(key) || gitignore_excluded(pkgdir, relative, filter)
+fn checksum_excluded(
+    config: &Config,
+    pkgdir: &Path,
+    relative: &Path,
+    filter: &VendorFilter,
+) -> bool {
+    is_split_buck_file(config, relative) || gitignore_excluded(pkgdir, relative, filter)
 }
 
 fn source_excluded(config: &Config, pkgdir: &Path, relative: &Path, filter: &VendorFilter) -> bool {
@@ -967,7 +972,6 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use globset::GlobSet;
     use ignore::gitignore::Gitignore;
     use ignore::gitignore::GitignoreBuilder;
 
@@ -984,7 +988,6 @@ mod tests {
 
     pub(crate) fn empty_filter() -> VendorFilter {
         VendorFilter {
-            remove_globs: GlobSet::empty(),
             gitignore: Gitignore::empty(),
         }
     }
@@ -993,10 +996,7 @@ mod tests {
         let mut builder = GitignoreBuilder::new("/");
         builder.add_line(None, pattern).unwrap();
         let gitignore = builder.build().unwrap();
-        VendorFilter {
-            remove_globs: GlobSet::empty(),
-            gitignore,
-        }
+        VendorFilter { gitignore }
     }
 
     #[test]

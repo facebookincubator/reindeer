@@ -149,6 +149,7 @@ fn expected_registry_archive_fingerprint(
             }
             fingerprint.insert(key.clone(), TreeEntryFingerprint::File(hash.clone()));
             maybe_insert_checksum(
+                config,
                 &mut file_cksums,
                 &expected.pkgdir,
                 relative,
@@ -171,6 +172,7 @@ fn expected_registry_archive_fingerprint(
     }
 
     finish_expected_fingerprint(
+        config,
         fingerprint,
         file_cksums,
         &expected.pkgdir,
@@ -221,10 +223,19 @@ fn expected_copy_source_fingerprint(
             }
         }
         fingerprint.insert(key.clone(), TreeEntryFingerprint::File(hash.clone()));
-        maybe_insert_checksum(&mut file_cksums, pkgdir, relative, &key, &hash, filter);
+        maybe_insert_checksum(
+            config,
+            &mut file_cksums,
+            pkgdir,
+            relative,
+            &key,
+            &hash,
+            filter,
+        );
     }
 
     finish_expected_fingerprint(
+        config,
         fingerprint,
         file_cksums,
         pkgdir,
@@ -235,6 +246,7 @@ fn expected_copy_source_fingerprint(
 }
 
 fn finish_expected_fingerprint(
+    config: &Config,
     mut fingerprint: BTreeMap<String, TreeEntryFingerprint>,
     mut file_cksums: BTreeMap<String, String>,
     pkgdir: &Path,
@@ -243,6 +255,7 @@ fn finish_expected_fingerprint(
     cargo_toml: Option<&str>,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
     synthesize_missing_build_rs_fingerprint(
+        config,
         &mut fingerprint,
         &mut file_cksums,
         pkgdir,
@@ -258,6 +271,7 @@ fn finish_expected_fingerprint(
 }
 
 fn synthesize_missing_build_rs_fingerprint(
+    config: &Config,
     fingerprint: &mut BTreeMap<String, TreeEntryFingerprint>,
     file_cksums: &mut BTreeMap<String, String>,
     pkgdir: &Path,
@@ -286,11 +300,20 @@ fn synthesize_missing_build_rs_fingerprint(
 
     let hash = bytes_sha256(SYNTHESIZED_BUILD_RS);
     fingerprint.insert(key.clone(), TreeEntryFingerprint::File(hash.clone()));
-    maybe_insert_checksum(file_cksums, pkgdir, &build_script_path, &key, &hash, filter);
+    maybe_insert_checksum(
+        config,
+        file_cksums,
+        pkgdir,
+        &build_script_path,
+        &key,
+        &hash,
+        filter,
+    );
     Ok(())
 }
 
 fn maybe_insert_checksum(
+    config: &Config,
     file_cksums: &mut BTreeMap<String, String>,
     pkgdir: &Path,
     relative: &Path,
@@ -298,7 +321,7 @@ fn maybe_insert_checksum(
     hash: &str,
     filter: &VendorFilter,
 ) {
-    if checksum_excluded(pkgdir, relative, key, filter) {
+    if checksum_excluded(config, pkgdir, relative, filter) {
         return;
     }
     file_cksums.insert(key.to_owned(), hash.to_owned());

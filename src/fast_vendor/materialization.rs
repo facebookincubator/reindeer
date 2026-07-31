@@ -225,7 +225,7 @@ fn postprocess_vendored_crate_dir(
     remove_split_buck_file(config, crate_dir)?;
     remove_existing_path(&crate_dir.join(".cargo-checksum.json"))?;
     synthesize_missing_build_rs(crate_dir)?;
-    let file_cksums = compute_dir_checksums_filtered(crate_dir, pkgdir, filter)?;
+    let file_cksums = compute_dir_checksums_filtered(config, crate_dir, pkgdir, filter)?;
     write_checksum_json(crate_dir, pkg_cksum, &file_cksums)
 }
 
@@ -499,6 +499,7 @@ build = "./build.rs"
     fn test_synthesize_missing_build_rs_creates_stub() {
         // When Cargo.toml declares a build script path that does not exist,
         // synthesize_missing_build_rs should create a stub.
+        let config = Config::default_for_test();
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
 
@@ -531,8 +532,8 @@ build = "build.rs"
 
         let pkgdir = std::path::Path::new("vendor/dragon-breath-0.1.0");
         let filter = empty_filter();
-        let cksums =
-            compute_dir_checksums_filtered(root, pkgdir, &filter).expect("checksums computed");
+        let cksums = compute_dir_checksums_filtered(&config, root, pkgdir, &filter)
+            .expect("checksums computed");
         assert!(
             cksums.contains_key("build.rs"),
             "synthesized build.rs must be included in .cargo-checksum.json"
