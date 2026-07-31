@@ -25,7 +25,6 @@ use crate::fast_vendor::limit_reader::LimitReader;
 use crate::fast_vendor::materialization_excluded;
 use crate::fast_vendor::normalize_manifest_path;
 use crate::fast_vendor::prepare_regular_file_target;
-use crate::fast_vendor::remove_existing_path;
 use crate::fast_vendor::write_regular_file;
 
 pub(super) enum Materialization {
@@ -208,7 +207,6 @@ fn postprocess_vendored_crate_dir(
     crate_dir: &Path,
     pkg_cksum: Option<&str>,
 ) -> anyhow::Result<()> {
-    remove_existing_path(&crate_dir.join(".cargo-checksum.json"))?;
     synthesize_missing_build_rs(crate_dir)?;
     let file_cksums = compute_dir_checksums_filtered(config, crate_dir)?;
     write_checksum_json(crate_dir, pkg_cksum, &file_cksums)

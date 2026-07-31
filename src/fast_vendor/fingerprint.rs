@@ -112,9 +112,7 @@ fn expected_registry_archive_fingerprint(
             format!("invalid tarball: entry at {entry_path:?} is not under {prefix:?}")
         })?;
 
-        if materialization_excluded(config, &expected.pkgdir, relative, filter)
-            || relative == Path::new(".cargo-checksum.json")
-        {
+        if materialization_excluded(config, &expected.pkgdir, relative, filter) {
             continue;
         }
 
@@ -184,9 +182,7 @@ fn expected_copy_source_fingerprint(
             format!("{} is not under {}", src_path.display(), src_root.display(),)
         })?;
 
-        if materialization_excluded(config, pkgdir, relative, filter)
-            || relative == Path::new(".cargo-checksum.json")
-        {
+        if materialization_excluded(config, pkgdir, relative, filter) {
             continue;
         }
 

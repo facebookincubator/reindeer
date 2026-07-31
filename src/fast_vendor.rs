@@ -690,6 +690,7 @@ fn materialization_excluded(
     filter: &VendorFilter,
 ) -> bool {
     is_split_buck_file(config, relative)
+        || relative == ".cargo-checksum.json"
         || relative.components().any(|component| {
             // Exclude VCS bookkeeping files anywhere in the package. Cargo's own
             // helper only checks the package root, but fbsource does not track
