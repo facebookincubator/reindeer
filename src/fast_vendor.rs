@@ -689,31 +689,21 @@ fn materialization_excluded(
     relative: &Path,
     filter: &VendorFilter,
 ) -> bool {
-    !vendor_this(relative)
-        || is_split_buck_file(config, relative)
-        || gitignore_excluded(pkgdir, relative, filter)
-}
-
-fn gitignore_excluded(pkgdir: &Path, relative: &Path, filter: &VendorFilter) -> bool {
-    filter
-        .gitignore
-        .matched_path_or_any_parents(pkgdir.join(relative), false)
-        .is_ignore()
-}
-
-/// Returns `true` if this relative path should be included in the vendor dir.
-///
-/// Excludes VCS bookkeeping files anywhere in the package. Cargo's own helper
-/// only checks the package root, but fbsource does not track these files in
-/// vendored third-party trees, so treating them as source would make clean
-/// checkouts fail the fast no-op comparison.
-fn vendor_this(relative: &Path) -> bool {
-    !relative.components().any(|component| {
-        matches!(
-            component.as_os_str().to_str(),
-            Some(".gitattributes" | ".gitignore" | ".git" | ".hg" | ".cargo-ok")
-        )
-    })
+    is_split_buck_file(config, relative)
+        || relative.components().any(|component| {
+            // Exclude VCS bookkeeping files anywhere in the package. Cargo's own
+            // helper only checks the package root, but fbsource does not track
+            // these files in vendored third-party trees, so treating them as source
+            // would make clean checkouts fail the fast no-op comparison.
+            matches!(
+                component.as_os_str().to_str(),
+                Some(".gitattributes" | ".gitignore" | ".git" | ".hg" | ".cargo-ok")
+            )
+        })
+        || filter
+            .gitignore
+            .matched_path_or_any_parents(pkgdir.join(relative), false)
+            .is_ignore()
 }
 
 fn prepare_git_cargo_toml_for_vendor(
@@ -939,7 +929,6 @@ mod tests {
     use crate::fast_vendor::find_cached_registry_archive_by_tarball;
     use crate::fast_vendor::is_split_buck_file;
     use crate::fast_vendor::remove_expected_vendor_entries_from_cleanup;
-    use crate::fast_vendor::vendor_this;
 
     pub(crate) fn empty_filter() -> VendorFilter {
         VendorFilter {
@@ -973,29 +962,6 @@ mod tests {
         assert_eq!(extract_crate_name("anymap3-1.0.1"), "anymap3");
         assert_eq!(extract_crate_name("akd-0.12.0-pre.11"), "akd");
         assert_eq!(extract_crate_name("sha2-0.11.0-pre.4"), "sha2");
-    }
-
-    // Invariant: vendor_this excludes .gitattributes, .gitignore, .git, .cargo-ok
-    #[test]
-    fn test_vendor_this_excludes_dotfiles() {
-        assert!(!vendor_this(Path::new(".gitattributes")));
-        assert!(!vendor_this(Path::new(".gitignore")));
-        assert!(!vendor_this(Path::new(".git")));
-        assert!(!vendor_this(Path::new(".cargo-ok")));
-        assert!(!vendor_this(Path::new("nested/.gitattributes")));
-        assert!(!vendor_this(Path::new("nested/.gitignore")));
-        assert!(!vendor_this(Path::new("nested/.git/config")));
-        assert!(!vendor_this(Path::new("nested/.cargo-ok")));
-    }
-
-    // Invariant: vendor_this includes normal source files and nested paths
-    #[test]
-    fn test_vendor_this_includes_normal_files() {
-        assert!(vendor_this(Path::new("src/lib.rs")));
-        assert!(vendor_this(Path::new("Cargo.toml")));
-        assert!(vendor_this(Path::new("README.md")));
-        assert!(vendor_this(Path::new("build.rs")));
-        assert!(vendor_this(Path::new(".cargo/config.toml")));
     }
 
     #[test]
