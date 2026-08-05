@@ -27,7 +27,7 @@ indoc = "2.0.2"
 itertools = "0.15.0"
 log = { version = "0.4.33", features = ["kv_unstable", "kv_unstable_std"] }
 measure_time = "0.9"
-monostate = "1"
+monostate = "1.0.3"
 nom = "8"
 nom-language = "0.1"
 proc-macro2 = { version = "1.0.106", features = ["span-locations"] }
