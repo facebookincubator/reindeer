@@ -33,7 +33,7 @@ nom-language = "0.1"
 proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
 semver = { version = "1.0.28", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive", "rc"] }
-serde_json = { version = "1.0.140", features = ["alloc", "float_roundtrip", "raw_value", "unbounded_depth"] }
+serde_json = { version = "1.0.151", features = ["alloc", "float_roundtrip", "raw_value", "unbounded_depth"] }
 serde_starlark = "0.1.19"
 serde_with = { version = "3.21.0", features = ["hex", "json"] }
 sha2 = "0.10.6"
