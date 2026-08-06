@@ -76,7 +76,7 @@ fn expected_tree_fingerprint(
             src_root,
             file_paths,
             normalized_cargo_toml.as_deref(),
-            &expected.pkgdir,
+            &expected.dst,
             gitignore,
             expected.pkg_cksum.as_deref(),
         ),
@@ -112,7 +112,7 @@ fn expected_registry_archive_fingerprint(
             format!("invalid tarball: entry at {entry_path:?} is not under {prefix:?}")
         })?;
 
-        if materialization_excluded(config, &expected.pkgdir, relative, gitignore) {
+        if materialization_excluded(config, &expected.dst, relative, gitignore) {
             continue;
         }
 
@@ -169,7 +169,7 @@ fn expected_copy_source_fingerprint(
     src_root: &Path,
     file_paths: &[PathBuf],
     normalized_cargo_toml: Option<&str>,
-    pkgdir: &Path,
+    package_dir: &Path,
     gitignore: &Gitignore,
     pkg_cksum: Option<&str>,
 ) -> anyhow::Result<BTreeMap<String, TreeEntryFingerprint>> {
@@ -182,7 +182,7 @@ fn expected_copy_source_fingerprint(
             format!("{} is not under {}", src_path.display(), src_root.display(),)
         })?;
 
-        if materialization_excluded(config, pkgdir, relative, gitignore) {
+        if materialization_excluded(config, package_dir, relative, gitignore) {
             continue;
         }
 

@@ -54,7 +54,6 @@ const SYNTHESIZED_BUILD_RS: &[u8] = b"fn main() {}\n";
 struct ExpectedCrate {
     dst_name: String,
     dst: PathBuf,
-    pkgdir: PathBuf,
     pkg_cksum: Option<String>,
     materialization: Materialization,
 }
@@ -63,7 +62,6 @@ struct PendingCrate {
     pkg_id: PackageId,
     dst_name: String,
     dst: PathBuf,
-    pkgdir: PathBuf,
     pkg_cksum: Option<String>,
     materialization: PendingMaterialization,
 }
@@ -262,10 +260,6 @@ fn fast_vendor(
             );
         }
         let dst = vendor_dir.join(&dst_name);
-        let pkgdir = dst
-            .strip_prefix(&paths.third_party_dir)
-            .expect("dst is always under third_party_dir")
-            .to_path_buf();
         remove_expected_vendor_entries_from_cleanup(
             config,
             &mut to_remove,
@@ -301,7 +295,6 @@ fn fast_vendor(
             pkg_id,
             dst_name,
             dst,
-            pkgdir,
             pkg_cksum,
             materialization,
         });
@@ -428,7 +421,6 @@ fn fast_vendor(
         expected_crates.push(ExpectedCrate {
             dst_name: pending.dst_name,
             dst: pending.dst,
-            pkgdir: pending.pkgdir,
             pkg_cksum: pending.pkg_cksum,
             materialization,
         });
@@ -685,7 +677,7 @@ fn process_expected_crate(
 
 fn materialization_excluded(
     config: &Config,
-    pkgdir: &Path,
+    package_dir: &Path,
     relative: &Path,
     gitignore: &Gitignore,
 ) -> bool {
@@ -702,7 +694,7 @@ fn materialization_excluded(
             )
         })
         || gitignore
-            .matched_path_or_any_parents(pkgdir.join(relative), false)
+            .matched_path_or_any_parents(package_dir.join(relative), false)
             .is_ignore()
 }
 

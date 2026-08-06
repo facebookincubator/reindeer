@@ -271,7 +271,6 @@ fn unpack_package_archive(
 mod test {
     use std::collections::BTreeMap;
     use std::fs;
-    use std::path::PathBuf;
 
     use ignore::gitignore::Gitignore;
 
@@ -321,13 +320,11 @@ build = "build.rs"
         fs::write(actual.join("lib.rs"), b"pub fn example() {}\n").unwrap();
 
         let gitignore = Gitignore::empty();
-        let pkgdir = PathBuf::from("vendor/example-0.1.0");
         postprocess_vendored_crate_dir(&config, &actual, Some("package-checksum")).unwrap();
 
         let expected = ExpectedCrate {
             dst_name: "example-0.1.0".to_owned(),
             dst: actual.clone(),
-            pkgdir,
             pkg_cksum: Some("package-checksum".to_owned()),
             materialization: Materialization::CopyFiles {
                 src_root: src.clone(),
@@ -380,13 +377,11 @@ build = "./build.rs"
         fs::write(actual.join("build.rs"), b"fn main() {}\n").unwrap();
 
         let gitignore = Gitignore::empty();
-        let pkgdir = PathBuf::from("vendor/example-0.1.0");
         postprocess_vendored_crate_dir(&config, &actual, Some("package-checksum")).unwrap();
 
         let expected = ExpectedCrate {
             dst_name: "example-0.1.0".to_owned(),
             dst: actual,
-            pkgdir,
             pkg_cksum: Some("package-checksum".to_owned()),
             materialization: Materialization::CopyFiles {
                 src_root: src.clone(),
