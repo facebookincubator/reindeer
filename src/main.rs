@@ -42,6 +42,7 @@ mod collection;
 mod config;
 mod fast_vendor;
 mod fixups;
+mod gitignore;
 mod glob;
 mod index;
 mod lockfile;
@@ -243,6 +244,11 @@ fn try_main() -> anyhow::Result<()> {
             fast,
             vendor_cleanup,
         } => {
+            let source_config = match &config.vendor {
+                VendorConfig::Source(source_config) => source_config.clone(),
+                VendorConfig::Off | VendorConfig::LocalRegistry => VendorSourceConfig::default(),
+            };
+
             if matches!(
                 config.vendor,
                 VendorConfig::LocalRegistry | VendorConfig::Source(_)
@@ -262,7 +268,7 @@ fn try_main() -> anyhow::Result<()> {
                 }
                 config.vendor = VendorConfig::Off;
             }
-            buckify::buckify(&config, &args, &paths, *stdout, *fast)?;
+            buckify::buckify(&config, &args, &paths, &source_config, *stdout, *fast)?;
             if *vendor_cleanup {
                 fast_vendor::cleanup_extern_crates(&config, &paths)?;
             }

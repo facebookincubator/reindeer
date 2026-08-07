@@ -23,6 +23,8 @@ use serde::de::Visitor;
 use toml::Spanned;
 use walkdir::WalkDir;
 
+use crate::gitignore::Gitignore;
+use crate::path::normalize_path;
 use crate::unused::UnusedFixups;
 
 pub struct SerializedGlob {
@@ -174,15 +176,19 @@ impl<'a> Globs<'a> {
         }
     }
 
-    /// Returns relative paths (relative to `dir`) of all the matching files.
-    ///
-    /// Any error from `WalkDir` (a missing directory, EMFILE, permission
-    /// failures, etc.) is surfaced. We may need to add some deliberate
-    /// error-swallowing for actually-irrelevant errors in the future.
-    pub fn walk(&self, dir: impl AsRef<Path>) -> anyhow::Result<Vec<PathBuf>> {
-        let dir = dir.as_ref();
+    /// Returns matching non-ignored files relative to `dir`.
+    pub fn walk(
+        &self,
+        dir: impl AsRef<Path>,
+        gitignore: &Gitignore,
+    ) -> anyhow::Result<Vec<PathBuf>> {
+        // `extra_srcs` can reach sibling crates through `..` components.
+        let dir = normalize_path(dir.as_ref());
         let mut result = Vec::new();
-        for entry in WalkDir::new(dir) {
+        let walk = WalkDir::new(&dir)
+            .into_iter()
+            .filter_entry(|entry| !gitignore.is_ignored(entry.path(), entry.file_type().is_dir()));
+        for entry in walk {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(walkdir_error) => {
@@ -207,7 +213,7 @@ impl<'a> Globs<'a> {
             }
             let path = entry
                 .path()
-                .strip_prefix(dir)
+                .strip_prefix(&dir)
                 .expect("walkdir produced paths not inside intended dir");
             if self.globset.is_match(path) && !self.exceptset.is_match(path) {
                 result.push(path.to_owned());
@@ -258,5 +264,86 @@ impl<'a> From<&'a TrackedGlob> for GlobSetKind<'a> {
 impl<'a> From<&'a TrackedGlobSet> for GlobSetKind<'a> {
     fn from(globset: &'a TrackedGlobSet) -> Self {
         GlobSetKind::TrackedSet(globset)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+    use crate::Paths;
+    use crate::buck::BuckPath;
+    use crate::config::VendorSourceConfig;
+    use crate::gitignore::load_gitignore;
+
+    fn all_files() -> Globs<'static> {
+        Globs::new(
+            GlobSetKind::from_iter(["**"]).expect("all-files glob should be valid"),
+            NO_EXCLUDE,
+        )
+    }
+
+    fn gitignore_at(third_party_dir: &Path) -> Gitignore {
+        let paths = Paths {
+            buck_package: BuckPath(PathBuf::new()),
+            third_party_dir: third_party_dir.to_path_buf(),
+            manifest_path: PathBuf::new(),
+            lockfile_path: PathBuf::new(),
+            cargo_home: PathBuf::new(),
+        };
+        load_gitignore(&paths, &VendorSourceConfig::default()).expect("gitignore should load")
+    }
+
+    #[test]
+    fn walk_prunes_ignored_directories() {
+        let temp = tempfile::tempdir().expect("temp directory should be created");
+        let root = temp.path();
+        fs::write(root.join(".gitignore"), "target/\n").expect("gitignore should be written");
+        let target = root.join("target/debug");
+        fs::create_dir_all(&target).expect("ignored directory should be created");
+        fs::write(target.join("libexample.a"), "").expect("ignored file should be written");
+        fs::write(root.join("visible.rs"), "").expect("visible file should be written");
+
+        let gitignore = gitignore_at(root);
+        let from_root = all_files()
+            .walk(root, &gitignore)
+            .expect("root directory should be walked");
+        let from_ignored_root = all_files()
+            .walk(root.join("target"), &gitignore)
+            .expect("ignored directory should be walked");
+
+        assert!(
+            from_root.contains(&PathBuf::from("visible.rs")),
+            "non-ignored files should remain in the walk"
+        );
+        assert!(
+            !from_root.contains(&PathBuf::from("target/debug/libexample.a")),
+            "ignored subtrees should be pruned"
+        );
+        assert!(
+            from_ignored_root.is_empty(),
+            "ignored root should have no matches"
+        );
+    }
+
+    #[test]
+    fn walk_filters_a_root_reached_through_parent_dirs() {
+        let temp = tempfile::tempdir().expect("temp directory should be created");
+        let root = temp.path();
+        fs::write(root.join(".gitignore"), "sibling/generated.rs\n")
+            .expect("gitignore should be written");
+        fs::create_dir_all(root.join("vendor/example"))
+            .expect("vendor directory should be created");
+        fs::create_dir_all(root.join("sibling")).expect("sibling directory should be created");
+        fs::write(root.join("sibling/generated.rs"), "").expect("ignored file should be written");
+        fs::write(root.join("sibling/lib.rs"), "").expect("source file should be written");
+
+        let via_parent = root.join("vendor/example/../../sibling");
+        let actual = all_files()
+            .walk(via_parent, &gitignore_at(root))
+            .expect("sibling directory should be walked");
+
+        assert_eq!(actual, vec![PathBuf::from("lib.rs")]);
     }
 }

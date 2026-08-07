@@ -232,8 +232,8 @@ pub struct VendorSourceConfig {
     ///   for vendoring either way.
     #[serde(skip)]
     pub explicit: Option<bool>,
-    /// List of .gitignore files to use to filter checksum files, relative to
-    /// this config file.
+    /// List of additional .gitignore files to apply to vendored checksums and
+    /// generated BUCK sources, relative to the third-party directory.
     #[serde(default)]
     pub gitignore_checksum_exclude: Vec<PathBuf>,
 }

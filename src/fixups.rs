@@ -66,6 +66,7 @@ pub use crate::fixups::config::CargoEnvs;
 pub use crate::fixups::config::ExportSources;
 use crate::fixups::config::FixupConfig;
 use crate::fixups::config::FixupConfigFile;
+use crate::gitignore::Gitignore;
 use crate::glob::GlobSetKind;
 use crate::glob::Globs;
 use crate::glob::NO_EXCLUDE;
@@ -86,6 +87,7 @@ mod config;
 pub struct Fixups<'meta> {
     config: &'meta Config,
     paths: &'meta Paths,
+    gitignore: &'meta Gitignore,
     third_party_dir: &'meta Path,
     package: &'meta Manifest,
     fixup_config: Arc<FixupConfigFile>,
@@ -107,14 +109,16 @@ impl<'meta> fmt::Debug for Fixups<'meta> {
 pub struct FixupsCache<'meta> {
     config: &'meta Config,
     paths: &'meta Paths,
+    gitignore: &'meta Gitignore,
     fixups: Mutex<BTreeMap<&'meta str, Arc<FixupConfigFile>>>,
 }
 
 impl<'meta> FixupsCache<'meta> {
-    pub fn new(config: &'meta Config, paths: &'meta Paths) -> Self {
+    pub fn new(config: &'meta Config, paths: &'meta Paths, gitignore: &'meta Gitignore) -> Self {
         FixupsCache {
             config,
             paths,
+            gitignore,
             fixups: Mutex::new(BTreeMap::new()),
         }
     }
@@ -143,6 +147,7 @@ impl<'meta> FixupsCache<'meta> {
             fixup_config,
             config: self.config,
             paths: self.paths,
+            gitignore: self.gitignore,
         })
     }
 
@@ -561,12 +566,12 @@ impl<'meta> Fixups<'meta> {
                         },
                     },
                     srcs: Globs::new(srcs, exclude)
-                        .walk(self.manifest_dir)?
+                        .walk(self.manifest_dir, self.gitignore)?
                         .into_iter()
                         .map(|path| SubtargetOrPath::Path(BuckPath(path)))
                         .collect(),
                     headers: Globs::new(headers, exclude)
-                        .walk(self.manifest_dir)?
+                        .walk(self.manifest_dir, self.gitignore)?
                         .into_iter()
                         .map(|path| SubtargetOrPath::Path(BuckPath(path)))
                         .collect(),
@@ -574,7 +579,7 @@ impl<'meta> Fixups<'meta> {
                         ExportedHeaders::Set(exported_headers) => {
                             let exported_header_globs = Globs::new(exported_headers, exclude);
                             let exported_headers = exported_header_globs
-                                .walk(self.manifest_dir)?
+                                .walk(self.manifest_dir, self.gitignore)?
                                 .into_iter()
                                 .map(|path| SubtargetOrPath::Path(BuckPath(path)))
                                 .collect();
@@ -659,7 +664,7 @@ impl<'meta> Fixups<'meta> {
                     },
                     // Just collect the sources, excluding things in the exclude list
                     srcs: Globs::new(srcs, exclude)
-                        .walk(self.manifest_dir)?
+                        .walk(self.manifest_dir, self.gitignore)?
                         .into_iter()
                         .map(|path| self.subtarget_or_path(&path))
                         .collect::<anyhow::Result<_>>()?,
@@ -668,7 +673,7 @@ impl<'meta> Fixups<'meta> {
                     headers: {
                         let globs = Globs::new(headers, exclude);
                         let mut headers = BTreeSet::new();
-                        for path in globs.walk(self.manifest_dir)? {
+                        for path in globs.walk(self.manifest_dir, self.gitignore)? {
                             headers.insert(self.subtarget_or_path(&path)?);
                         }
 
@@ -677,9 +682,10 @@ impl<'meta> Fixups<'meta> {
                             NO_EXCLUDE,
                         );
                         for fixup_include_path in fixup_include_paths {
-                            for path in
-                                globs.walk(self.fixup_config.fixup_dir.join(fixup_include_path))?
-                            {
+                            for path in globs.walk(
+                                self.fixup_config.fixup_dir.join(fixup_include_path),
+                                self.gitignore,
+                            )? {
                                 headers.insert(SubtargetOrPath::Path(BuckPath(
                                     rel_fixup.join(fixup_include_path).join(path),
                                 )));
@@ -692,7 +698,7 @@ impl<'meta> Fixups<'meta> {
                         ExportedHeaders::Set(exported_headers) => {
                             let exported_header_globs = Globs::new(exported_headers, exclude);
                             let exported_headers = exported_header_globs
-                                .walk(self.manifest_dir)?
+                                .walk(self.manifest_dir, self.gitignore)?
                                 .into_iter()
                                 .map(|path| self.subtarget_or_path(&path))
                                 .collect::<anyhow::Result<_>>()?;
@@ -766,7 +772,7 @@ impl<'meta> Fixups<'meta> {
         ) in prebuilt_cxx_libraries
         {
             let static_lib_globs = Globs::new(static_libs, NO_EXCLUDE);
-            for static_lib in static_lib_globs.walk(self.manifest_dir)? {
+            for static_lib in static_lib_globs.walk(self.manifest_dir, self.gitignore)? {
                 let static_lib_file_name = static_lib.file_name().unwrap().to_string_lossy();
                 let prebuilt_cxx_library_target = if self.config.buck.split {
                     let target_name = Name(format!("{}-{}", name, static_lib_file_name));
@@ -1261,7 +1267,7 @@ impl<'meta> Fixups<'meta> {
                     continue;
                 }
                 let static_lib_globs = Globs::new(static_libs, NO_EXCLUDE);
-                for static_lib in static_lib_globs.walk(self.manifest_dir)? {
+                for static_lib in static_lib_globs.walk(self.manifest_dir, self.gitignore)? {
                     ret.insert(
                         (
                             RuleRef::new(if self.config.buck.split {
@@ -1610,7 +1616,7 @@ impl<'meta> Fixups<'meta> {
                 }
             } else {
                 let globs = Globs::new(GlobSetKind::from_iter([rest_of_glob])?, NO_EXCLUDE);
-                for path in globs.walk(&dir_containing_extra_srcs)? {
+                for path in globs.walk(&dir_containing_extra_srcs, self.gitignore)? {
                     insert(&dir_containing_extra_srcs.join(path));
                 }
             }
@@ -1632,8 +1638,8 @@ impl<'meta> Fixups<'meta> {
             } else {
                 &fixup.extra_srcs
             };
-            Globs::new(extra_srcs, NO_EXCLUDE).walk(self.manifest_dir)?;
-            Globs::new(&fixup.omit_srcs, NO_EXCLUDE).walk(self.manifest_dir)?;
+            Globs::new(extra_srcs, NO_EXCLUDE).walk(self.manifest_dir, self.gitignore)?;
+            Globs::new(&fixup.omit_srcs, NO_EXCLUDE).walk(self.manifest_dir, self.gitignore)?;
         }
         Ok(())
     }

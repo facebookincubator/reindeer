@@ -14,7 +14,6 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use anyhow::bail;
 use cargo_toml::OptionalFile;
-use ignore::gitignore::Gitignore;
 
 use crate::config::Config;
 use crate::fast_vendor::ExpectedCrate;
@@ -26,6 +25,7 @@ use crate::fast_vendor::materialization_excluded;
 use crate::fast_vendor::normalize_manifest_path;
 use crate::fast_vendor::prepare_regular_file_target;
 use crate::fast_vendor::write_regular_file;
+use crate::gitignore::Gitignore;
 
 pub(super) enum Materialization {
     RegistryArchive {
@@ -271,10 +271,12 @@ fn unpack_package_archive(
 mod test {
     use std::collections::BTreeMap;
     use std::fs;
+    use std::path::PathBuf;
 
-    use ignore::gitignore::Gitignore;
-
+    use crate::Paths;
+    use crate::buck::BuckPath;
     use crate::config::Config;
+    use crate::config::VendorSourceConfig;
     use crate::fast_vendor::ExpectedCrate;
     use crate::fast_vendor::cargo_checksum::compute_dir_checksums_filtered;
     use crate::fast_vendor::fingerprint::vendor_dir_matches_expected_source;
@@ -283,6 +285,8 @@ mod test {
     use crate::fast_vendor::materialization::postprocess_vendored_crate_dir;
     use crate::fast_vendor::materialization::synthesize_missing_build_rs;
     use crate::fast_vendor::materialization::write_checksum_json;
+    use crate::gitignore::Gitignore;
+    use crate::gitignore::load_gitignore;
 
     #[test]
     fn test_vendor_dir_matches_expected_source_does_not_trust_checksum_json() {
@@ -351,6 +355,66 @@ build = "build.rs"
         assert!(
             !vendor_dir_matches_expected_source(&config, &expected, &gitignore).unwrap(),
             "editing checksum metadata must invalidate the fast no-op path"
+        );
+    }
+
+    #[test]
+    fn test_vendor_dir_matches_expected_source_applies_gitignore() {
+        let config = Config::default_for_test();
+        let dir = tempfile::tempdir().expect("temp directory should be created");
+        let third_party_dir = dir.path().join("third-party");
+        let src = dir.path().join("source");
+        let actual = third_party_dir.join("vendor/example-0.1.0");
+        fs::create_dir_all(&src).expect("source directory should be created");
+        fs::create_dir_all(&actual).expect("vendor directory should be created");
+
+        let cargo_toml = r#"[package]
+name = "example"
+version = "0.1.0"
+"#;
+        for root in [&src, &actual] {
+            fs::write(root.join("Cargo.toml"), cargo_toml).expect("Cargo.toml should be written");
+            fs::write(root.join("lib.rs"), b"pub fn example() {}\n")
+                .expect("source should be written");
+        }
+        fs::write(src.join("ignored.txt"), "machine-local")
+            .expect("ignored source should be written");
+        fs::write(
+            third_party_dir.join(".gitignore"),
+            "/vendor/example-0.1.0/ignored.txt\n",
+        )
+        .expect("gitignore should be written");
+
+        postprocess_vendored_crate_dir(&config, &actual, Some("package-checksum"))
+            .expect("vendor directory should be postprocessed");
+        let paths = Paths {
+            buck_package: BuckPath(PathBuf::new()),
+            third_party_dir: third_party_dir.clone(),
+            manifest_path: PathBuf::new(),
+            lockfile_path: PathBuf::new(),
+            cargo_home: PathBuf::new(),
+        };
+        let gitignore =
+            load_gitignore(&paths, &VendorSourceConfig::default()).expect("gitignore should load");
+        let expected = ExpectedCrate {
+            dst_name: "example-0.1.0".to_owned(),
+            dst: actual,
+            pkg_cksum: Some("package-checksum".to_owned()),
+            materialization: Materialization::CopyFiles {
+                src_root: src.clone(),
+                file_paths: vec![
+                    src.join("Cargo.toml"),
+                    src.join("lib.rs"),
+                    src.join("ignored.txt"),
+                ],
+                normalized_cargo_toml: None,
+            },
+        };
+
+        assert!(
+            vendor_dir_matches_expected_source(&config, &expected, &gitignore)
+                .expect("vendor fingerprint should be computed"),
+            "gitignored files should not invalidate the fast no-op path"
         );
     }
 

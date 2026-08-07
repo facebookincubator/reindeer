@@ -6,7 +6,6 @@
  */
 
 mod cargo_checksum;
-mod filter;
 mod fingerprint;
 mod limit_reader;
 mod materialization;
@@ -31,7 +30,6 @@ use cargo::core::Package;
 use cargo::core::PackageId;
 use cargo::core::SourceId;
 use cargo::util::cache_lock::CacheLockMode;
-use ignore::gitignore::Gitignore;
 use sha2::Digest as _;
 
 use crate::Args;
@@ -41,10 +39,11 @@ use crate::cargo::make_gctx;
 use crate::cargo::run_cargo;
 use crate::config::Config;
 use crate::config::VendorConfig;
-use crate::fast_vendor::filter::load_gitignore;
 use crate::fast_vendor::fingerprint::vendor_dir_matches_expected_source;
 use crate::fast_vendor::materialization::Materialization;
 use crate::fast_vendor::materialization::materialize_expected_crate;
+use crate::gitignore::Gitignore;
+use crate::gitignore::load_gitignore;
 use crate::remap::RemapConfig;
 use crate::remap::RemapSource;
 use crate::remap::generate_vendor_config;
@@ -693,9 +692,7 @@ fn materialization_excluded(
                 Some(".gitattributes" | ".gitignore" | ".git" | ".hg" | ".cargo-ok")
             )
         })
-        || gitignore
-            .matched_path_or_any_parents(package_dir.join(relative), false)
-            .is_ignore()
+        || gitignore.is_ignored(&package_dir.join(relative), false)
 }
 
 fn prepare_git_cargo_toml_for_vendor(

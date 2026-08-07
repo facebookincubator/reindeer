@@ -80,8 +80,11 @@ use crate::collection::Select;
 use crate::collection::SetOrMap;
 use crate::config::Config;
 use crate::config::VendorConfig;
+use crate::config::VendorSourceConfig;
 use crate::fixups::ExportSources;
 use crate::fixups::FixupsCache;
+use crate::gitignore::Gitignore;
+use crate::gitignore::load_gitignore;
 use crate::glob::GlobSetKind;
 use crate::glob::Globs;
 use crate::glob::NO_EXCLUDE;
@@ -188,6 +191,7 @@ where
 struct RuleContext<'meta> {
     config: &'meta Config,
     paths: &'meta Paths,
+    gitignore: &'meta Gitignore,
     index: Index<'meta>,
     lockfile: &'meta Lockfile,
     fixups: FixupsCache<'meta>,
@@ -680,6 +684,7 @@ fn generate_target_rules<'a>(
     let RuleContext {
         config,
         paths,
+        gitignore,
         index,
         collision_info,
         ..
@@ -766,10 +771,10 @@ fn generate_target_rules<'a>(
         // individual contained files.
         //
         // But we validate globs anyway.
-        license_globs.walk(manifest_dir)?;
+        license_globs.walk(manifest_dir, gitignore)?;
     } else {
         let rel_manifest = relative_path(&paths.third_party_dir, manifest_dir);
-        for path in license_globs.walk(manifest_dir)? {
+        for path in license_globs.walk(manifest_dir, gitignore)? {
             licenses.insert(BuckPath(rel_manifest.join(path)));
         }
         if let Some(license_file) = &pkg.license_file {
@@ -824,7 +829,7 @@ fn generate_target_rules<'a>(
             let dir_containing_src = tgt.src_path.parent().unwrap();
             let pattern = relative_path(manifest_dir, dir_containing_src).join("**/*.rs");
             let glob = Globs::new(GlobSetKind::from_iter([pattern]).unwrap(), NO_EXCLUDE);
-            srcs.extend(glob.walk(manifest_dir)?);
+            srcs.extend(glob.walk(manifest_dir, gitignore)?);
         }
 
         evaluate_for_platforms(
@@ -1417,20 +1422,26 @@ fn generate_target_rules<'a>(
             if config.buck.split {
                 // e.g. ["src/lib.rs"]
                 FilegroupSources::Set(BTreeSet::from_iter(
-                    export_globs.walk(manifest_dir)?.into_iter().map(BuckPath),
+                    export_globs
+                        .walk(manifest_dir, gitignore)?
+                        .into_iter()
+                        .map(BuckPath),
                 ))
             } else {
                 // e.g. {"src/lib.rs": "vendor/foo-1.0.0/src/lib.rs"}
                 FilegroupSources::Map(BTreeMap::from_iter(
-                    export_globs.walk(manifest_dir)?.into_iter().map(|path| {
-                        let source = mapped_manifest_dir.join(&path);
-                        (BuckPath(path), SubtargetOrPath::Path(BuckPath(source)))
-                    }),
+                    export_globs
+                        .walk(manifest_dir, gitignore)?
+                        .into_iter()
+                        .map(|path| {
+                            let source = mapped_manifest_dir.join(&path);
+                            (BuckPath(path), SubtargetOrPath::Path(BuckPath(source)))
+                        }),
                 ))
             }
         } else {
             // Validate the globs anyway
-            export_globs.walk(manifest_dir)?;
+            export_globs.walk(manifest_dir, gitignore)?;
 
             if let VendorConfig::LocalRegistry = config.vendor {
                 // e.g. {":foo-1.0.0.git": "foo-1.0.0"}
@@ -1616,10 +1627,14 @@ pub(crate) fn buckify(
     config: &Config,
     args: &Args,
     paths: &Paths,
+    source_config: &VendorSourceConfig,
     stdout: bool,
     fast: bool,
 ) -> anyhow::Result<()> {
     buckify_diagnostic(format_args!("buckify start fast={fast} stdout={stdout}"));
+
+    let gitignore = load_gitignore(paths, source_config)?;
+
     let (lockfile, metadata) = {
         log::info!("Running `cargo metadata`...");
         measure_time::info_time!("Running `cargo metadata`");
@@ -1634,7 +1649,7 @@ pub(crate) fn buckify(
 
     log::trace!("Metadata {:#?}", metadata);
 
-    let fixups = FixupsCache::new(config, paths);
+    let fixups = FixupsCache::new(config, paths, &gitignore);
     let index = Index::new(config, &metadata, &fixups)?;
     let packages = metadata.packages.iter().collect::<Vec<_>>();
     let collision_info = if config.buck.split {
@@ -1648,6 +1663,7 @@ pub(crate) fn buckify(
     let context = RuleContext {
         config,
         paths,
+        gitignore: &gitignore,
         index,
         lockfile: &lockfile,
         fixups,

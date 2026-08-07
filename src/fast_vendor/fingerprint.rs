@@ -14,7 +14,6 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use anyhow::bail;
 use cargo_toml::OptionalFile;
-use ignore::gitignore::Gitignore;
 use sha2::Digest as _;
 use sha2::Sha256;
 use walkdir::WalkDir;
@@ -31,6 +30,7 @@ use crate::fast_vendor::materialization::Materialization;
 use crate::fast_vendor::materialization_excluded;
 use crate::fast_vendor::normalize_manifest_path;
 use crate::fast_vendor::path_file_type_no_follow;
+use crate::gitignore::Gitignore;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum TreeEntryFingerprint {
