@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::btree_map::Entry;
 
 use anyhow::Context as _;
 use anyhow::bail;
@@ -82,6 +83,44 @@ pub struct ResolvedFeatures<'meta> {
     pub deps: HashSet<(&'meta str, &'meta NodeDepKind, PackageId)>,
 }
 
+/// Fold per-edge public-target entries into the public set.
+///
+/// Several workspace members may name the same dependency target, and at most
+/// one rename may apply to it. A declared rename takes precedence over the bare
+/// package name -- so renaming a dependency in any single member is enough to
+/// rename its public alias -- and two *distinct* renames for the same target are
+/// a hard error rather than a silent, order-dependent pick.
+fn merge_public_targets<'meta>(
+    entries: impl IntoIterator<Item = ((PackageId, TargetReq<'meta>), Option<&'meta str>)>,
+) -> anyhow::Result<BTreeMap<(PackageId, TargetReq<'meta>), Option<&'meta str>>> {
+    let mut public_targets = BTreeMap::new();
+    for (key, opt_rename) in entries {
+        let pkgid = key.0;
+        match public_targets.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(opt_rename);
+            }
+            Entry::Occupied(mut entry) => match (*entry.get(), opt_rename) {
+                // A rename wins over the bare package name.
+                (None, Some(_)) => {
+                    entry.insert(opt_rename);
+                }
+                (Some(existing), Some(new)) if existing != new => bail!(
+                    "conflicting renames for dependency `{}`: it is renamed to both `{}` and \
+                     `{}` by different workspace members; rename it consistently or in only one \
+                     member",
+                    pkgid.name(),
+                    existing,
+                    new,
+                ),
+                // Existing rename stands, or both agree, or new edge is bare.
+                _ => {}
+            },
+        }
+    }
+    Ok(public_targets)
+}
+
 impl<'meta> Index<'meta> {
     /// Construct an index for a set of Cargo metadata to allow convenient and efficient
     /// queries. The metadata represents a top level package and all its transitive
@@ -127,12 +166,19 @@ impl<'meta> Index<'meta> {
             public_targets: BTreeMap::new(),
         };
 
-        // Keep an index of renamed crates, mapping from _ normalized name to actual name.
-        // Only the root package's renames matter. We don't attempt to merge different
-        // rename choices made by different workspace members.
-        let dep_renamed: HashMap<String, &'meta str> = root_pkg
+        // Keep an index of renamed crates, mapping from _ normalized name to
+        // actual name. Renames declared by any workspace member are honored, not
+        // just the root package's. A virtual manifest has no root package, so
+        // restricting to the root left such workspaces with no way to rename a
+        // dependency's public alias at all -- and renaming the alias is the only
+        // way to expose two semver-incompatible majors of one crate as public
+        // top-level targets without their bare aliases colliding. Conflicting
+        // rename choices for the same dependency are detected in
+        // `merge_public_targets` below.
+        let dep_renamed: HashMap<String, &'meta str> = index
+            .workspace_members
             .iter()
-            .flat_map(|root_pkg| &root_pkg.dependencies)
+            .flat_map(|member| &member.dependencies)
             .filter_map(|dep| {
                 let rename = dep.rename.as_deref()?;
                 Some((rename.replace('-', "_"), rename))
@@ -141,30 +187,31 @@ impl<'meta> Index<'meta> {
 
         // Compute public set, with pkgid mapped to rename if it has one. Public set is
         // anything in top_levels, or first-order dependencies of any workspace member.
-        index.public_targets = index
-            .workspace_members
-            .iter()
-            .flat_map(|member| &index.pkgid_to_node[&member.id].deps)
-            .flat_map(|node_dep| {
-                let pkg = &index.pkgid_to_pkg[&node_dep.pkg];
-                node_dep.dep_kinds.iter().map(|dep_kind| {
-                    let name = node_dep
-                        .name
-                        .as_deref()
-                        .or(dep_kind.extern_name.as_deref())
-                        .unwrap();
-                    let target_req = dep_kind.target_req();
-                    let opt_rename = dep_renamed.get(name).cloned();
-                    ((pkg.id, target_req), opt_rename)
+        index.public_targets = merge_public_targets(
+            index
+                .workspace_members
+                .iter()
+                .flat_map(|member| &index.pkgid_to_node[&member.id].deps)
+                .flat_map(|node_dep| {
+                    let pkg = &index.pkgid_to_pkg[&node_dep.pkg];
+                    node_dep.dep_kinds.iter().map(|dep_kind| {
+                        let name = node_dep
+                            .name
+                            .as_deref()
+                            .or(dep_kind.extern_name.as_deref())
+                            .unwrap();
+                        let target_req = dep_kind.target_req();
+                        let opt_rename = dep_renamed.get(name).cloned();
+                        ((pkg.id, target_req), opt_rename)
+                    })
                 })
-            })
-            .chain(top_levels.iter().flat_map(|&pkgid| {
-                [
-                    ((pkgid, TargetReq::Lib), None),
-                    ((pkgid, TargetReq::EveryBin), None),
-                ]
-            }))
-            .collect::<BTreeMap<_, _>>();
+                .chain(top_levels.iter().flat_map(|&pkgid| {
+                    [
+                        ((pkgid, TargetReq::Lib), None),
+                        ((pkgid, TargetReq::EveryBin), None),
+                    ]
+                })),
+        )?;
 
         for (&(id, _), &rename) in &index.public_targets {
             index.public_packages.insert(id, rename);
@@ -839,4 +886,97 @@ fn platforms_for_dependency<'meta>(
         dep_platforms.extend(&platform_config.execution_platforms);
     }
     dep_platforms
+}
+
+#[cfg(test)]
+mod tests {
+    use cargo::core::PackageId;
+    use cargo::core::SourceId;
+    use cargo::util::interning::InternedString;
+    use semver::Version;
+
+    use super::*;
+
+    fn pkgid(name: &str, version: &str) -> PackageId {
+        let source_id =
+            SourceId::from_url("registry+https://github.com/rust-lang/crates.io-index").unwrap();
+        PackageId::new(
+            InternedString::new(name),
+            Version::parse(version).unwrap(),
+            source_id,
+        )
+    }
+
+    #[test]
+    fn distinct_majors_keep_independent_renames() {
+        // The motivating case: two public majors of one crate. Renaming just one
+        // of them gives each a distinct public alias instead of a collision.
+        let p57 = pkgid("parquet", "57.0.0");
+        let p58 = pkgid("parquet", "58.0.0");
+        let merged = merge_public_targets([
+            ((p57, TargetReq::Lib), Some("parquet57")),
+            ((p58, TargetReq::Lib), None),
+        ])
+        .unwrap();
+
+        assert_eq!(merged[&(p57, TargetReq::Lib)], Some("parquet57"));
+        assert_eq!(merged[&(p58, TargetReq::Lib)], None);
+    }
+
+    #[test]
+    fn rename_wins_over_bare_regardless_of_order() {
+        // One member renames a dependency, another uses the bare name. The
+        // rename must win, and the result must not depend on iteration order.
+        let id = pkgid("serde", "1.0.0");
+        let rename_first =
+            merge_public_targets([((id, TargetReq::Lib), Some("myserde")), ((id, TargetReq::Lib), None)])
+                .unwrap();
+        let bare_first =
+            merge_public_targets([((id, TargetReq::Lib), None), ((id, TargetReq::Lib), Some("myserde"))])
+                .unwrap();
+
+        assert_eq!(rename_first[&(id, TargetReq::Lib)], Some("myserde"));
+        assert_eq!(bare_first[&(id, TargetReq::Lib)], Some("myserde"));
+    }
+
+    #[test]
+    fn identical_renames_from_multiple_members_are_fine() {
+        let id = pkgid("tokio", "1.0.0");
+        let merged = merge_public_targets([
+            ((id, TargetReq::Lib), Some("mytokio")),
+            ((id, TargetReq::Lib), Some("mytokio")),
+        ])
+        .unwrap();
+
+        assert_eq!(merged[&(id, TargetReq::Lib)], Some("mytokio"));
+    }
+
+    #[test]
+    fn conflicting_renames_are_an_error() {
+        let id = pkgid("anyhow", "1.0.0");
+        let err = merge_public_targets([
+            ((id, TargetReq::Lib), Some("anyhow_a")),
+            ((id, TargetReq::Lib), Some("anyhow_b")),
+        ])
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("conflicting renames"), "{err}");
+        assert!(err.contains("anyhow_a") && err.contains("anyhow_b"), "{err}");
+    }
+
+    #[test]
+    fn rename_is_scoped_per_target_req() {
+        // A rename on the lib target must not leak onto the bin target of the
+        // same package.
+        let id = pkgid("ripgrep", "14.0.0");
+        let merged = merge_public_targets([
+            ((id, TargetReq::Lib), Some("rg_lib")),
+            ((id, TargetReq::EveryBin), None),
+        ])
+        .unwrap();
+
+        assert_eq!(merged[&(id, TargetReq::Lib)], Some("rg_lib"));
+        assert_eq!(merged[&(id, TargetReq::EveryBin)], None);
+    }
 }
