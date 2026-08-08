@@ -95,6 +95,7 @@ impl FixupConfigFile {
                     compatible_with: None,
                     target_compatible_with: None,
                     target_compatible_with_select: None,
+                    extra_deps_select: None,
                     // Fields that are allowed to be platform-specific:
                     extra_srcs: _,
                     omit_srcs: _,
@@ -127,7 +128,8 @@ impl FixupConfigFile {
                             export_sources, \
                             compatible_with, \
                             target_compatible_with, \
-                            target_compatible_with_select",
+                            target_compatible_with_select, \
+                            extra_deps_select",
                         ));
                     }
                 }
@@ -281,6 +283,10 @@ pub struct FixupConfig {
     /// Additional Buck dependencies
     #[serde(default)]
     pub extra_deps: BTreeSet<String>,
+    /// Select logic for extra_deps. Where `extra_deps` is resolved when the BUCK
+    /// file is generated, these are keyed on Buck constraints and so remain
+    /// conditional in the generated rule.
+    pub extra_deps_select: Option<Vec<BTreeMap<String, BTreeSet<RuleRef>>>>,
     /// Omit Cargo dependencies - just bare crate name
     #[serde(default)]
     pub omit_deps: BTreeSet<String>,

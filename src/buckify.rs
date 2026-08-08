@@ -929,7 +929,7 @@ fn generate_target_rules<'a>(
             } else if let Some(rename) = rename {
                 recipient.named_deps.insert(rename.to_owned(), dep.clone());
             } else {
-                recipient.deps.insert(dep.clone());
+                recipient.deps.common.insert(dep.clone());
             }
             if let Some(manifest) = manifest {
                 dep_pkgs.push((manifest, dep_kind.target_req()));
@@ -1023,6 +1023,10 @@ fn generate_target_rules<'a>(
         |rule, rustc_flags_select| rule.rustc_flags.selects.push(rustc_flags_select),
     )?;
 
+    // Not platform-specific, so it goes on the base rule rather than through
+    // `evaluate_for_platforms`.
+    base.deps.selects = fixups.compute_extra_deps_select();
+
     evaluate_for_platforms(
         &mut base,
         &mut perplat,
@@ -1090,11 +1094,14 @@ fn generate_target_rules<'a>(
     // Standalone binary - binary for a package always takes the package's library as a dependency
     // if there is one
     if let Some(true) = pkg.dependency_target().map(ManifestTarget::kind_lib) {
-        bin_base.deps.insert(RuleRef::new(if config.buck.split {
-            format!(":{}", tgt_ver)
-        } else {
-            format!(":{}", tgt_disp)
-        }));
+        bin_base
+            .deps
+            .common
+            .insert(RuleRef::new(if config.buck.split {
+                format!(":{}", tgt_ver)
+            } else {
+                format!(":{}", tgt_disp)
+            }));
     }
 
     // Generate rules appropriate to each kind of crate we want to support

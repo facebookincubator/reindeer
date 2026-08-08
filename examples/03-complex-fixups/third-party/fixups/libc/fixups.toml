@@ -1,1 +1,6 @@
 buildscript.run = true
+
+# Not actually a real dependency of libc, but we need something to exercise the `extra_deps_select` feature
+[[extra_deps_select]]
+"DEFAULT" = []
+"root//config/mode:debug" = ["//third-party:once_cell"]

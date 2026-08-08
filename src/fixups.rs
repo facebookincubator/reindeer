@@ -384,6 +384,18 @@ impl<'meta> Fixups<'meta> {
         target_compatible_with_select
     }
 
+    pub fn compute_extra_deps_select(&self) -> Vec<BTreeMap<String, BTreeSet<RuleRef>>> {
+        let mut extra_deps_select = Vec::new();
+
+        for config in self.platform_independent_configs() {
+            if let Some(select) = &config.extra_deps_select {
+                extra_deps_select.extend_from_slice(select);
+            }
+        }
+
+        extra_deps_select
+    }
+
     pub fn precise_srcs(&self) -> bool {
         let mut precise_srcs = None;
 
