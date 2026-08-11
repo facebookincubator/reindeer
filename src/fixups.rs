@@ -130,9 +130,8 @@ impl<'meta> FixupsCache<'meta> {
             Arc::clone(arc)
         } else {
             let fixup_dir = self
-                .paths
-                .third_party_dir
-                .join("fixups")
+                .config
+                .resolved_fixups_dir(&self.paths.third_party_dir)
                 .join(&package.name);
             let fixup_config = FixupConfigFile::load(fixup_dir)?;
             let arc = Arc::new(fixup_config);

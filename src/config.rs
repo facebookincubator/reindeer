@@ -58,6 +58,12 @@ pub struct Config {
     #[serde(default)]
     pub third_party_dir: Option<PathBuf>,
 
+    /// Where to read per-package fixups from, relative to this config file.
+    ///
+    /// (Default = `fixups` under `third_party_dir`)
+    #[serde(default)]
+    pub fixups_dir: Option<PathBuf>,
+
     /// Try to compute a precise list of sources rather than using globbing
     #[serde(default)]
     pub precise_srcs: bool,
@@ -559,6 +565,13 @@ pub(crate) fn parse_cfg_kv(cfgs: &mut HashMap<String, HashSet<String>>, line: &s
 }
 
 impl Config {
+    pub(crate) fn resolved_fixups_dir(&self, third_party_dir: &Path) -> PathBuf {
+        self.fixups_dir
+            .as_ref()
+            .map(|path| self.config_dir.join(path))
+            .unwrap_or_else(|| third_party_dir.join("fixups"))
+    }
+
     #[cfg(test)]
     pub(crate) fn default_for_test() -> Self {
         let empty_config = toml::Table::new();
@@ -574,5 +587,32 @@ impl Config {
             },
             ..Self::default_for_test()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixups_default_to_third_party_dir() {
+        let config = Config::default_for_test();
+
+        assert_eq!(
+            config.resolved_fixups_dir(Path::new("third-party/rust")),
+            Path::new("third-party/rust/fixups"),
+        );
+    }
+
+    #[test]
+    fn configured_fixups_are_relative_to_config() {
+        let mut config = Config::default_for_test();
+        config.config_dir = PathBuf::from("config/root");
+        config.fixups_dir = Some(PathBuf::from("shared-fixups"));
+
+        assert_eq!(
+            config.resolved_fixups_dir(Path::new("third-party/rust")),
+            Path::new("config/root/shared-fixups"),
+        );
     }
 }

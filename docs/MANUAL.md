@@ -87,6 +87,8 @@ the source code at `src/config.rs` (see `Config`).
 - `manifest_path` (path): Path to the Cargo.toml we are buckifying.
 - `third_party_dir` (path): Where to write the output. Defaults to the current
   directory.
+- `fixups_dir` (path): Where to read per-package fixups from. Relative paths are
+  resolved from `reindeer.toml`. Defaults to `fixups` under `third_party_dir`.
 - `precise_srcs` (bool): Try to compute a precise list of sources rather than
   using globbing.
 - `include_top_level` (bool): Include root package as top-level public target in
