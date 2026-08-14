@@ -48,6 +48,7 @@ use crate::buckify::evaluate_for_platforms;
 use crate::buckify::short_name_for_git_repo;
 use crate::buckify::split_srcs;
 use crate::buckify::vendor_crate_visibility;
+use crate::cargo::DepKind;
 use crate::cargo::Manifest;
 use crate::cargo::ManifestTarget;
 use crate::cargo::NodeDepKind;
@@ -1198,19 +1199,12 @@ impl<'meta> Fixups<'meta> {
         let deps = index.resolved_deps_for_target(self.package, target, platform_name);
 
         // Collect fixups.
-        let mut omit_deps = HashSet::default();
         for fixup in self.configs(platform_name) {
-            let fixup_omit_deps;
-            let fixup_extra_deps;
-            if target.crate_bin() && target.kind_custom_build() {
-                fixup_omit_deps = &fixup.buildscript.build.omit_deps;
-                fixup_extra_deps = &fixup.buildscript.build.extra_deps;
+            let fixup_extra_deps = if target.crate_bin() && target.kind_custom_build() {
+                &fixup.buildscript.build.extra_deps
             } else {
-                fixup_omit_deps = &fixup.omit_deps;
-                fixup_extra_deps = &fixup.extra_deps;
-            }
-
-            omit_deps.extend(fixup_omit_deps.iter().map(String::as_str));
+                &fixup.extra_deps
+            };
 
             for dep in fixup_extra_deps {
                 ret.insert(
@@ -1355,9 +1349,14 @@ impl<'meta> Fixups<'meta> {
         Ok(ret)
     }
 
-    pub fn omit_dep(&self, platform_name: &PlatformName, dep: &str) -> bool {
+    pub fn omit_dep(&self, platform_name: &PlatformName, dep: &str, kind: DepKind) -> bool {
         for fixup in self.configs(platform_name) {
-            if fixup.omit_deps.contains(dep) {
+            let fixup_omit_deps = match kind {
+                DepKind::Normal => &fixup.omit_deps,
+                DepKind::Build => &fixup.buildscript.build.omit_deps,
+                DepKind::Dev => unreachable!(),
+            };
+            if fixup_omit_deps.contains(dep) {
                 return true;
             }
         }

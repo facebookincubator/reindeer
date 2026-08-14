@@ -398,6 +398,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                 && !fixups.omit_dep(
                     platform_name,
                     manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name),
+                    manifest_dep.kind,
                 )
             {
                 let node_dep = self.resolve_dep(pkgid, manifest_dep)?;
@@ -550,9 +551,6 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         // Omit dependencies according to fixups.
         let pkg = self.pkgid_to_pkg[&pkgid];
         let fixups = self.fixups.get(pkg)?;
-        if fixups.omit_dep(platform_name, enable_dependency) {
-            return Ok(());
-        }
 
         // Find the matching crate and enable it.
         for manifest_dep in &pkg.dependencies {
@@ -563,6 +561,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                     DepKind::Dev => false,
                 }
                 && self.evaluate_target_cfg(&manifest_dep.target, platform_name, &fixups)
+                && !fixups.omit_dep(platform_name, enable_dependency, manifest_dep.kind)
             {
                 let node_dep = self.resolve_dep(pkgid, manifest_dep)?;
                 for dep_kind in &node_dep.dep_kinds {
