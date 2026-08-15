@@ -67,6 +67,7 @@ pub use crate::fixups::config::CargoEnvs;
 pub use crate::fixups::config::ExportSources;
 use crate::fixups::config::FixupConfig;
 use crate::fixups::config::FixupConfigFile;
+pub(crate) use crate::fixups::config::ResolverDependencyFixup;
 use crate::gitignore::Gitignore;
 use crate::glob::GlobSetKind;
 use crate::glob::Globs;
@@ -154,6 +155,15 @@ impl<'meta> FixupsCache<'meta> {
     pub fn lock(&self) -> MutexGuard<'_, BTreeMap<&'meta str, Arc<FixupConfigFile>>> {
         self.fixups.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+pub(crate) fn resolver_fixups_for_package(
+    fixups_dir: &Path,
+    package_name: &str,
+    package_version: &semver::Version,
+) -> anyhow::Result<BTreeMap<String, ResolverDependencyFixup>> {
+    let fixup_dir = fixups_dir.join(package_name);
+    Ok(FixupConfigFile::load(fixup_dir)?.resolver_fixups_for_version(package_version))
 }
 
 impl<'meta> Fixups<'meta> {

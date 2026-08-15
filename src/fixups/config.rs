@@ -18,6 +18,7 @@ use std::sync::atomic::Ordering;
 use anyhow::Context as _;
 use foldhash::HashSet;
 use semver::Version;
+use semver::VersionReq;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::de::DeserializeSeed;
@@ -60,7 +61,7 @@ pub struct FixupConfigFile {
 }
 
 impl FixupConfigFile {
-    pub(super) fn load(fixup_dir: PathBuf) -> anyhow::Result<Self> {
+    pub(crate) fn load(fixup_dir: PathBuf) -> anyhow::Result<Self> {
         let fixup_path = fixup_dir.join("fixups.toml");
 
         let Ok(content) = fs::read_to_string(&fixup_path) else {
@@ -81,6 +82,21 @@ impl FixupConfigFile {
             .with_context(|| format!("Failed to parse {}", fixup_path.display()))?;
 
         for fixup in iter::once(&fixup_config.base).chain(&fixup_config.platform_fixup) {
+            if fixup.platform.uses_cfg_other_than_version() && !fixup.resolver.is_empty() {
+                return Err(anyhow::Error::msg(
+                    "the following fixups are not allowed to be platform-specific: \
+                    visibility, \
+                    omit_targets, \
+                    precise_srcs, \
+                    python_ext, \
+                    export_sources, \
+                    compatible_with, \
+                    target_compatible_with, \
+                    target_compatible_with_select, \
+                    resolver",
+                ));
+            }
+
             match fixup {
                 FixupConfig {
                     // serde(skip)
@@ -95,6 +111,7 @@ impl FixupConfigFile {
                     compatible_with: None,
                     target_compatible_with: None,
                     target_compatible_with_select: None,
+                    resolver: _,
                     // Fields that are allowed to be platform-specific:
                     extra_srcs: _,
                     omit_srcs: _,
@@ -127,7 +144,8 @@ impl FixupConfigFile {
                             export_sources, \
                             compatible_with, \
                             target_compatible_with, \
-                            target_compatible_with_select",
+                            target_compatible_with_select, \
+                            resolver",
                         ));
                     }
                 }
@@ -197,6 +215,19 @@ impl FixupConfigFile {
             }
         }
     }
+
+    pub(crate) fn resolver_fixups_for_version(
+        &self,
+        version: &Version,
+    ) -> BTreeMap<String, ResolverDependencyFixup> {
+        let mut dependencies = self.base.resolver.dependencies.clone();
+        for fixup in &self.platform_fixup {
+            if matches!(fixup.platform.eval_only_version(version), Some(true)) {
+                dependencies.extend(fixup.resolver.dependencies.clone());
+            }
+        }
+        dependencies
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,6 +242,25 @@ pub struct ExportSources {
     pub exclude: TrackedGlobSet,
     /// Visibility for the rule
     pub visibility: Visibility,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResolverFixups {
+    #[serde(default)]
+    pub(crate) dependencies: BTreeMap<String, ResolverDependencyFixup>,
+}
+
+impl ResolverFixups {
+    fn is_empty(&self) -> bool {
+        self.dependencies.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResolverDependencyFixup {
+    pub(crate) narrow_to: VersionReq,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -255,6 +305,10 @@ pub struct FixupConfig {
 
     /// Select logic for target_compatible_with
     pub target_compatible_with_select: Option<Vec<BTreeMap<String, Vec<RuleRef>>>>,
+
+    /// Narrow ambiguous dependency requirements during deterministic Cargo resolution.
+    #[serde(default)]
+    pub(crate) resolver: ResolverFixups,
 
     /// Extra src globs, rooted in manifest dir for package
     #[serde(default)]
@@ -556,5 +610,79 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
             base,
             platform_fixup: fields.platform_fixup,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use semver::Version;
+    use semver::VersionReq;
+
+    use super::FixupConfigFile;
+
+    #[test]
+    fn test_parse_resolver_dependency_fixup() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join("fixups.toml"),
+            r#"
+# 0.11 currently fails to build.
+[resolver.dependencies.alpha]
+narrow_to = "^0.10"
+"#,
+        )
+        .unwrap();
+
+        let config = FixupConfigFile::load(tempdir.path().to_owned()).unwrap();
+        let resolver_fixups = config.resolver_fixups_for_version(&Version::parse("1.0.0").unwrap());
+
+        assert_eq!(resolver_fixups.len(), 1);
+        assert_eq!(
+            resolver_fixups["alpha"].narrow_to,
+            VersionReq::parse("^0.10").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_parse_resolver_dependency_fixup_accepts_default_caret() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join("fixups.toml"),
+            r#"
+[resolver.dependencies.alpha]
+narrow_to = "0.10"
+"#,
+        )
+        .unwrap();
+
+        let config = FixupConfigFile::load(tempdir.path().to_owned()).unwrap();
+        let resolver_fixups = config.resolver_fixups_for_version(&Version::parse("1.0.0").unwrap());
+
+        assert_eq!(
+            resolver_fixups["alpha"].narrow_to,
+            VersionReq::parse("^0.10").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_platform_specific_resolver_dependency_fixup_is_rejected() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join("fixups.toml"),
+            r#"
+["cfg(unix)".resolver.dependencies.alpha]
+narrow_to = "^0.10"
+"#,
+        )
+        .unwrap();
+
+        let err = FixupConfigFile::load(tempdir.path().to_owned()).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("fixups are not allowed to be platform-specific")
+        );
     }
 }
