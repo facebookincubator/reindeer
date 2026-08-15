@@ -71,6 +71,13 @@ enum PendingMaterialization {
     LoadFromPackageSet,
 }
 
+fn package_ids_to_materialize(resolve: &cargo::core::resolver::Resolve) -> Vec<PackageId> {
+    resolve
+        .iter()
+        .filter(|pkg_id| !pkg_id.source_id().is_path())
+        .collect()
+}
+
 pub(crate) fn cargo_vendor(
     config: &Config,
     no_delete: bool,
@@ -78,9 +85,17 @@ pub(crate) fn cargo_vendor(
     #[cfg(fbcode_build)] no_fetch: bool,
     args: &Args,
     paths: &Paths,
+    locked: bool,
 ) -> anyhow::Result<()> {
     let vendordir = Path::new("vendor"); // relative to third_party_dir
     let full_vendor_dir = paths.third_party_dir.join("vendor");
+
+    if locked && !paths.lockfile_path.is_file() {
+        bail!(
+            "locked vendoring requires {}; run `reindeer vendor` without `--locked` to create it",
+            paths.lockfile_path.display(),
+        );
+    }
 
     match &config.vendor {
         VendorConfig::Off => {
@@ -124,7 +139,7 @@ pub(crate) fn cargo_vendor(
         VendorConfig::Source(source_config) => {
             log::info!("Running fast vendor (library mode)");
             let gitignore = load_gitignore(paths, source_config)?;
-            fast_vendor(config, no_delete, args, paths, &gitignore)?;
+            fast_vendor(config, no_delete, args, paths, &gitignore, locked)?;
             assert!(is_vendored(config, paths)?);
         }
     }
@@ -192,6 +207,7 @@ fn fast_vendor(
     args: &Args,
     paths: &Paths,
     gitignore: &Gitignore,
+    locked: bool,
 ) -> anyhow::Result<()> {
     let vendor_dir = paths.third_party_dir.join("vendor");
     let cargo_config_path = paths.cargo_home.join("config.toml");
@@ -201,7 +217,7 @@ fn fast_vendor(
         paths,
         GctxProperties {
             frozen: false,
-            locked: false,
+            locked,
             offline: false,
             quiet: true,
             git_fetch_with_cli: true,
@@ -213,14 +229,14 @@ fn fast_vendor(
 
     eprintln!("Resolving workspace...");
     let fixups_dir = config.resolved_fixups_dir(&paths.third_party_dir);
-    let resolve =
+    let resolve = if locked {
+        resolve_locked_ws_with_original_sources(&ws, &gctx, &paths.lockfile_path)
+    } else {
         resolve_ws_deterministically_with_original_sources(&ws, &gctx, paths, &fixups_dir)
-            .context("failed to resolve workspace")?;
+    }
+    .context("failed to resolve workspace")?;
 
-    let original_package_ids = resolve
-        .iter()
-        .filter(|pkg_id| !pkg_id.source_id().is_path())
-        .collect::<Vec<_>>();
+    let original_package_ids = package_ids_to_materialize(&resolve);
 
     fs::create_dir_all(&vendor_dir)?;
 
@@ -241,14 +257,7 @@ fn fast_vendor(
         eprintln!("Preparing expected contents for {n} vendored crates...");
     }
 
-    for pkg_id in resolve.iter() {
-        // Skip path dependencies -- they're already in the source tree.
-        // Any preexisting vendor/<name>-<version> directory for this crate
-        // stays in `to_remove` so it will be deleted as stale.
-        if pkg_id.source_id().is_path() {
-            continue;
-        }
-
+    for pkg_id in original_package_ids.iter().copied() {
         if pkg_id.source_id().is_git() {
             eprintln!("Preparing git crate {pkg_id}...");
         }
@@ -481,6 +490,97 @@ fn fast_vendor(
         .with_context(|| format!("failed to write {}", cargo_config_path.display()))?;
 
     Ok(())
+}
+
+fn resolve_locked_ws_with_original_sources<'gctx>(
+    ws: &cargo::core::Workspace<'gctx>,
+    gctx: &'gctx cargo::GlobalContext,
+    lockfile_path: &Path,
+) -> anyhow::Result<cargo::core::resolver::Resolve> {
+    let Some(previous_resolve) = cargo::ops::load_pkg_lockfile(ws)? else {
+        bail!(
+            "locked vendoring requires {}; run `reindeer vendor` without `--locked` to create it",
+            lockfile_path.display(),
+        );
+    };
+    let source_config = cargo::sources::SourceConfigMap::empty(gctx)?;
+    let mut registry =
+        cargo::core::registry::PackageRegistry::new_with_source_config(gctx, source_config)?;
+    let resolve = cargo::ops::resolve_with_previous(
+        &mut registry,
+        ws,
+        &cargo::core::resolver::CliFeatures::new_all(true),
+        cargo::core::resolver::HasDevUnits::Yes,
+        Some(&previous_resolve),
+        None,
+        &[],
+        true,
+    )
+    .with_context(|| {
+        format!(
+            "failed to resolve workspace from {}; run `reindeer vendor` without `--locked` to update Cargo.lock",
+            lockfile_path.display(),
+        )
+    })?;
+    locked_vendor_materialization_resolve(resolve, previous_resolve, lockfile_path)
+}
+
+fn locked_vendor_materialization_resolve(
+    resolve: cargo::core::resolver::Resolve,
+    previous_resolve: cargo::core::resolver::Resolve,
+    lockfile_path: &Path,
+) -> anyhow::Result<cargo::core::resolver::Resolve> {
+    validate_deterministic_vendor_resolve_matches_lockfile(
+        &resolve,
+        &previous_resolve,
+        lockfile_path,
+    )?;
+    Ok(previous_resolve)
+}
+
+fn validate_deterministic_vendor_resolve_matches_lockfile(
+    resolve: &cargo::core::resolver::Resolve,
+    previous_resolve: &cargo::core::resolver::Resolve,
+    lockfile_path: &Path,
+) -> anyhow::Result<()> {
+    let resolved_packages = resolve.iter().collect::<BTreeSet<_>>();
+    let locked_packages = previous_resolve.iter().collect::<BTreeSet<_>>();
+    if resolved_packages == locked_packages {
+        return Ok(());
+    }
+
+    let added = resolved_packages
+        .difference(&locked_packages)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let removed = locked_packages
+        .difference(&resolved_packages)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    bail!(
+        "locked vendoring requires {} to match Cargo.toml; run `reindeer vendor` without `--locked` to update Cargo.lock. Added package(s): [{}]. Removed package(s): [{}].",
+        lockfile_path.display(),
+        format_package_diff(&added),
+        format_package_diff(&removed),
+    )
+}
+
+fn format_package_diff(packages: &[String]) -> String {
+    const LIMIT: usize = 10;
+
+    let mut summary = packages
+        .iter()
+        .take(LIMIT)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if packages.len() > LIMIT {
+        if !summary.is_empty() {
+            summary.push_str(", ");
+        }
+        summary.push_str(&format!("+{} more", packages.len() - LIMIT));
+    }
+    summary
 }
 
 fn path_file_type_no_follow(path: &Path) -> anyhow::Result<Option<fs::FileType>> {
@@ -872,8 +972,15 @@ pub(crate) fn cleanup_extern_crates(config: &Config, paths: &Paths) -> anyhow::R
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::collections::HashMap;
     use std::fs;
     use std::path::Path;
+
+    use cargo::core::PackageId;
+    use cargo::core::SourceId;
+    use cargo::core::resolver::Resolve;
+    use cargo::core::resolver::ResolveVersion;
+    use cargo::util::Graph;
 
     use crate::config::Config;
     use crate::fast_vendor::collect_vendor_cleanup_entries;
@@ -881,7 +988,41 @@ mod tests {
     use crate::fast_vendor::file_sha256;
     use crate::fast_vendor::find_cached_registry_archive_by_tarball;
     use crate::fast_vendor::is_split_buck_file;
+    use crate::fast_vendor::locked_vendor_materialization_resolve;
+    use crate::fast_vendor::package_ids_to_materialize;
     use crate::fast_vendor::remove_expected_vendor_entries_from_cleanup;
+
+    fn registry_package_id(name: &str, version: &str) -> PackageId {
+        let source_id = SourceId::from_url("registry+https://github.com/rust-lang/crates.io-index")
+            .expect("registry source should parse");
+        PackageId::try_new(name, version, source_id).expect("package ID should parse")
+    }
+
+    fn path_package_id(name: &str, version: &str, path: &Path) -> PackageId {
+        let source_id = SourceId::for_path(path).expect("path source should parse");
+        PackageId::try_new(name, version, source_id).expect("package ID should parse")
+    }
+
+    fn resolve_with_checksums(
+        packages: impl IntoIterator<Item = (PackageId, Option<&'static str>)>,
+    ) -> Resolve {
+        let mut graph = Graph::new();
+        let mut checksums = HashMap::new();
+        for (pkg_id, checksum) in packages {
+            graph.add(pkg_id);
+            checksums.insert(pkg_id, checksum.map(str::to_owned));
+        }
+        Resolve::new(
+            graph,
+            Default::default(),
+            Default::default(),
+            checksums,
+            Default::default(),
+            Vec::new(),
+            ResolveVersion::V4,
+            Default::default(),
+        )
+    }
 
     #[test]
     fn test_extract_crate_name() {
@@ -909,6 +1050,48 @@ mod tests {
         assert_eq!(extract_crate_name("anymap3-1.0.1"), "anymap3");
         assert_eq!(extract_crate_name("akd-0.12.0-pre.11"), "akd");
         assert_eq!(extract_crate_name("sha2-0.11.0-pre.4"), "sha2");
+    }
+
+    #[test]
+    fn test_materialization_uses_selected_resolve() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = path_package_id("workspace", "0.1.0", dir.path());
+        let fresh_pkg = registry_package_id("selected", "1.0.0");
+        let locked_pkg = registry_package_id("locked", "1.0.0");
+
+        let fresh_resolve =
+            resolve_with_checksums([(root, None), (fresh_pkg, Some("fresh-checksum"))]);
+        assert_eq!(
+            package_ids_to_materialize(&fresh_resolve),
+            vec![fresh_pkg],
+            "unlocked vendoring should materialize exactly the deterministic resolve it selected"
+        );
+
+        let validation_resolve =
+            resolve_with_checksums([(root, None), (locked_pkg, Some("validation-checksum"))]);
+        let lockfile_resolve =
+            resolve_with_checksums([(root, None), (locked_pkg, Some("lockfile-checksum"))]);
+        let selected_resolve = locked_vendor_materialization_resolve(
+            validation_resolve,
+            lockfile_resolve,
+            Path::new("Cargo.lock"),
+        )
+        .expect("matching package sets should validate");
+
+        assert_eq!(
+            package_ids_to_materialize(&selected_resolve),
+            vec![locked_pkg],
+            "locked vendoring should materialize the lockfile resolve, not the validation resolve"
+        );
+        assert_eq!(
+            selected_resolve
+                .checksums()
+                .get(&locked_pkg)
+                .and_then(Clone::clone)
+                .as_deref(),
+            Some("lockfile-checksum"),
+            "locked vendoring should preserve lockfile materialization metadata"
+        );
     }
 
     #[test]

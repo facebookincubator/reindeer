@@ -104,6 +104,9 @@ enum SubCommand {
         #[cfg(fbcode_build)]
         #[arg(long)]
         no_fetch: bool,
+        /// Consume the existing Cargo.lock instead of allowing vendoring to re-resolve.
+        #[arg(long)]
+        locked: bool,
     },
     /// Generate Buck build rules for Cargo packages
     Buckify {
@@ -218,6 +221,7 @@ fn try_main() -> anyhow::Result<()> {
             audit_sec,
             #[cfg(fbcode_build)]
             no_fetch,
+            locked,
         } => {
             if matches!(
                 config.vendor,
@@ -237,6 +241,7 @@ fn try_main() -> anyhow::Result<()> {
                 *no_fetch,
                 &args,
                 &paths,
+                *locked,
             )?;
         }
 
