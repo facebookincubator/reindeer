@@ -7,7 +7,7 @@
 
 //! Interface with Cargo
 //!
-//! This module defines invocations of `cargo` to either perform actions (vendor, update) or
+//! This module defines invocations of `cargo` to either perform actions or
 //! get metadata about a crate. It also defines all the types for deserializing from Cargo's
 //! JSON output.
 
@@ -53,6 +53,10 @@ use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::lockfile::Lockfile;
 use crate::platform::PlatformExpr;
+
+mod deterministic_resolve;
+
+pub(crate) use deterministic_resolve::resolve_ws_deterministically_with_original_sources;
 
 pub fn cargo_get_lockfile_and_metadata(
     config: &Config,
@@ -1270,14 +1274,14 @@ mod test {
     use std::collections::BTreeSet;
     use std::path::PathBuf;
 
-    use crate::cargo::ArtifactKind;
-    use crate::cargo::CrateType;
-    use crate::cargo::DepKind;
-    use crate::cargo::ManifestTarget;
-    use crate::cargo::NodeDepKind;
-    use crate::cargo::Source;
-    use crate::cargo::TargetKind;
-    use crate::cargo::parse_source;
+    use super::ArtifactKind;
+    use super::CrateType;
+    use super::DepKind;
+    use super::ManifestTarget;
+    use super::NodeDepKind;
+    use super::Source;
+    use super::TargetKind;
+    use super::parse_source;
 
     #[test]
     fn test_parses_source_git() {
