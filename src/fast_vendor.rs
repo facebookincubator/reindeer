@@ -36,6 +36,7 @@ use crate::Args;
 use crate::Paths;
 use crate::cargo::GctxProperties;
 use crate::cargo::make_gctx;
+use crate::cargo::resolve_ws_deterministically_with_original_sources;
 use crate::cargo::run_cargo;
 use crate::config::Config;
 use crate::config::VendorConfig;
@@ -211,8 +212,10 @@ fn fast_vendor(
     let ws = cargo::core::Workspace::new(&manifest_path, &gctx)?;
 
     eprintln!("Resolving workspace...");
-    let resolve = resolve_ws_with_original_sources(&ws, &gctx, false)
-        .context("failed to resolve workspace")?;
+    let fixups_dir = config.resolved_fixups_dir(&paths.third_party_dir);
+    let resolve =
+        resolve_ws_deterministically_with_original_sources(&ws, &gctx, paths, &fixups_dir)
+            .context("failed to resolve workspace")?;
 
     let original_package_ids = resolve
         .iter()
@@ -478,42 +481,6 @@ fn fast_vendor(
         .with_context(|| format!("failed to write {}", cargo_config_path.display()))?;
 
     Ok(())
-}
-
-fn resolve_ws_with_original_sources<'gctx>(
-    ws: &cargo::core::Workspace<'gctx>,
-    gctx: &'gctx cargo::GlobalContext,
-    dry_run: bool,
-) -> anyhow::Result<cargo::core::resolver::Resolve> {
-    let source_config = cargo::sources::SourceConfigMap::empty(gctx)?;
-    let mut registry =
-        cargo::core::registry::PackageRegistry::new_with_source_config(gctx, source_config)?;
-    let previous_resolve = cargo::ops::load_pkg_lockfile(ws)?;
-    let mut resolve = cargo::ops::resolve_with_previous(
-        &mut registry,
-        ws,
-        &cargo::core::resolver::CliFeatures::new_all(true),
-        cargo::core::resolver::HasDevUnits::Yes,
-        previous_resolve.as_ref(),
-        None,
-        &[],
-        true,
-    )?;
-
-    let print_changes = if !ws.is_ephemeral() && ws.require_optional_deps() {
-        if dry_run {
-            true
-        } else {
-            cargo::ops::write_pkg_lockfile(ws, &mut resolve)?
-        }
-    } else {
-        false
-    };
-    if print_changes {
-        cargo::ops::print_lockfile_changes(ws, previous_resolve.as_ref(), &resolve, &mut registry)?;
-    }
-
-    Ok(resolve)
 }
 
 fn path_file_type_no_follow(path: &Path) -> anyhow::Result<Option<fs::FileType>> {
