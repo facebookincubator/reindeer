@@ -51,6 +51,7 @@ mod platform;
 mod remap;
 #[cfg(unix)]
 mod rlimit;
+mod semver_ext;
 mod srcfiles;
 mod subtarget;
 mod tp_metadata;
