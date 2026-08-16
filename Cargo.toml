@@ -37,7 +37,7 @@ serde_json = { version = "1.0.151", features = ["alloc", "float_roundtrip", "raw
 serde_starlark = "0.1.19"
 serde_with = { version = "3.21.0", features = ["base64", "hex", "json"] }
 sha2 = "0.10.6"
-spdx = "0.13.4"
+spdx = "0.13.5"
 strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "3", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 tar = "0.4.46"
