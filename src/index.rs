@@ -180,30 +180,22 @@ impl<'meta> Index<'meta> {
 
         // Compute public set, with pkgid mapped to rename if it has one. Public set is
         // anything in top_levels, or first-order dependencies of any workspace member.
-        index.public_targets = index
-            .workspace_members
-            .iter()
-            .flat_map(|member| &index.pkgid_to_node[&member.id].deps)
-            .flat_map(|node_dep| {
-                let pkg = &index.pkgid_to_pkg[&node_dep.pkg];
-                node_dep.dep_kinds.iter().map(|dep_kind| {
-                    let name = node_dep
-                        .name
-                        .as_deref()
-                        .or(dep_kind.extern_name.as_deref())
-                        .unwrap();
-                    let target_req = dep_kind.target_req();
-                    let opt_rename = dep_renamed.get(name).cloned();
-                    ((pkg.id, target_req), opt_rename)
-                })
-            })
-            .chain(top_levels.iter().flat_map(|&pkgid| {
-                [
-                    ((pkgid, TargetReq::Lib), None),
-                    ((pkgid, TargetReq::EveryBin), None),
-                ]
-            }))
-            .collect::<BTreeMap<_, _>>();
+        let mut public_targets = BTreeMap::new();
+        for platform_name in config.platform.keys() {
+            for member in &index.workspace_members {
+                for target in &member.targets {
+                    for dep in index.resolved_deps_for_target(member, target, platform_name) {
+                        let rename = dep_renamed.get(dep.rename).copied();
+                        public_targets.insert((dep.package.id, dep.dep_kind.target_req()), rename);
+                    }
+                }
+            }
+        }
+        if let Some(top_level) = top_levels {
+            public_targets.insert((top_level, TargetReq::Lib), None);
+            public_targets.insert((top_level, TargetReq::EveryBin), None);
+        }
+        index.public_targets = public_targets;
 
         for (&(id, _), &rename) in &index.public_targets {
             index.public_packages.insert(id, rename);
