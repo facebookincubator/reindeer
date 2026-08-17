@@ -139,37 +139,6 @@ impl<'meta> Index<'meta> {
             })
             .collect();
 
-        // Compute public set, with pkgid mapped to rename if it has one. Public set is
-        // anything in top_levels, or first-order dependencies of any workspace member.
-        index.public_targets = index
-            .workspace_members
-            .iter()
-            .flat_map(|member| &index.pkgid_to_node[&member.id].deps)
-            .flat_map(|node_dep| {
-                let pkg = &index.pkgid_to_pkg[&node_dep.pkg];
-                node_dep.dep_kinds.iter().map(|dep_kind| {
-                    let name = node_dep
-                        .name
-                        .as_deref()
-                        .or(dep_kind.extern_name.as_deref())
-                        .unwrap();
-                    let target_req = dep_kind.target_req();
-                    let opt_rename = dep_renamed.get(name).cloned();
-                    ((pkg.id, target_req), opt_rename)
-                })
-            })
-            .chain(top_levels.iter().flat_map(|&pkgid| {
-                [
-                    ((pkgid, TargetReq::Lib), None),
-                    ((pkgid, TargetReq::EveryBin), None),
-                ]
-            }))
-            .collect::<BTreeMap<_, _>>();
-
-        for (&(id, _), &rename) in &index.public_targets {
-            index.public_packages.insert(id, rename);
-        }
-
         let mut manifest_deps = HashMap::default();
         for (&pkgid, node) in &index.pkgid_to_node {
             for node_dep in &node.deps {
@@ -207,6 +176,37 @@ impl<'meta> Index<'meta> {
                     resolve.enable_feature_for_platform(pkg.id, platform_name, "default")?;
                 }
             }
+        }
+
+        // Compute public set, with pkgid mapped to rename if it has one. Public set is
+        // anything in top_levels, or first-order dependencies of any workspace member.
+        index.public_targets = index
+            .workspace_members
+            .iter()
+            .flat_map(|member| &index.pkgid_to_node[&member.id].deps)
+            .flat_map(|node_dep| {
+                let pkg = &index.pkgid_to_pkg[&node_dep.pkg];
+                node_dep.dep_kinds.iter().map(|dep_kind| {
+                    let name = node_dep
+                        .name
+                        .as_deref()
+                        .or(dep_kind.extern_name.as_deref())
+                        .unwrap();
+                    let target_req = dep_kind.target_req();
+                    let opt_rename = dep_renamed.get(name).cloned();
+                    ((pkg.id, target_req), opt_rename)
+                })
+            })
+            .chain(top_levels.iter().flat_map(|&pkgid| {
+                [
+                    ((pkgid, TargetReq::Lib), None),
+                    ((pkgid, TargetReq::EveryBin), None),
+                ]
+            }))
+            .collect::<BTreeMap<_, _>>();
+
+        for (&(id, _), &rename) in &index.public_targets {
+            index.public_packages.insert(id, rename);
         }
 
         Ok(index)
