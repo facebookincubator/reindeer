@@ -1652,14 +1652,16 @@ pub(crate) fn buckify(
     let fixups = FixupsCache::new(config, paths, &gitignore);
     let index = Index::new(config, &metadata, &fixups)?;
     let packages = metadata.packages.iter().collect::<Vec<_>>();
-    let collision_info = if config.buck.split {
-        CollisionInfo::new(&packages)
-    } else {
-        CollisionInfo::new_with_reserved(
-            &packages,
-            index.public_packages.values().flatten().copied(),
-        )
-    };
+    let collision_info = CollisionInfo::new_with_reserved(
+        &packages,
+        metadata.packages.iter().filter_map(|pkg| {
+            if !config.buck.split && index.is_public_package(pkg) {
+                Some(index.public_rule_name(pkg).0)
+            } else {
+                None
+            }
+        }),
+    );
     let context = RuleContext {
         config,
         paths,

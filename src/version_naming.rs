@@ -68,14 +68,14 @@ impl CollisionInfo {
     }
 
     /// Build collision info with additional target display names to avoid.
-    pub fn new_with_reserved<'a>(
+    pub fn new_with_reserved(
         packages: &[&Manifest],
-        reserved_target_displays: impl IntoIterator<Item = &'a str>,
+        reserved_target_displays: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         let mut collision_info = Self::new(packages);
         collision_info.reserved_target_displays = reserved_target_displays
             .into_iter()
-            .map(str::to_owned)
+            .map(Into::into)
             .collect();
         collision_info
     }
