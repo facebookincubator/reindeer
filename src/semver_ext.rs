@@ -16,6 +16,12 @@ pub(crate) struct VersionReqBounds {
     upper: Option<VersionBound>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct CompatibilityLane {
+    lower: Version,
+    upper: Version,
+}
+
 impl VersionReqBounds {
     fn empty() -> Self {
         Self {
@@ -282,10 +288,18 @@ fn compatibility_bounds(version: &Version) -> anyhow::Result<VersionReqBounds> {
 }
 
 fn compatibility_lane_bounds(version: &Version) -> anyhow::Result<VersionReqBounds> {
+    let lane = version_compatibility_lane(version)?;
     Ok(VersionReqBounds::range(
-        VersionBound::inclusive(semver_compatibility_lower_bound(version)),
-        VersionBound::exclusive(semver_compatibility_upper_bound(version)?),
+        VersionBound::inclusive(lane.lower),
+        VersionBound::exclusive(lane.upper),
     ))
+}
+
+pub(crate) fn version_compatibility_lane(version: &Version) -> anyhow::Result<CompatibilityLane> {
+    Ok(CompatibilityLane {
+        lower: semver_compatibility_lower_bound(version),
+        upper: semver_compatibility_upper_bound(version)?,
+    })
 }
 
 fn semver_compatibility_lower_bound(version: &Version) -> Version {
