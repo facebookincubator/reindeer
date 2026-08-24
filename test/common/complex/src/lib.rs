@@ -7,7 +7,9 @@
 
 pub fn complex() {
     println!("I'm complex because I have a dependency.");
-    println!("Hello {}!", whoami::realname());
+    if let Ok(realname) = whoami::realname() {
+        println!("Hello {}!", realname);
+    }
 
     simple::simple();
 }
