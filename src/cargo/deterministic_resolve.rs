@@ -14,10 +14,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::task::Poll;
-use std::task::ready;
 
 use anyhow::Context;
-use anyhow::anyhow;
 use cargo::core::Dependency;
 use cargo::core::Package as CargoPackage;
 use cargo::core::PackageId;
@@ -67,51 +65,41 @@ impl<'gctx, S> DeterministicSource<'gctx, S> {
 }
 
 impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
-    fn rewrite_index_summary(
-        &mut self,
-        summary: IndexSummary,
-    ) -> Poll<anyhow::Result<IndexSummary>> {
-        let rewritten_summary = ready!(self.rewrite_summary(summary.as_summary().clone()))?;
-        Poll::Ready(Ok(summary.map_summary(|_| rewritten_summary.clone())))
+    fn rewrite_index_summary(&mut self, summary: IndexSummary) -> anyhow::Result<IndexSummary> {
+        let rewritten_summary = self.rewrite_summary(summary.as_summary().clone())?;
+        Ok(summary.map_summary(|_| rewritten_summary.clone()))
     }
 
     fn rewrite_summary(
         &mut self,
         summary: cargo::core::Summary,
-    ) -> Poll<anyhow::Result<cargo::core::Summary>> {
+    ) -> anyhow::Result<cargo::core::Summary> {
         let parent = summary.package_id();
         let mut dependencies = Vec::with_capacity(summary.dependencies().len());
         for dependency in summary.dependencies().iter().cloned() {
-            let dependency = ready!(self.rewrite_dependency(parent, dependency))?;
+            let dependency = self.rewrite_dependency(parent, dependency)?;
             dependencies.push(dependency);
         }
         let mut dependencies = dependencies.into_iter();
-        Poll::Ready(Ok(summary.try_map_dependencies(|_| {
-            Ok(dependencies
+        Ok(summary.map_dependencies(|_| {
+            dependencies
                 .next()
-                .expect("rewritten dependency should exist"))
-        })?))
+                .expect("rewritten dependency should exist")
+        }))
     }
 
     fn rewrite_dependency(
         &mut self,
         parent: PackageId,
         mut dependency: Dependency,
-    ) -> Poll<anyhow::Result<Dependency>> {
+    ) -> anyhow::Result<Dependency> {
         self.record_dependency_source(dependency.source_id());
         if !dependency.source_id().is_registry() || dependency.kind() == DepKind::Development {
-            return Poll::Ready(Ok(dependency));
+            return Ok(dependency);
         }
 
-        let original_req = match parse_dependency_req(&dependency) {
-            Ok(req) => req,
-            Err(err) => return Poll::Ready(Err(err)),
-        };
-
-        let fixup = match self.resolver_fixup(parent, &dependency) {
-            Ok(fixup) => fixup,
-            Err(err) => return Poll::Ready(Err(err)),
-        };
+        let original_req = parse_dependency_req(&dependency)?;
+        let fixup = self.resolver_fixup(parent, &dependency)?;
 
         let mut effective_req = original_req.clone();
         if let Some(fixup) = &fixup {
@@ -126,17 +114,17 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
                 .comparators
                 .extend_from_slice(&fixup.narrow_to.comparators);
             if version_req_bounds(&effective_req).is_none() {
-                return Poll::Ready(Err(anyhow!(
+                anyhow::bail!(
                     "resolver fixup for {} dependency {} narrows {} to {} which is unsatisfiable",
                     parent,
                     dependency.name_in_toml(),
                     original_req,
                     fixup.narrow_to,
-                )));
+                );
             }
             assert!(!version_req_is_broad(&effective_req));
         } else if !version_req_is_broad(&effective_req) {
-            return Poll::Ready(Ok(dependency));
+            return Ok(dependency);
         } else {
             let bounds =
                 version_req_bounds(&effective_req).expect("unsatisfiable version req is not broad");
@@ -172,7 +160,7 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
         }
 
         dependency.set_version_req(OptVersionReq::Req(effective_req));
-        Poll::Ready(Ok(dependency))
+        Ok(dependency)
     }
 
     fn resolver_fixup(
@@ -239,7 +227,7 @@ impl<'gctx, S: CargoSource> CargoSource for DeterministicSource<'gctx, S> {
 
         let mut rewritten = Vec::with_capacity(summaries.len());
         for summary in summaries {
-            let summary = ready!(self.rewrite_index_summary(summary))?;
+            let summary = self.rewrite_index_summary(summary)?;
             rewritten.push(summary);
         }
         for summary in rewritten {
