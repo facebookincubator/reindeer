@@ -17,7 +17,7 @@ pub(crate) struct VersionReqBounds {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct CompatibilityLane {
+struct CompatibilityLane {
     lower: Version,
     upper: Version,
 }
@@ -295,7 +295,7 @@ fn compatibility_lane_bounds(version: &Version) -> anyhow::Result<VersionReqBoun
     ))
 }
 
-pub(crate) fn version_compatibility_lane(version: &Version) -> anyhow::Result<CompatibilityLane> {
+fn version_compatibility_lane(version: &Version) -> anyhow::Result<CompatibilityLane> {
     Ok(CompatibilityLane {
         lower: semver_compatibility_lower_bound(version),
         upper: semver_compatibility_upper_bound(version)?,

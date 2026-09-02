@@ -40,9 +40,7 @@ use semver::VersionReq;
 use crate::Paths;
 use crate::fixups::ResolverDependencyFixup;
 use crate::fixups::resolver_fixups_for_package;
-use crate::semver_ext::CompatibilityLane;
 use crate::semver_ext::version_bounds_subset;
-use crate::semver_ext::version_compatibility_lane;
 use crate::semver_ext::version_req_bounds;
 use crate::semver_ext::version_req_is_broad;
 use crate::semver_ext::version_req_to_compatibility_lane;
@@ -50,31 +48,10 @@ use crate::semver_ext::version_req_to_compatibility_lane;
 #[derive(Clone)]
 struct DeterministicSourceContext<'gctx> {
     source_config: SourceConfigMap<'gctx>,
-    previous_edges: BTreeMap<DependencyEdgeKey, PackageId>,
     fixups_dir: PathBuf,
     known_sources: Rc<BTreeSet<SourceId>>,
     discovered_sources: Rc<RefCell<BTreeSet<SourceId>>>,
     root_patch_summaries: BTreeMap<CanonicalUrl, Vec<Summary>>,
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct DependencyEdgeKey {
-    parent: PackageKey,
-    dependency_name_in_toml: String,
-    dependency_source: SourceKey,
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct PackageKey {
-    name: String,
-    compatibility_lane: CompatibilityLane,
-    source: SourceKey,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum SourceKey {
-    CratesIo,
-    Source(SourceId),
 }
 
 struct DeterministicSource<'gctx, S> {
@@ -165,21 +142,11 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
             }
         }
 
-        let previous = match self.previous_locked_edge(parent, &dependency, &effective_req) {
-            Ok(previous) => previous,
-            Err(err) => return Poll::Ready(Err(err)),
-        };
-        let narrowed_req = if let Some(previous) = previous {
-            match version_req_to_compatibility_lane(&effective_req, previous.version()) {
-                Ok(req) => req,
-                Err(err) => return Poll::Ready(Err(err)),
-            }
-        } else if fixup.is_some()
+        let narrowed_req = if fixup.is_some()
             && match version_req_is_broad(&effective_req) {
                 Ok(is_broad) => !is_broad,
                 Err(err) => return Poll::Ready(Err(err)),
-            }
-        {
+            } {
             effective_req.clone()
         } else {
             let candidates = match self.candidate_versions(&dependency) {
@@ -225,25 +192,6 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
         };
 
         Ok(fixups.get(dependency.name_in_toml().as_str()).cloned())
-    }
-
-    fn previous_locked_edge(
-        &self,
-        parent: PackageId,
-        dependency: &Dependency,
-        effective_req: &VersionReq,
-    ) -> anyhow::Result<Option<PackageId>> {
-        let key = dependency_edge_key(parent, dependency)?;
-        let previous = self.context.previous_edges.get(&key);
-        let Some(previous) = previous else {
-            return Ok(None);
-        };
-        if previous.name() == dependency.package_name() && effective_req.matches(previous.version())
-        {
-            Ok(Some(*previous))
-        } else {
-            Ok(None)
-        }
     }
 
     fn fresh_candidate_requirement(
@@ -339,44 +287,6 @@ fn query_candidate_versions(
         Poll::Pending => return Poll::Pending,
     };
     Poll::Ready(Ok(candidate_versions_from_summaries(candidates)))
-}
-
-fn dependency_edge_key(
-    parent: PackageId,
-    dependency: &Dependency,
-) -> anyhow::Result<DependencyEdgeKey> {
-    Ok(DependencyEdgeKey {
-        parent: package_key(parent)?,
-        dependency_name_in_toml: dependency.name_in_toml().as_str().to_owned(),
-        dependency_source: source_key(dependency.source_id()),
-    })
-}
-
-fn selected_package_edge_key(
-    parent: PackageId,
-    selected_dependency: PackageId,
-) -> anyhow::Result<DependencyEdgeKey> {
-    Ok(DependencyEdgeKey {
-        parent: package_key(parent)?,
-        dependency_name_in_toml: selected_dependency.name().as_str().to_owned(),
-        dependency_source: source_key(selected_dependency.source_id()),
-    })
-}
-
-fn package_key(package: PackageId) -> anyhow::Result<PackageKey> {
-    Ok(PackageKey {
-        name: package.name().as_str().to_owned(),
-        compatibility_lane: version_compatibility_lane(package.version())?,
-        source: source_key(package.source_id()),
-    })
-}
-
-fn source_key(source_id: SourceId) -> SourceKey {
-    if source_id.is_crates_io() {
-        SourceKey::CratesIo
-    } else {
-        SourceKey::Source(source_id)
-    }
 }
 
 fn candidate_versions_from_summaries(candidates: Vec<IndexSummary>) -> Vec<Version> {
@@ -497,11 +407,6 @@ pub(crate) fn resolve_ws_deterministically_with_original_sources<'gctx>(
     let _cache_lock = gctx.acquire_package_cache_lock(CacheLockMode::DownloadExclusive)?;
     let source_config = cargo::sources::SourceConfigMap::empty(gctx)?;
     let previous_resolve = cargo::ops::load_pkg_lockfile(workspace)?;
-    let previous_edges = previous_resolve
-        .as_ref()
-        .map(previous_dependency_edges)
-        .transpose()?
-        .unwrap_or_default();
     let root_patch_summaries = root_patch_summaries(workspace, &source_config)?;
     let mut source_ids = deterministic_source_ids(workspace, previous_resolve.as_ref(), gctx)?;
 
@@ -510,7 +415,6 @@ pub(crate) fn resolve_ws_deterministically_with_original_sources<'gctx>(
         let discovered_sources = Rc::new(RefCell::new(BTreeSet::new()));
         let context = DeterministicSourceContext {
             source_config: source_config.clone(),
-            previous_edges: previous_edges.clone(),
             fixups_dir: fixups_dir.to_path_buf(),
             known_sources: Rc::new(source_ids.clone()),
             discovered_sources: Rc::clone(&discovered_sources),
@@ -781,31 +685,6 @@ fn validate_version_req_subset(narrowed: &VersionReq, original: &VersionReq) -> 
             "narrowed requirement {narrowed} allows versions outside original requirement {original}"
         )
     }
-}
-
-fn previous_dependency_edges(
-    previous_resolve: &cargo::core::resolver::Resolve,
-) -> anyhow::Result<BTreeMap<DependencyEdgeKey, PackageId>> {
-    let mut edges = BTreeMap::new();
-    for parent in previous_resolve.iter() {
-        for (selected_dependency, dependencies) in previous_resolve.deps(parent) {
-            let mut inserted_dependency = false;
-            for dependency in dependencies {
-                inserted_dependency = true;
-                edges.insert(
-                    dependency_edge_key(parent, dependency)?,
-                    selected_dependency,
-                );
-            }
-            if !inserted_dependency {
-                edges.insert(
-                    selected_package_edge_key(parent, selected_dependency)?,
-                    selected_dependency,
-                );
-            }
-        }
-    }
-    Ok(edges)
 }
 
 #[cfg(test)]
@@ -1216,7 +1095,6 @@ mod test {
     ) -> DeterministicSourceContext<'gctx> {
         DeterministicSourceContext {
             source_config,
-            previous_edges: BTreeMap::new(),
             fixups_dir: third_party_dir.join("fixups"),
             known_sources: Rc::new(known_sources.into_iter().collect()),
             discovered_sources,
@@ -1232,7 +1110,6 @@ mod test {
     ) -> DeterministicSourceContext<'gctx> {
         DeterministicSourceContext {
             source_config,
-            previous_edges: BTreeMap::new(),
             fixups_dir: third_party_dir.join("fixups"),
             known_sources: Rc::new(known_sources.into_iter().collect()),
             discovered_sources: Rc::new(RefCell::new(BTreeSet::new())),
@@ -1958,264 +1835,6 @@ narrow_to = "1"
         assert!(matches!(result, Poll::Ready(Ok(()))));
         assert_eq!(dependency_reqs["http-02x"], "^0.2");
         assert_eq!(dependency_reqs["http-1x"], "^1");
-    }
-
-    #[test]
-    fn test_previous_locked_edges_use_dependency_key_for_renamed_dependencies() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let cargo_home = tempdir.path().join(".cargo");
-
-        let shell = cargo::core::Shell::new();
-        let mut gctx =
-            cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
-        gctx.configure(0, true, None, false, false, false, &None, &[], &[])
-            .unwrap();
-        let source_id = SourceId::crates_io(&gctx).unwrap();
-        let source_config = SourceConfigMap::new(&gctx).unwrap();
-        let parent = PackageId::try_new("a", "1.0.0", source_id).unwrap();
-        let alpha_01x = renamed_dependency("alpha-01x", "alpha", ">=0.1, <0.3", source_id);
-        let alpha_02x = renamed_dependency("alpha-02x", "alpha", ">=0.2, <0.4", source_id);
-        let mut context = deterministic_source_context(
-            source_config,
-            tempdir.path().to_owned(),
-            [source_id],
-            Rc::new(RefCell::new(BTreeSet::new())),
-        );
-        context.previous_edges = BTreeMap::from([
-            (
-                super::dependency_edge_key(parent, &alpha_01x).unwrap(),
-                PackageId::try_new("alpha", "0.1.0", source_id).unwrap(),
-            ),
-            (
-                super::dependency_edge_key(parent, &alpha_02x).unwrap(),
-                PackageId::try_new("alpha", "0.2.0", source_id).unwrap(),
-            ),
-        ]);
-        let mut source = DeterministicSource::new(
-            RecordingSource::new(
-                source_id,
-                vec![
-                    summary_with_deps("a", "1.0.0", source_id, vec![alpha_01x, alpha_02x]),
-                    summary("alpha", "0.1.0", source_id),
-                    summary("alpha", "0.2.0", source_id),
-                    summary("alpha", "0.3.0", source_id),
-                ],
-            ),
-            context,
-        );
-
-        let mut dependency_reqs = BTreeMap::new();
-        let result = source.query(
-            &dependency("a", "=1.0.0", source_id),
-            QueryKind::Exact,
-            &mut |summary| {
-                dependency_reqs = summary
-                    .as_summary()
-                    .dependencies()
-                    .iter()
-                    .map(|dependency| {
-                        (
-                            dependency.name_in_toml().to_string(),
-                            dependency.version_req().to_string(),
-                        )
-                    })
-                    .collect();
-            },
-        );
-
-        assert!(matches!(result, Poll::Ready(Ok(()))));
-        assert_eq!(dependency_reqs["alpha-01x"], ">=0.1.0, <0.2.0");
-        assert_eq!(dependency_reqs["alpha-02x"], ">=0.2.0, <0.3.0");
-    }
-
-    #[test]
-    fn test_previous_locked_edges_apply_across_parent_semver_lane() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let cargo_home = tempdir.path().join(".cargo");
-
-        let shell = cargo::core::Shell::new();
-        let mut gctx =
-            cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
-        gctx.configure(0, true, None, false, false, false, &None, &[], &[])
-            .unwrap();
-        let source_id = SourceId::crates_io(&gctx).unwrap();
-        let source_config = SourceConfigMap::new(&gctx).unwrap();
-        let previous_parent = PackageId::try_new("a", "1.0.0", source_id).unwrap();
-        let previous_dependency = dependency("b", ">=1, <3", source_id);
-        let mut context = deterministic_source_context(
-            source_config,
-            tempdir.path().to_owned(),
-            [source_id],
-            Rc::new(RefCell::new(BTreeSet::new())),
-        );
-        context.previous_edges = BTreeMap::from([(
-            super::dependency_edge_key(previous_parent, &previous_dependency).unwrap(),
-            PackageId::try_new("b", "1.2.3", source_id).unwrap(),
-        )]);
-        let mut source = DeterministicSource::new(
-            RecordingSource::new(
-                source_id,
-                vec![
-                    summary_with_deps(
-                        "a",
-                        "1.0.1",
-                        source_id,
-                        vec![dependency("b", ">=1, <3", source_id)],
-                    ),
-                    summary("b", "1.2.3", source_id),
-                    summary("b", "2.0.0", source_id),
-                ],
-            ),
-            context,
-        );
-
-        let mut rewritten_req = None;
-        let result = source.query(
-            &dependency("a", "=1.0.1", source_id),
-            QueryKind::Exact,
-            &mut |summary| {
-                rewritten_req = Some(
-                    summary.as_summary().dependencies()[0]
-                        .version_req()
-                        .to_string(),
-                );
-            },
-        );
-
-        assert!(matches!(result, Poll::Ready(Ok(()))));
-        assert_eq!(rewritten_req.as_deref(), Some(">=1.0.0, <2.0.0"));
-    }
-
-    #[test]
-    fn test_previous_locked_edges_treat_crates_io_registry_and_sparse_as_same_source() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let cargo_home = tempdir.path().join(".cargo");
-
-        let shell = cargo::core::Shell::new();
-        let mut gctx =
-            cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
-        gctx.configure(0, true, None, false, false, false, &None, &[], &[])
-            .unwrap();
-        let registry_source_id = registry_source_id();
-        let sparse_source_id = SourceId::from_url("sparse+https://index.crates.io/").unwrap();
-        let source_config = SourceConfigMap::new(&gctx).unwrap();
-        let previous_parent =
-            PackageId::try_new("gcloud-sdk", "0.28.5", registry_source_id).unwrap();
-        let previous_dependency = dependency("reqwest", ">=0.12.7", registry_source_id);
-        let mut context = deterministic_source_context(
-            source_config,
-            tempdir.path().to_owned(),
-            [sparse_source_id],
-            Rc::new(RefCell::new(BTreeSet::new())),
-        );
-        context.previous_edges = BTreeMap::from([(
-            super::dependency_edge_key(previous_parent, &previous_dependency).unwrap(),
-            PackageId::try_new("reqwest", "0.12.28", registry_source_id).unwrap(),
-        )]);
-        let mut source = DeterministicSource::new(
-            RecordingSource::new(
-                sparse_source_id,
-                vec![
-                    summary_with_deps(
-                        "gcloud-sdk",
-                        "0.28.5",
-                        sparse_source_id,
-                        vec![dependency("reqwest", ">=0.12.7", sparse_source_id)],
-                    ),
-                    summary("reqwest", "0.12.28", sparse_source_id),
-                    summary("reqwest", "0.13.4", sparse_source_id),
-                ],
-            ),
-            context,
-        );
-
-        let mut rewritten_req = None;
-        let result = source.query(
-            &dependency("gcloud-sdk", "=0.28.5", sparse_source_id),
-            QueryKind::Exact,
-            &mut |summary| {
-                rewritten_req = Some(
-                    summary.as_summary().dependencies()[0]
-                        .version_req()
-                        .to_string(),
-                );
-            },
-        );
-
-        assert!(matches!(result, Poll::Ready(Ok(()))));
-        assert_eq!(rewritten_req.as_deref(), Some(">=0.12.7, <0.13.0"));
-    }
-
-    #[test]
-    fn test_previous_locked_edges_fall_back_to_lockfile_selected_package_name() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let cargo_home = tempdir.path().join(".cargo");
-
-        let shell = cargo::core::Shell::new();
-        let mut gctx =
-            cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
-        gctx.configure(0, true, None, false, false, false, &None, &[], &[])
-            .unwrap();
-        let registry_source_id = registry_source_id();
-        let sparse_source_id = SourceId::from_url("sparse+https://index.crates.io/").unwrap();
-        let source_config = SourceConfigMap::new(&gctx).unwrap();
-        let previous_parent =
-            PackageId::try_new("gcloud-sdk", "0.28.5", registry_source_id).unwrap();
-        let previous_reqwest =
-            PackageId::try_new("reqwest", "0.12.28", registry_source_id).unwrap();
-        let mut graph: Graph<PackageId, HashSet<Dependency>> = Graph::new();
-        graph.add(previous_parent);
-        graph.add(previous_reqwest);
-        graph.link(previous_parent, previous_reqwest);
-        let previous_resolve = Resolve::new(
-            graph,
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Vec::new(),
-            ResolveVersion::V4,
-            Default::default(),
-        );
-        let mut context = deterministic_source_context(
-            source_config,
-            tempdir.path().to_owned(),
-            [sparse_source_id],
-            Rc::new(RefCell::new(BTreeSet::new())),
-        );
-        context.previous_edges = super::previous_dependency_edges(&previous_resolve).unwrap();
-        let mut source = DeterministicSource::new(
-            RecordingSource::new(
-                sparse_source_id,
-                vec![
-                    summary_with_deps(
-                        "gcloud-sdk",
-                        "0.28.5",
-                        sparse_source_id,
-                        vec![dependency("reqwest", ">=0.12.7", sparse_source_id)],
-                    ),
-                    summary("reqwest", "0.12.28", sparse_source_id),
-                    summary("reqwest", "0.13.4", sparse_source_id),
-                ],
-            ),
-            context,
-        );
-
-        let mut rewritten_req = None;
-        let result = source.query(
-            &dependency("gcloud-sdk", "=0.28.5", sparse_source_id),
-            QueryKind::Exact,
-            &mut |summary| {
-                rewritten_req = Some(
-                    summary.as_summary().dependencies()[0]
-                        .version_req()
-                        .to_string(),
-                );
-            },
-        );
-
-        assert!(matches!(result, Poll::Ready(Ok(()))));
-        assert_eq!(rewritten_req.as_deref(), Some(">=0.12.7, <0.13.0"));
     }
 
     #[test]
