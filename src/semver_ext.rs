@@ -11,6 +11,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fmt::Display;
 
+use semver::BuildMetadata;
 use semver::Comparator;
 use semver::Op;
 use semver::Prerelease;
@@ -164,6 +165,16 @@ pub(crate) fn compatibility_lane_for_version(version: &Version) -> Comparator {
             None
         },
         pre: Prerelease::EMPTY,
+    }
+}
+
+pub(crate) fn topmost_compatible_version(bounds: &VersionBounds) -> Version {
+    Version {
+        major: bounds.upper.major,
+        minor: bounds.upper.minor,
+        patch: bounds.upper.patch,
+        pre: bounds.upper.pre.clone(),
+        build: BuildMetadata::EMPTY,
     }
 }
 

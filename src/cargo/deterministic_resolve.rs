@@ -9,7 +9,6 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::btree_map;
-use std::collections::hash_map;
 use std::iter;
 use std::path::Path;
 use std::path::PathBuf;
@@ -19,19 +18,15 @@ use std::task::ready;
 
 use anyhow::Context;
 use anyhow::anyhow;
-use anyhow::bail;
 use cargo::core::Dependency;
 use cargo::core::Package as CargoPackage;
 use cargo::core::PackageId;
 use cargo::core::SourceId;
-use cargo::core::Summary;
 use cargo::core::dependency::DepKind;
 use cargo::sources::IndexSummary;
-use cargo::sources::SourceConfigMap;
 use cargo::sources::source::MaybePackage;
 use cargo::sources::source::QueryKind;
 use cargo::sources::source::Source as CargoSource;
-use cargo::util::CanonicalUrl;
 use cargo::util::OptVersionReq;
 use cargo::util::cache_lock::CacheLockMode;
 use foldhash::HashMap;
@@ -42,27 +37,26 @@ use crate::Paths;
 use crate::fixups::ResolverDependencyFixup;
 use crate::fixups::resolver_fixups_for_package;
 use crate::semver_ext::compatibility_lane_for_version;
+use crate::semver_ext::topmost_compatible_version;
 use crate::semver_ext::version_req_bounds;
 use crate::semver_ext::version_req_is_broad;
 
 #[derive(Clone)]
-struct DeterministicSourceContext<'gctx> {
-    source_config: SourceConfigMap<'gctx>,
+struct DeterministicSourceContext {
     fixups_dir: PathBuf,
     known_sources: Rc<BTreeSet<SourceId>>,
     discovered_sources: Rc<RefCell<BTreeSet<SourceId>>>,
-    root_patch_summaries: BTreeMap<CanonicalUrl, Vec<Summary>>,
 }
 
 struct DeterministicSource<'gctx, S> {
     delegate: S,
-    context: DeterministicSourceContext<'gctx>,
+    context: DeterministicSourceContext,
     candidate_sources: HashMap<SourceId, Box<dyn CargoSource + 'gctx>>,
     fixup_cache: BTreeMap<PackageId, BTreeMap<String, ResolverDependencyFixup>>,
 }
 
 impl<'gctx, S> DeterministicSource<'gctx, S> {
-    fn new(delegate: S, context: DeterministicSourceContext<'gctx>) -> Self {
+    fn new(delegate: S, context: DeterministicSourceContext) -> Self {
         Self {
             delegate,
             context,
@@ -144,22 +138,37 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
         } else if !version_req_is_broad(&effective_req) {
             return Poll::Ready(Ok(dependency));
         } else {
-            let candidates = match self.candidate_versions(&dependency) {
-                Poll::Ready(Ok(candidates)) => candidates,
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-                Poll::Pending => return Poll::Pending,
-            };
-            let Some(narrowed_req) =
-                self.fresh_candidate_requirement(&dependency, &effective_req, candidates)
-            else {
-                return Poll::Ready(Err(anyhow!(
-                    "deterministic vendor could not find a stable or explicitly requested prerelease non-yanked candidate for broad indirect requirement {} {} from {}",
-                    dependency.package_name(),
-                    effective_req,
-                    parent,
-                )));
-            };
-            effective_req = narrowed_req;
+            let bounds =
+                version_req_bounds(&effective_req).expect("unsatisfiable version req is not broad");
+            let candidate = topmost_compatible_version(&bounds);
+            #[expect(non_contiguous_range_endpoints)]
+            if matches!(
+                (candidate.major, candidate.minor, candidate.patch),
+                (1..u64::MAX, _, _) | (0, 1..u64::MAX, _) | (0, 0, 0..u64::MAX),
+            ) {
+                // If the broad range is bounded above (like ">=2, <8")
+                // automatically narrow to the topmost lane.
+                effective_req.comparators.push(semver::Comparator {
+                    op: semver::Op::GreaterEq,
+                    major: 0,
+                    minor: Some(0),
+                    patch: Some(0),
+                    pre: semver::Prerelease::new("0.reindeer-implicit-narrow").unwrap(),
+                });
+                effective_req
+                    .comparators
+                    .push(compatibility_lane_for_version(&candidate));
+            } else {
+                // Unbounded range like ">=2". Force the user to specify a
+                // narrow_to fixup.
+                effective_req.comparators.push(semver::Comparator {
+                    op: semver::Op::Exact,
+                    major: 0,
+                    minor: Some(0),
+                    patch: Some(0),
+                    pre: semver::Prerelease::new("reindeer-unsupported-broad-range").unwrap(),
+                });
+            }
         }
 
         dependency.set_version_req(OptVersionReq::Req(effective_req));
@@ -186,71 +195,6 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
         Ok(fixups.get(dependency.name_in_toml().as_str()).cloned())
     }
 
-    fn fresh_candidate_requirement(
-        &self,
-        dependency: &Dependency,
-        effective_req: &VersionReq,
-        mut candidates: Vec<Version>,
-    ) -> Option<VersionReq> {
-        candidates.retain(|version| effective_req.matches(version));
-        candidates.sort();
-        while let Some(candidate) = candidates.pop() {
-            if dependency.version_req().matches(&candidate) && effective_req.matches(&candidate) {
-                let mut narrowed_req = effective_req.clone();
-                narrowed_req.comparators.push(semver::Comparator {
-                    op: semver::Op::GreaterEq,
-                    major: 0,
-                    minor: Some(0),
-                    patch: Some(0),
-                    pre: semver::Prerelease::new("0.reindeer-implicit-narrow").unwrap(),
-                });
-                narrowed_req
-                    .comparators
-                    .push(compatibility_lane_for_version(&candidate));
-                return Some(narrowed_req);
-            }
-        }
-        None
-    }
-
-    fn candidate_versions(
-        &mut self,
-        dependency: &Dependency,
-    ) -> Poll<anyhow::Result<Vec<Version>>> {
-        let mut versions = self.root_patch_candidate_versions(dependency);
-        if !versions.is_empty() {
-            return Poll::Ready(Ok(versions));
-        }
-
-        let source_id = dependency.source_id();
-        if source_id == self.delegate.source_id() {
-            versions.extend(ready!(query_candidate_versions(
-                &mut self.delegate,
-                dependency
-            ))?);
-            return Poll::Ready(Ok(versions));
-        }
-        let source = match self.candidate_sources.entry(source_id) {
-            hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            hash_map::Entry::Vacant(entry) => {
-                let source = match self
-                    .context
-                    .source_config
-                    .load(source_id, &std::collections::HashSet::new())
-                {
-                    Ok(source) => source,
-                    Err(err) => return Poll::Ready(Err(err)),
-                };
-                entry.insert(source)
-            }
-        };
-        versions.extend(ready!(query_candidate_versions(
-            source.as_mut(),
-            dependency
-        ))?);
-        Poll::Ready(Ok(versions))
-    }
-
     fn record_dependency_source(&self, source_id: SourceId) {
         if !source_id.is_path() && !self.context.known_sources.contains(&source_id) {
             self.context
@@ -259,38 +203,6 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
                 .insert(source_id);
         }
     }
-
-    fn root_patch_candidate_versions(&self, dependency: &Dependency) -> Vec<Version> {
-        self.context
-            .root_patch_summaries
-            .get(dependency.source_id().canonical_url())
-            .into_iter()
-            .flatten()
-            .filter(|summary| dependency.matches_ignoring_source(summary.package_id()))
-            .map(|summary| summary.package_id().version().clone())
-            .collect()
-    }
-}
-
-fn query_candidate_versions(
-    source: &mut dyn CargoSource,
-    dependency: &Dependency,
-) -> Poll<anyhow::Result<Vec<Version>>> {
-    let mut candidate_dependency = dependency.clone();
-    candidate_dependency.set_version_req(OptVersionReq::Any);
-    let candidates = match source.query_vec(&candidate_dependency, QueryKind::Exact)? {
-        Poll::Ready(candidates) => candidates,
-        Poll::Pending => return Poll::Pending,
-    };
-    Poll::Ready(Ok(candidate_versions_from_summaries(candidates)))
-}
-
-fn candidate_versions_from_summaries(candidates: Vec<IndexSummary>) -> Vec<Version> {
-    candidates
-        .into_iter()
-        .filter(|candidate| matches!(candidate, IndexSummary::Candidate(_)))
-        .map(|candidate| candidate.package_id().version().clone())
-        .collect()
 }
 
 impl<'gctx, S: CargoSource> CargoSource for DeterministicSource<'gctx, S> {
@@ -403,18 +315,15 @@ pub(crate) fn resolve_ws_deterministically_with_original_sources<'gctx>(
     let _cache_lock = gctx.acquire_package_cache_lock(CacheLockMode::DownloadExclusive)?;
     let source_config = cargo::sources::SourceConfigMap::empty(gctx)?;
     let previous_resolve = cargo::ops::load_pkg_lockfile(workspace)?;
-    let root_patch_summaries = root_patch_summaries(workspace, &source_config)?;
     let mut source_ids = deterministic_source_ids(workspace, previous_resolve.as_ref(), gctx)?;
 
     log::info!("Running deterministic Cargo resolve");
     loop {
         let discovered_sources = Rc::new(RefCell::new(BTreeSet::new()));
         let context = DeterministicSourceContext {
-            source_config: source_config.clone(),
             fixups_dir: fixups_dir.to_path_buf(),
             known_sources: Rc::new(source_ids.clone()),
             discovered_sources: Rc::clone(&discovered_sources),
-            root_patch_summaries: root_patch_summaries.clone(),
         };
         let mut registry = cargo::core::registry::PackageRegistry::new_with_source_config(
             gctx,
@@ -561,87 +470,6 @@ fn insert_registry_source(sources: &mut BTreeSet<SourceId>, source_id: SourceId)
     }
 }
 
-fn root_patch_summaries<'gctx>(
-    workspace: &cargo::core::Workspace<'gctx>,
-    source_config: &SourceConfigMap<'gctx>,
-) -> anyhow::Result<BTreeMap<CanonicalUrl, Vec<Summary>>> {
-    let mut patch_sources = HashMap::default();
-    let mut root_patch_summaries: BTreeMap<CanonicalUrl, Vec<Summary>> = BTreeMap::new();
-    for (url, patch_dependencies) in workspace.root_patch()?.iter() {
-        let canonical = CanonicalUrl::new(url)?;
-        let summaries = root_patch_summaries.entry(canonical.clone()).or_default();
-        for dependency in patch_dependencies {
-            let summary = root_patch_summary(source_config, &mut patch_sources, dependency)
-                .with_context(|| {
-                    format!(
-                        "failed to resolve root patch candidate {} {}",
-                        dependency.package_name(),
-                        dependency.version_req(),
-                    )
-                })?;
-            if summary.package_id().source_id().canonical_url() == &canonical {
-                bail!(
-                    "patch for `{}` in `{}` points to the same source, but patches must point to different sources",
-                    dependency.package_name(),
-                    url,
-                );
-            }
-            summaries.push(summary);
-        }
-    }
-    Ok(root_patch_summaries)
-}
-
-fn root_patch_summary<'gctx>(
-    source_config: &SourceConfigMap<'gctx>,
-    patch_sources: &mut HashMap<SourceId, Box<dyn CargoSource + 'gctx>>,
-    dependency: &Dependency,
-) -> anyhow::Result<Summary> {
-    let source_id = dependency.source_id();
-    let source = match patch_sources.entry(source_id) {
-        hash_map::Entry::Occupied(entry) => entry.into_mut(),
-        hash_map::Entry::Vacant(entry) => {
-            let source = source_config.load(source_id, &std::collections::HashSet::new())?;
-            entry.insert(source)
-        }
-    };
-
-    let mut summaries = loop {
-        match source.query_vec(dependency, QueryKind::Exact)? {
-            Poll::Ready(summaries) => {
-                break summaries
-                    .into_iter()
-                    .map(|summary| summary.into_summary())
-                    .collect::<Vec<_>>();
-            }
-            Poll::Pending => source.block_until_ready()?,
-        }
-    };
-
-    match summaries.len() {
-        1 => Ok(summaries.pop().expect("one patch summary should exist")),
-        0 => bail!(
-            "patch location `{}` does not contain package `{}` matching `{}`",
-            dependency.source_id(),
-            dependency.package_name(),
-            dependency.version_req(),
-        ),
-        _ => {
-            let mut versions = summaries
-                .iter()
-                .map(|summary| summary.package_id().version().to_string())
-                .collect::<Vec<_>>();
-            versions.sort();
-            bail!(
-                "patch for `{}` in `{}` resolved to more than one candidate: {}",
-                dependency.package_name(),
-                dependency.source_id(),
-                versions.join(", "),
-            )
-        }
-    }
-}
-
 fn parse_yanked_resolution_error(message: &str) -> anyhow::Result<Option<(String, Version)>> {
     let requirement = message.lines().find_map(|line| {
         let (_, rest) = line.split_once("requirement `")?;
@@ -696,7 +524,6 @@ mod test {
     use cargo::sources::source::MaybePackage;
     use cargo::sources::source::QueryKind;
     use cargo::sources::source::Source as CargoSource;
-    use cargo::util::CanonicalUrl;
     use cargo::util::Graph;
     use cargo::util::OptVersionReq;
     use foldhash::HashMap;
@@ -1069,33 +896,15 @@ mod test {
         )
     }
 
-    fn deterministic_source_context<'gctx>(
-        source_config: SourceConfigMap<'gctx>,
+    fn deterministic_source_context(
         third_party_dir: PathBuf,
         known_sources: impl IntoIterator<Item = SourceId>,
         discovered_sources: Rc<RefCell<BTreeSet<SourceId>>>,
-    ) -> DeterministicSourceContext<'gctx> {
+    ) -> DeterministicSourceContext {
         DeterministicSourceContext {
-            source_config,
             fixups_dir: third_party_dir.join("fixups"),
             known_sources: Rc::new(known_sources.into_iter().collect()),
             discovered_sources,
-            root_patch_summaries: BTreeMap::new(),
-        }
-    }
-
-    fn deterministic_source_context_with_root_patches<'gctx>(
-        source_config: SourceConfigMap<'gctx>,
-        third_party_dir: PathBuf,
-        known_sources: impl IntoIterator<Item = SourceId>,
-        root_patch_summaries: BTreeMap<CanonicalUrl, Vec<Summary>>,
-    ) -> DeterministicSourceContext<'gctx> {
-        DeterministicSourceContext {
-            source_config,
-            fixups_dir: third_party_dir.join("fixups"),
-            known_sources: Rc::new(known_sources.into_iter().collect()),
-            discovered_sources: Rc::new(RefCell::new(BTreeSet::new())),
-            root_patch_summaries,
         }
     }
 
@@ -1463,7 +1272,6 @@ narrow_to = "0.10"
             PackageRegistry::new_with_source_config(&gctx, source_config.clone()).unwrap();
         let discovered_sources = Rc::new(RefCell::new(BTreeSet::new()));
         let context = deterministic_source_context(
-            source_config,
             tempdir.path().to_owned(),
             [source_id],
             discovered_sources,
@@ -1539,7 +1347,6 @@ narrow_to = "0.10"
         let primary_source_id = SourceId::crates_io(&gctx).unwrap();
         let alternate_source_id =
             SourceId::from_url("registry+https://example.com/alt-index").unwrap();
-        let source_config = SourceConfigMap::new(&gctx).unwrap();
 
         let first_pass_discovered_sources = Rc::new(RefCell::new(BTreeSet::new()));
         let mut first_pass_source = DeterministicSource::new(
@@ -1553,7 +1360,6 @@ narrow_to = "0.10"
                 )],
             ),
             deterministic_source_context(
-                source_config.clone(),
                 tempdir.path().to_owned(),
                 [primary_source_id],
                 Rc::clone(&first_pass_discovered_sources),
@@ -1586,7 +1392,6 @@ narrow_to = "0.10"
                 ],
             ),
             deterministic_source_context(
-                source_config,
                 tempdir.path().to_owned(),
                 [primary_source_id, alternate_source_id],
                 Rc::clone(&second_pass_discovered_sources),
@@ -1624,7 +1429,6 @@ narrow_to = "0.10"
             .unwrap();
         let registry_source_id = SourceId::crates_io(&gctx).unwrap();
         let git_source_id = git_source_id();
-        let source_config = SourceConfigMap::new(&gctx).unwrap();
         let discovered_sources = Rc::new(RefCell::new(BTreeSet::new()));
         let mut source = DeterministicSource::new(
             RecordingSource::new(
@@ -1637,7 +1441,6 @@ narrow_to = "0.10"
                 )],
             ),
             deterministic_source_context(
-                source_config,
                 tempdir.path().to_owned(),
                 [registry_source_id],
                 Rc::clone(&discovered_sources),
@@ -1664,93 +1467,6 @@ narrow_to = "0.10"
     }
 
     #[test]
-    fn test_deterministic_source_prefers_root_patch_candidates_for_fresh_lanes() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let cargo_home = tempdir.path().join(".cargo");
-        let manifest_path = tempdir.path().join("Cargo.toml");
-        fs::create_dir(tempdir.path().join("src")).unwrap();
-        fs::write(tempdir.path().join("src/lib.rs"), "").unwrap();
-        fs::create_dir_all(tempdir.path().join("alpha_patch/src")).unwrap();
-        fs::write(
-            tempdir.path().join("alpha_patch/Cargo.toml"),
-            r#"
-[package]
-name = "alpha"
-version = "0.1.0"
-edition = "2021"
-"#,
-        )
-        .unwrap();
-        fs::write(tempdir.path().join("alpha_patch/src/lib.rs"), "").unwrap();
-        fs::write(
-            &manifest_path,
-            r#"
-[package]
-name = "resolver-fixture"
-version = "0.0.0"
-edition = "2021"
-
-[dependencies]
-root_dep = "=1.0.0"
-
-[patch.crates-io]
-alpha = { path = "alpha_patch" }
-"#,
-        )
-        .unwrap();
-
-        let shell = cargo::core::Shell::new();
-        let mut gctx =
-            cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
-        gctx.configure(0, true, None, false, false, false, &None, &[], &[])
-            .unwrap();
-        let source_id = SourceId::crates_io(&gctx).unwrap();
-        let source_config = SourceConfigMap::new(&gctx).unwrap();
-        let workspace = Workspace::new(&manifest_path, &gctx).unwrap();
-        let root_patch_summaries = super::root_patch_summaries(&workspace, &source_config).unwrap();
-        let mut registry =
-            PackageRegistry::new_with_source_config(&gctx, source_config.clone()).unwrap();
-        registry.add_preloaded(Box::new(DeterministicSource::new(
-            RecordingSource::new(
-                source_id,
-                vec![
-                    summary_with_deps(
-                        "root_dep",
-                        "1.0.0",
-                        source_id,
-                        vec![dependency("alpha", ">=0.1, <0.3", source_id)],
-                    ),
-                    summary("alpha", "0.2.0", source_id),
-                ],
-            ),
-            deterministic_source_context_with_root_patches(
-                source_config,
-                tempdir.path().to_owned(),
-                [source_id],
-                root_patch_summaries,
-            ),
-        )));
-
-        let resolve = cargo::ops::resolve_with_previous(
-            &mut registry,
-            &workspace,
-            &CliFeatures::new_all(true),
-            HasDevUnits::Yes,
-            None,
-            None,
-            &[],
-            true,
-        )
-        .unwrap();
-        let selected_alpha = resolve
-            .iter()
-            .find(|pkg| pkg.name().as_str() == "alpha")
-            .unwrap();
-        assert_eq!(selected_alpha.version(), &Version::parse("0.1.0").unwrap());
-        assert!(selected_alpha.source_id().is_path());
-    }
-
-    #[test]
     fn test_resolver_fixup_uses_dependency_key_for_renamed_dependency_edges() {
         let tempdir = tempfile::tempdir().unwrap();
         let cargo_home = tempdir.path().join(".cargo");
@@ -1773,7 +1489,6 @@ narrow_to = "1"
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
             .unwrap();
         let source_id = SourceId::crates_io(&gctx).unwrap();
-        let source_config = SourceConfigMap::new(&gctx).unwrap();
         let mut source = DeterministicSource::new(
             RecordingSource::new(
                 source_id,
@@ -1788,7 +1503,6 @@ narrow_to = "1"
                 )],
             ),
             deterministic_source_context(
-                source_config,
                 tempdir.path().to_owned(),
                 [source_id],
                 Rc::new(RefCell::new(BTreeSet::new())),
