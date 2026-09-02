@@ -5,407 +5,568 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use anyhow::Context;
-use anyhow::bail;
+#![allow(clippy::manual_map)]
+
+use std::cmp;
+use std::cmp::Ordering;
+use std::collections::BTreeSet;
+
+use semver::Comparator;
+use semver::Op;
+use semver::Prerelease;
 use semver::Version;
 use semver::VersionReq;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct VersionReqBounds {
-    lower: Option<VersionBound>,
-    upper: Option<VersionBound>,
+pub(crate) struct VersionBounds {
+    lower: LowerBound,
+    upper: UpperBound,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct CompatibilityLane {
-    lower: Version,
-    upper: Version,
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LowerBound {
+    major: u64,
+    minor: u64,
+    patch: u64,
+    pre: Prerelease,
+    /// Invariant: if exclusive, Prerelease must be nonempty.
+    exclusive: bool,
 }
 
-impl VersionReqBounds {
-    fn empty() -> Self {
-        Self {
-            lower: None,
-            upper: None,
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct UpperBound {
+    major: u64,
+    minor: u64,
+    patch: u64,
+    pre: Prerelease,
+    /// Invariant: if exclusive, Prerelease must be != "0".
+    exclusive: bool,
+}
+
+// `None` if version req is unsatisfiable.
+pub(crate) fn version_req_bounds(req: &VersionReq) -> Option<VersionBounds> {
+    let mut prereleases = BTreeSet::new();
+    for comparator in &req.comparators {
+        if !comparator.pre.is_empty() {
+            prereleases.insert((
+                comparator.major,
+                comparator.minor.unwrap(),
+                comparator.patch.unwrap(),
+            ));
         }
     }
 
-    fn lower(bound: VersionBound) -> Self {
-        Self {
-            lower: Some(bound),
-            upper: None,
+    let mut lower_bounds = Vec::new();
+    let mut upper_bounds = Vec::new();
+    for comparator in &req.comparators {
+        match comparator.op {
+            Op::Exact => {
+                let (lower, upper) = exact_bounds(comparator);
+                lower_bounds.push(lower);
+                upper_bounds.push(upper);
+            }
+            Op::Greater => {
+                let lower = greater_lower_bound(comparator, &prereleases)?;
+                lower_bounds.push(lower);
+            }
+            Op::GreaterEq => {
+                let lower = greater_eq_lower_bound(comparator);
+                lower_bounds.push(lower);
+            }
+            Op::Less => {
+                let upper = less_upper_bound(comparator, &prereleases)?;
+                upper_bounds.push(upper);
+            }
+            Op::LessEq => {
+                let upper = less_eq_upper_bound(comparator);
+                upper_bounds.push(upper);
+            }
+            Op::Tilde => {
+                let (lower, upper) = tilde_bounds(comparator);
+                lower_bounds.push(lower);
+                upper_bounds.push(upper);
+            }
+            Op::Caret => {
+                let (lower, upper) = caret_bounds(comparator, &prereleases);
+                lower_bounds.push(lower);
+                upper_bounds.push(upper);
+            }
+            Op::Wildcard => {
+                let (lower, upper) = wildcard_bounds(comparator);
+                lower_bounds.push(lower);
+                upper_bounds.push(upper);
+            }
+            op => unimplemented!("unsupported semver comparator {op:?}"),
         }
     }
 
-    fn upper(bound: VersionBound) -> Self {
-        Self {
-            lower: None,
-            upper: Some(bound),
+    let lower = lower_bounds.into_iter().max().unwrap_or_else(|| {
+        LowerBound {
+            major: 0,
+            minor: 0,
+            patch: 0,
+            pre: if prereleases.contains(&(0, 0, 0)) {
+                // ">=0.0.0-0"
+                Prerelease::new("0").unwrap()
+            } else {
+                // ">=0.0.0"
+                Prerelease::EMPTY
+            },
+            exclusive: false,
         }
-    }
+    });
 
-    fn range(lower: VersionBound, upper: VersionBound) -> Self {
-        Self {
-            lower: Some(lower),
-            upper: Some(upper),
+    let upper = upper_bounds.into_iter().min().unwrap_or_else(|| {
+        // "<=18446744073709551615.18446744073709551615.18446744073709551615"
+        UpperBound {
+            major: u64::MAX,
+            minor: u64::MAX,
+            patch: u64::MAX,
+            pre: Prerelease::EMPTY,
+            exclusive: false,
         }
-    }
+    });
 
-    fn exact(version: Version) -> Self {
-        Self::range(
-            VersionBound::inclusive(version.clone()),
-            VersionBound::inclusive(version),
+    // Check satisfiability by comparing major then minor then patch
+    // then prerelease. If all four equal, then satisfiability reduces to
+    // whether both bounds are inclusive.
+    if (
+        lower.major,
+        lower.minor,
+        lower.patch,
+        &lower.pre,
+        lower.exclusive,
+    ) < (
+        upper.major,
+        upper.minor,
+        upper.patch,
+        &upper.pre,
+        !upper.exclusive,
+    ) {
+        Some(VersionBounds { lower, upper })
+    } else {
+        None
+    }
+}
+
+pub(crate) fn version_bounds_subset(narrowed: &VersionBounds, original: &VersionBounds) -> bool {
+    original.lower <= narrowed.lower && narrowed.upper <= original.upper
+}
+
+pub(crate) fn version_req_to_compatibility_lane(req: &VersionReq, version: &Version) -> VersionReq {
+    assert!(req.matches(version));
+
+    let original_bounds = version_req_bounds(req).expect("req is definitely satisfiable");
+
+    let compatibility_lane = Comparator {
+        op: Op::Caret,
+        major: version.major,
+        minor: Some(if version.major == 0 { version.minor } else { 0 }),
+        patch: Some(if version.major == 0 && version.minor == 0 {
+            version.patch
+        } else {
+            0
+        }),
+        pre: version.pre.clone(),
+    };
+    let (lane_lower, lane_upper) = caret_bounds(&compatibility_lane, &BTreeSet::new());
+
+    let lower = cmp::max(original_bounds.lower, lane_lower);
+    let upper = cmp::min(original_bounds.upper, lane_upper);
+    let mut compatibility_lane_req = VersionReq {
+        comparators: Vec::with_capacity(2),
+    };
+    compatibility_lane_req.comparators.push(Comparator {
+        op: if lower.exclusive {
+            Op::Greater
+        } else {
+            Op::GreaterEq
+        },
+        major: lower.major,
+        minor: Some(lower.minor),
+        patch: Some(lower.patch),
+        pre: lower.pre,
+    });
+    if !upper.exclusive
+        && upper.pre.is_empty()
+        && let (next_patch, carry) = upper.patch.overflowing_add(1)
+        && let (next_minor, carry) = upper.minor.overflowing_add(u64::from(carry))
+        && let Some(next_major) = upper.major.checked_add(u64::from(carry))
+    {
+        compatibility_lane_req.comparators.push(Comparator {
+            op: Op::Less,
+            major: next_major,
+            minor: Some(next_minor),
+            patch: Some(next_patch),
+            pre: Prerelease::EMPTY,
+        });
+    } else {
+        compatibility_lane_req.comparators.push(Comparator {
+            op: if upper.exclusive {
+                Op::Less
+            } else {
+                Op::LessEq
+            },
+            major: upper.major,
+            minor: Some(upper.minor),
+            patch: Some(upper.patch),
+            pre: upper.pre,
+        });
+    }
+    compatibility_lane_req
+}
+
+pub(crate) fn version_req_is_broad(req: &VersionReq) -> bool {
+    let Some(bounds) = version_req_bounds(req) else {
+        return false;
+    };
+
+    // A version req is broad if the greatest satisfying version is not
+    // semver-compatible with the smallest satisfying version.
+    let compatible_with_lower = Comparator {
+        op: Op::Caret,
+        major: bounds.lower.major,
+        minor: Some(bounds.lower.minor),
+        patch: Some(bounds.lower.patch),
+        pre: Prerelease::EMPTY,
+    };
+    let upper = Version::new(bounds.upper.major, bounds.upper.minor, bounds.upper.patch);
+    !compatible_with_lower.matches(&upper)
+}
+
+fn exact_bounds(comparator: &Comparator) -> (LowerBound, UpperBound) {
+    // "=I.J.K-alpha"  =>  ">=I.J.K-alpha, <=I.J.K-alpha"
+    // "=I.J.K"  =>  ">=I.J.K, <=I.J.K"
+    // "=I.J"  =>  ">=I.J.0, <=I.J.MAX"
+    // "=I"  =>  ">=I.0.0, <=I.MAX.MAX"
+    let lower = LowerBound {
+        major: comparator.major,
+        minor: comparator.minor.unwrap_or(0),
+        patch: comparator.patch.unwrap_or(0),
+        pre: comparator.pre.clone(),
+        exclusive: false,
+    };
+    let upper = UpperBound {
+        major: comparator.major,
+        minor: comparator.minor.unwrap_or(u64::MAX),
+        patch: comparator.patch.unwrap_or(u64::MAX),
+        pre: comparator.pre.clone(),
+        exclusive: false,
+    };
+    (lower, upper)
+}
+
+// `None` if comparator is unsatisfiable.
+fn greater_lower_bound(
+    comparator: &Comparator,
+    prereleases: &BTreeSet<(u64, u64, u64)>,
+) -> Option<LowerBound> {
+    if !comparator.pre.is_empty() {
+        // ">I.J.K-alpha"
+        Some(LowerBound {
+            major: comparator.major,
+            minor: comparator.minor.unwrap(),
+            patch: comparator.patch.unwrap(),
+            pre: comparator.pre.clone(),
+            // Invariant: prerelease != ""
+            exclusive: true,
+        })
+    } else if let Some(patch) = comparator.patch
+        && let Some(next_patch) = patch.checked_add(1)
+    {
+        // ">I.J.K"  =>  ">=I.J.(K+1)" or ">=I.J.(K+1)-0"
+        Some(LowerBound {
+            major: comparator.major,
+            minor: comparator.minor.unwrap(),
+            patch: next_patch,
+            pre: if prereleases.contains(&(comparator.major, comparator.minor.unwrap(), next_patch))
+            {
+                Prerelease::new("0").unwrap()
+            } else {
+                Prerelease::EMPTY
+            },
+            exclusive: false,
+        })
+    } else if let Some(minor) = comparator.minor
+        && let Some(next_minor) = minor.checked_add(1)
+    {
+        // ">I.J"  =>  ">=I.(J+1).0" or ">=I.(J+1).0-0"
+        // ">I.J.MAX"  =>  same
+        Some(LowerBound {
+            major: comparator.major,
+            minor: next_minor,
+            patch: 0,
+            pre: if prereleases.contains(&(comparator.major, next_minor, 0)) {
+                Prerelease::new("0").unwrap()
+            } else {
+                Prerelease::EMPTY
+            },
+            exclusive: false,
+        })
+    } else if let Some(next_major) = comparator.major.checked_add(1) {
+        // ">I"  =>  ">=(I+1).0.0" or ">=(I+1).0.0-0"
+        // ">I.MAX"  =>  same
+        // ">I.MAX.MAX"  =>  same
+        Some(LowerBound {
+            major: next_major,
+            minor: 0,
+            patch: 0,
+            pre: if prereleases.contains(&(next_major, 0, 0)) {
+                Prerelease::new("0").unwrap()
+            } else {
+                Prerelease::EMPTY
+            },
+            exclusive: false,
+        })
+    } else {
+        // ">MAX.MAX.MAX"  =>  unsatisfiable
+        None
+    }
+}
+
+fn greater_eq_lower_bound(comparator: &Comparator) -> LowerBound {
+    // ">=I.J.K-alpha"
+    // ">=I.J.K"
+    // ">=I.J"  =>  ">=I.J.0"
+    // ">=I"  =>  ">=I.0.0"
+    LowerBound {
+        major: comparator.major,
+        minor: comparator.minor.unwrap_or(0),
+        patch: comparator.patch.unwrap_or(0),
+        pre: comparator.pre.clone(),
+        exclusive: false,
+    }
+}
+
+fn less_upper_bound(
+    comparator: &Comparator,
+    prereleases: &BTreeSet<(u64, u64, u64)>,
+) -> Option<UpperBound> {
+    if !matches!(comparator.pre.as_str(), "" | "0") {
+        // "<I.J.K-alpha"
+        Some(UpperBound {
+            major: comparator.major,
+            minor: comparator.minor.unwrap(),
+            patch: comparator.patch.unwrap(),
+            pre: comparator.pre.clone(),
+            // Invariant: prerelease != "0"
+            exclusive: true,
+        })
+    } else if let Some(minor) = comparator.minor
+        && let Some(patch) = comparator.patch
+        && prereleases.contains(&(comparator.major, minor, patch))
+    {
+        // "<I.J.K" allowing pre-releases
+        Some(UpperBound {
+            major: comparator.major,
+            minor,
+            patch,
+            pre: Prerelease::EMPTY,
+            // Invariant: prerelease != "0"
+            exclusive: true,
+        })
+    } else if let Some(patch) = comparator.patch
+        && let Some(prev_patch) = patch.checked_sub(1)
+    {
+        // "<I.J.K"  =>  "<=I.J.(K-1)"
+        Some(UpperBound {
+            major: comparator.major,
+            minor: comparator.minor.unwrap(),
+            patch: prev_patch,
+            pre: Prerelease::EMPTY,
+            exclusive: false,
+        })
+    } else if let Some(minor) = comparator.minor
+        && let Some(prev_minor) = minor.checked_sub(1)
+    {
+        // "<I.J"  =>  "<=I.(J-1).MAX"
+        // "<I.J.0"  =>  same
+        Some(UpperBound {
+            major: comparator.major,
+            minor: prev_minor,
+            patch: u64::MAX,
+            pre: Prerelease::EMPTY,
+            exclusive: false,
+        })
+    } else if let Some(prev_major) = comparator.major.checked_sub(1) {
+        // "<I"  =>  "<=(I-1).MAX.MAX"
+        // "<I.0"  =>  same
+        // "<I.0.0"  =>  same
+        Some(UpperBound {
+            major: prev_major,
+            minor: u64::MAX,
+            patch: u64::MAX,
+            pre: Prerelease::EMPTY,
+            exclusive: false,
+        })
+    } else {
+        // "<0.0.0", "<0.0", "<0"  =>  unsatisfiable
+        None
+    }
+}
+
+fn less_eq_upper_bound(comparator: &Comparator) -> UpperBound {
+    // "<=I.J.K-alpha"
+    // "<=I.J.K"
+    // "<=I.J"  =>  "<=I.J.MAX"
+    // "<=I"  =>  "<=I.MAX.MAX"
+    UpperBound {
+        major: comparator.major,
+        minor: comparator.minor.unwrap_or(u64::MAX),
+        patch: comparator.patch.unwrap_or(u64::MAX),
+        pre: comparator.pre.clone(),
+        exclusive: false,
+    }
+}
+
+fn tilde_bounds(comparator: &Comparator) -> (LowerBound, UpperBound) {
+    // "~I.J.K-alpha"  =>  ">=I.J.K-alpha, <=I.J.MAX"
+    // "~I.J.K"  =>  ">=I.J.K, <=I.J.MAX"
+    // "~I.J"  =>  ">=I.J.0, <=I.J.MAX"
+    // "~I"  =>  ">=I.0.0, <=I.MAX.MAX"
+    let lower = LowerBound {
+        major: comparator.major,
+        minor: comparator.minor.unwrap_or(0),
+        patch: comparator.patch.unwrap_or(0),
+        pre: comparator.pre.clone(),
+        exclusive: false,
+    };
+    let upper = UpperBound {
+        major: comparator.major,
+        minor: comparator.minor.unwrap_or(u64::MAX),
+        patch: u64::MAX,
+        pre: Prerelease::EMPTY,
+        exclusive: false,
+    };
+    (lower, upper)
+}
+
+fn caret_bounds(
+    comparator: &Comparator,
+    prereleases: &BTreeSet<(u64, u64, u64)>,
+) -> (LowerBound, UpperBound) {
+    let lower = LowerBound {
+        major: comparator.major,
+        minor: comparator.minor.unwrap_or(0),
+        patch: comparator.patch.unwrap_or(0),
+        pre: if !comparator.pre.is_empty() {
+            comparator.pre.clone()
+        } else if comparator.patch.is_none()
+            && prereleases.contains(&(comparator.major, comparator.minor.unwrap_or(0), 0))
+        {
+            Prerelease::new("0").unwrap()
+        } else {
+            Prerelease::EMPTY
+        },
+        exclusive: false,
+    };
+
+    let upper = if comparator.major != 0 || comparator.minor.is_none() {
+        // "^I.J.K" (for I>0)  =>  ">=I.J.K, <=I.MAX.MAX"
+        // "^I"  =>  ">=I.0.0, <=I.MAX.MAX"
+        UpperBound {
+            major: comparator.major,
+            minor: u64::MAX,
+            patch: u64::MAX,
+            pre: Prerelease::EMPTY,
+            exclusive: false,
+        }
+    } else if let Some(minor @ 1..) = comparator.minor {
+        // "^0.J.K" (for J>0)  =>  ">=0.J.K, <=0.J.MAX"
+        UpperBound {
+            major: 0,
+            minor,
+            patch: u64::MAX,
+            pre: Prerelease::EMPTY,
+            exclusive: false,
+        }
+    } else {
+        // "^0.0"  =>  ">=0.0.0, <=0.0.MAX"
+        // "^0.0.K"  =>  ">=0.0.K, <=0.0.K"
+        UpperBound {
+            major: 0,
+            minor: 0,
+            patch: comparator.patch.unwrap_or(u64::MAX),
+            pre: Prerelease::EMPTY,
+            exclusive: false,
+        }
+    };
+
+    (lower, upper)
+}
+
+fn wildcard_bounds(comparator: &Comparator) -> (LowerBound, UpperBound) {
+    // "I.J.*"  =>  ">=I.J.0, <=I.J.MAX"
+    // "I.*"  =>  ">=I.0.0, <=I.MAX.MAX"
+    let lower = LowerBound {
+        major: comparator.major,
+        minor: comparator.minor.unwrap_or(0),
+        patch: 0,
+        pre: Prerelease::EMPTY,
+        exclusive: false,
+    };
+    let upper = UpperBound {
+        major: comparator.major,
+        minor: comparator.minor.unwrap_or(u64::MAX),
+        patch: u64::MAX,
+        pre: Prerelease::EMPTY,
+        exclusive: false,
+    };
+    (lower, upper)
+}
+
+/// Comparison order: ">=1.0.0-alpha" < ">1.0.0-alpha" < ">=1.0.0"
+impl PartialOrd for LowerBound {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(Self::cmp(self, other))
+    }
+}
+impl Ord for LowerBound {
+    fn cmp(&self, other: &Self) -> Ordering {
+        Ord::cmp(
+            &(
+                self.major,
+                self.minor,
+                self.patch,
+                &self.pre,
+                self.exclusive,
+            ),
+            &(
+                other.major,
+                other.minor,
+                other.patch,
+                &other.pre,
+                other.exclusive,
+            ),
         )
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct VersionBound {
-    version: Version,
-    inclusive: bool,
-}
-
-impl VersionBound {
-    fn new(version: Version, inclusive: bool) -> Self {
-        Self { version, inclusive }
-    }
-
-    fn inclusive(version: Version) -> Self {
-        Self::new(version, true)
-    }
-
-    fn exclusive(version: Version) -> Self {
-        Self::new(version, false)
+/// Comparison order: "<1.0.0-alpha" < "<=1.0.0-alpha" < "<1.0.0" < "<=1.0.0"
+impl PartialOrd for UpperBound {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(Self::cmp(self, other))
     }
 }
-
-pub(crate) fn version_req_bounds(req: &VersionReq) -> anyhow::Result<VersionReqBounds> {
-    let mut bounds = VersionReqBounds::empty();
-    for comparator in &req.comparators {
-        let comparator_bounds = comparator_bounds(comparator)?;
-        merge_lower_bound(&mut bounds.lower, comparator_bounds.lower);
-        merge_upper_bound(&mut bounds.upper, comparator_bounds.upper);
+impl Ord for UpperBound {
+    fn cmp(&self, other: &Self) -> Ordering {
+        Ord::cmp(
+            &(
+                self.major,
+                self.minor,
+                self.patch,
+                &self.pre,
+                !self.exclusive,
+            ),
+            &(
+                other.major,
+                other.minor,
+                other.patch,
+                &other.pre,
+                !other.exclusive,
+            ),
+        )
     }
-    Ok(bounds)
-}
-
-pub(crate) fn version_bounds_subset(
-    narrowed: &VersionReqBounds,
-    original: &VersionReqBounds,
-) -> bool {
-    lower_bound_subset(&narrowed.lower, &original.lower)
-        && upper_bound_subset(&narrowed.upper, &original.upper)
-}
-
-pub(crate) fn version_req_to_compatibility_lane(
-    req: &VersionReq,
-    version: &Version,
-) -> anyhow::Result<VersionReq> {
-    let mut bounds = version_req_bounds(req)?;
-    let lane_bounds = compatibility_lane_bounds(version)?;
-    merge_lower_bound(&mut bounds.lower, lane_bounds.lower);
-    merge_upper_bound(&mut bounds.upper, lane_bounds.upper);
-    let req = format_version_req_bounds(&bounds)?;
-    VersionReq::parse(&req).with_context(|| format!("failed to parse narrowed requirement {req}"))
-}
-
-pub(crate) fn version_req_is_broad(req: &VersionReq) -> anyhow::Result<bool> {
-    let bounds = version_req_bounds(req)?;
-    let Some(lower) = &bounds.lower else {
-        return Ok(true);
-    };
-    let Some(upper) = &bounds.upper else {
-        return Ok(true);
-    };
-
-    let min_version = minimum_satisfying_version(lower)?;
-    let compatibility_bounds = compatibility_bounds(&min_version)?;
-    let requirement_bounds =
-        VersionReqBounds::range(VersionBound::inclusive(min_version), upper.clone());
-    Ok(!version_bounds_subset(
-        &requirement_bounds,
-        &compatibility_bounds,
-    ))
-}
-
-fn format_version_req_bounds(bounds: &VersionReqBounds) -> anyhow::Result<String> {
-    let Some(lower) = &bounds.lower else {
-        bail!("narrowed requirement must have a lower bound");
-    };
-    let Some(upper) = &bounds.upper else {
-        bail!("narrowed requirement must have an upper bound");
-    };
-    if lower.version == upper.version && lower.inclusive && upper.inclusive {
-        return Ok(format!("={}", lower.version));
-    }
-    let lower_op = if lower.inclusive { ">=" } else { ">" };
-    let upper_op = if upper.inclusive { "<=" } else { "<" };
-    Ok(format!(
-        "{lower_op}{}, {upper_op}{}",
-        lower.version, upper.version
-    ))
-}
-
-fn comparator_bounds(comparator: &semver::Comparator) -> anyhow::Result<VersionReqBounds> {
-    let base = comparator_version(comparator);
-    let bounds = match comparator.op {
-        semver::Op::Exact => exact_bounds(comparator, base)?,
-        semver::Op::Greater => VersionReqBounds::lower(greater_lower_bound(comparator, base)?),
-        semver::Op::GreaterEq => VersionReqBounds::lower(VersionBound::inclusive(base)),
-        semver::Op::Less => VersionReqBounds::upper(VersionBound::exclusive(base)),
-        semver::Op::LessEq => VersionReqBounds::upper(VersionBound::new(
-            less_eq_upper_bound(comparator)?,
-            comparator.patch.is_some(),
-        )),
-        semver::Op::Tilde => VersionReqBounds::range(
-            VersionBound::inclusive(base),
-            VersionBound::exclusive(tilde_upper_bound(comparator)?),
-        ),
-        semver::Op::Caret => VersionReqBounds::range(
-            VersionBound::inclusive(base),
-            VersionBound::exclusive(caret_upper_bound(comparator)?),
-        ),
-        semver::Op::Wildcard => wildcard_bounds(comparator)?,
-        _ => bail!("unsupported semver comparator op {:?}", comparator.op),
-    };
-    Ok(bounds)
-}
-
-fn exact_bounds(
-    comparator: &semver::Comparator,
-    base: Version,
-) -> anyhow::Result<VersionReqBounds> {
-    if let Some(bounds) = partial_version_bounds(comparator)? {
-        return Ok(bounds);
-    }
-    Ok(VersionReqBounds::exact(base))
-}
-
-fn comparator_version(comparator: &semver::Comparator) -> Version {
-    let mut version = Version::new(
-        comparator.major,
-        comparator.minor.unwrap_or(0),
-        comparator.patch.unwrap_or(0),
-    );
-    version.pre = comparator.pre.clone();
-    version
-}
-
-fn partial_version_bounds(
-    comparator: &semver::Comparator,
-) -> anyhow::Result<Option<VersionReqBounds>> {
-    let Some(minor) = comparator.minor else {
-        return Ok(Some(VersionReqBounds::range(
-            VersionBound::inclusive(Version::new(comparator.major, 0, 0)),
-            VersionBound::exclusive(next_major(comparator.major)?),
-        )));
-    };
-    if comparator.patch.is_some() {
-        return Ok(None);
-    }
-    Ok(Some(VersionReqBounds::range(
-        VersionBound::inclusive(Version::new(comparator.major, minor, 0)),
-        VersionBound::exclusive(next_minor(comparator.major, minor)?),
-    )))
-}
-
-fn greater_lower_bound(
-    comparator: &semver::Comparator,
-    base: Version,
-) -> anyhow::Result<VersionBound> {
-    if comparator.patch.is_some() {
-        return Ok(VersionBound::exclusive(base));
-    }
-    if let Some(minor) = comparator.minor {
-        return Ok(VersionBound::inclusive(next_minor(
-            comparator.major,
-            minor,
-        )?));
-    }
-    Ok(VersionBound::inclusive(next_major(comparator.major)?))
-}
-
-fn less_eq_upper_bound(comparator: &semver::Comparator) -> anyhow::Result<Version> {
-    if comparator.patch.is_some() {
-        return Ok(comparator_version(comparator));
-    }
-    if let Some(minor) = comparator.minor {
-        return next_minor(comparator.major, minor);
-    }
-    next_major(comparator.major)
-}
-
-fn wildcard_bounds(comparator: &semver::Comparator) -> anyhow::Result<VersionReqBounds> {
-    if let Some(bounds) = partial_version_bounds(comparator)? {
-        return Ok(bounds);
-    }
-    let version = comparator_version(comparator);
-    Ok(VersionReqBounds::range(
-        VersionBound::inclusive(version.clone()),
-        VersionBound::exclusive(next_patch(&version)?),
-    ))
-}
-
-fn caret_upper_bound(comparator: &semver::Comparator) -> anyhow::Result<Version> {
-    if comparator.major > 0 {
-        return next_major(comparator.major);
-    }
-    let Some(minor) = comparator.minor else {
-        return next_major(comparator.major);
-    };
-    if minor > 0 {
-        return next_minor(comparator.major, minor);
-    }
-    let Some(patch) = comparator.patch else {
-        return next_minor(comparator.major, minor);
-    };
-    Ok(Version::new(
-        comparator.major,
-        minor,
-        patch.checked_add(1).context("patch version overflow")?,
-    ))
-}
-
-fn tilde_upper_bound(comparator: &semver::Comparator) -> anyhow::Result<Version> {
-    let Some(minor) = comparator.minor else {
-        return next_major(comparator.major);
-    };
-    next_minor(comparator.major, minor)
-}
-
-fn minimum_satisfying_version(lower: &VersionBound) -> anyhow::Result<Version> {
-    if lower.inclusive || !lower.version.pre.is_empty() {
-        return Ok(lower.version.clone());
-    }
-    next_patch(&lower.version)
-}
-
-fn compatibility_bounds(version: &Version) -> anyhow::Result<VersionReqBounds> {
-    Ok(VersionReqBounds::range(
-        VersionBound::inclusive(version.clone()),
-        VersionBound::exclusive(semver_compatibility_upper_bound(version)?),
-    ))
-}
-
-fn compatibility_lane_bounds(version: &Version) -> anyhow::Result<VersionReqBounds> {
-    let lane = version_compatibility_lane(version)?;
-    Ok(VersionReqBounds::range(
-        VersionBound::inclusive(lane.lower),
-        VersionBound::exclusive(lane.upper),
-    ))
-}
-
-fn version_compatibility_lane(version: &Version) -> anyhow::Result<CompatibilityLane> {
-    Ok(CompatibilityLane {
-        lower: semver_compatibility_lower_bound(version),
-        upper: semver_compatibility_upper_bound(version)?,
-    })
-}
-
-fn semver_compatibility_lower_bound(version: &Version) -> Version {
-    if !version.pre.is_empty() {
-        return version.clone();
-    }
-    if version.major > 0 {
-        return Version::new(version.major, 0, 0);
-    }
-    if version.minor > 0 {
-        return Version::new(version.major, version.minor, 0);
-    }
-    version.clone()
-}
-
-fn semver_compatibility_upper_bound(version: &Version) -> anyhow::Result<Version> {
-    if version.major > 0 {
-        return next_major(version.major);
-    }
-    if version.minor > 0 {
-        return next_minor(version.major, version.minor);
-    }
-    next_patch(version)
-}
-
-fn next_major(major: u64) -> anyhow::Result<Version> {
-    Ok(Version::new(
-        major.checked_add(1).context("major version overflow")?,
-        0,
-        0,
-    ))
-}
-
-fn next_minor(major: u64, minor: u64) -> anyhow::Result<Version> {
-    Ok(Version::new(
-        major,
-        minor.checked_add(1).context("minor version overflow")?,
-        0,
-    ))
-}
-
-fn next_patch(version: &Version) -> anyhow::Result<Version> {
-    Ok(Version::new(
-        version.major,
-        version.minor,
-        version
-            .patch
-            .checked_add(1)
-            .context("patch version overflow")?,
-    ))
-}
-
-fn merge_lower_bound(current: &mut Option<VersionBound>, candidate: Option<VersionBound>) {
-    let Some(candidate) = candidate else {
-        return;
-    };
-    if current
-        .as_ref()
-        .is_none_or(|current| lower_bound_after(&candidate, current))
-    {
-        *current = Some(candidate);
-    }
-}
-
-fn merge_upper_bound(current: &mut Option<VersionBound>, candidate: Option<VersionBound>) {
-    let Some(candidate) = candidate else {
-        return;
-    };
-    if current
-        .as_ref()
-        .is_none_or(|current| upper_bound_before(&candidate, current))
-    {
-        *current = Some(candidate);
-    }
-}
-
-fn lower_bound_after(candidate: &VersionBound, current: &VersionBound) -> bool {
-    candidate.version > current.version
-        || (candidate.version == current.version && !candidate.inclusive && current.inclusive)
-}
-
-fn upper_bound_before(candidate: &VersionBound, current: &VersionBound) -> bool {
-    candidate.version < current.version
-        || (candidate.version == current.version && !candidate.inclusive && current.inclusive)
-}
-
-fn lower_bound_subset(narrowed: &Option<VersionBound>, original: &Option<VersionBound>) -> bool {
-    let Some(original) = original else {
-        return true;
-    };
-    let Some(narrowed) = narrowed else {
-        return false;
-    };
-    narrowed.version > original.version
-        || (narrowed.version == original.version && (original.inclusive || !narrowed.inclusive))
-}
-
-fn upper_bound_subset(narrowed: &Option<VersionBound>, original: &Option<VersionBound>) -> bool {
-    let Some(original) = original else {
-        return true;
-    };
-    let Some(narrowed) = narrowed else {
-        return false;
-    };
-    narrowed.version < original.version
-        || (narrowed.version == original.version && (original.inclusive || !narrowed.inclusive))
 }
 
 #[cfg(test)]
@@ -413,7 +574,7 @@ mod tests {
     use super::*;
 
     fn is_broad(req: &str) -> bool {
-        version_req_is_broad(&VersionReq::parse(req).unwrap()).unwrap()
+        version_req_is_broad(&VersionReq::parse(req).unwrap())
     }
 
     fn narrow(req: &str, version: &str) -> String {
@@ -421,7 +582,6 @@ mod tests {
             &VersionReq::parse(req).unwrap(),
             &Version::parse(version).unwrap(),
         )
-        .unwrap()
         .to_string()
     }
 
@@ -462,6 +622,6 @@ mod tests {
     fn greater_than_partial_versions_follow_semver_semantics() {
         assert_eq!(narrow(">1", "2.3.4"), ">=2.0.0, <3.0.0");
         assert_eq!(narrow(">1.0", "1.3.4"), ">=1.1.0, <2.0.0");
-        assert_eq!(narrow(">1.0.0", "1.0.1"), ">1.0.0, <2.0.0");
+        assert_eq!(narrow(">1.0.0", "1.0.1"), ">=1.0.1, <2.0.0");
     }
 }

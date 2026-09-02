@@ -134,19 +134,11 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
             original_req.clone()
         };
 
-        if fixup.is_none() {
-            match version_req_is_broad(&effective_req) {
-                Ok(true) => {}
-                Ok(false) => return Poll::Ready(Ok(dependency)),
-                Err(err) => return Poll::Ready(Err(err)),
-            }
+        if fixup.is_none() && !version_req_is_broad(&effective_req) {
+            return Poll::Ready(Ok(dependency));
         }
 
-        let narrowed_req = if fixup.is_some()
-            && match version_req_is_broad(&effective_req) {
-                Ok(is_broad) => !is_broad,
-                Err(err) => return Poll::Ready(Err(err)),
-            } {
+        let narrowed_req = if fixup.is_some() && !version_req_is_broad(&effective_req) {
             effective_req.clone()
         } else {
             let candidates = match self.candidate_versions(&dependency) {
@@ -203,14 +195,9 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
         candidates.retain(|version| effective_req.matches(version));
         candidates.sort();
         while let Some(candidate) = candidates.pop() {
-            let Ok(narrowed_req) = version_req_to_compatibility_lane(effective_req, &candidate)
-            else {
-                continue;
-            };
-            if validate_version_req_subset(&narrowed_req, effective_req).is_ok()
-                && narrowed_req.matches(&candidate)
-                && dependency.version_req().matches(&candidate)
-            {
+            if dependency.version_req().matches(&candidate) && effective_req.matches(&candidate) {
+                let narrowed_req = version_req_to_compatibility_lane(effective_req, &candidate);
+                assert!(narrowed_req.matches(&candidate));
                 return Some(narrowed_req);
             }
         }
