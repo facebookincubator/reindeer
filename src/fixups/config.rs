@@ -43,6 +43,7 @@ use crate::fixups::buildscript::PrebuiltCxxLibraryFixup;
 use crate::glob::TrackedGlobSet;
 use crate::path::relative_path;
 use crate::platform::PlatformExpr;
+use crate::semver_ext;
 use crate::unused::UnusedFixups;
 
 /// Top-level fixup config file (correspondins to a fixups.toml)
@@ -260,6 +261,7 @@ impl ResolverFixups {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ResolverDependencyFixup {
+    #[serde(deserialize_with = "deserialize_narrow_to")]
     pub(crate) narrow_to: VersionReq,
 }
 
@@ -611,6 +613,40 @@ impl<'de> Visitor<'de> for FixupConfigFileVisitor {
             platform_fixup: fields.platform_fixup,
         })
     }
+}
+
+fn deserialize_narrow_to<'de, D>(deserializer: D) -> Result<VersionReq, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct NarrowToVisitor;
+
+    impl<'de> Visitor<'de> for NarrowToVisitor {
+        type Value = VersionReq;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("semver version")
+        }
+
+        fn visit_str<E>(self, string: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            let req = string.parse().map_err(E::custom)?;
+            if semver_ext::version_req_is_broad(&req) {
+                let bounds = semver_ext::version_req_bounds(&req)
+                    .expect("unsatisfiable version req is not broad");
+                Err(E::custom(format!(
+                    "broad version range is not allowed in `narrow_to`; use a single semver range like \"{}\"",
+                    semver_ext::example_compatibility_lane_for_error_message(&bounds),
+                )))
+            } else {
+                Ok(req)
+            }
+        }
+    }
+
+    deserializer.deserialize_str(NarrowToVisitor)
 }
 
 #[cfg(test)]

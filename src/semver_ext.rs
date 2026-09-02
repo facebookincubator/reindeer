@@ -9,6 +9,7 @@
 
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
+use std::fmt::Display;
 
 use semver::Comparator;
 use semver::Op;
@@ -164,6 +165,28 @@ pub(crate) fn compatibility_lane_for_version(version: &Version) -> Comparator {
         },
         pre: Prerelease::EMPTY,
     }
+}
+
+pub(crate) fn example_compatibility_lane_for_error_message(bounds: &VersionBounds) -> impl Display {
+    #[expect(non_contiguous_range_endpoints)]
+    let example_version = if matches!(
+        (bounds.upper.major, bounds.upper.minor, bounds.upper.patch),
+        (1..u64::MAX, _, _) | (0, 1..u64::MAX, _) | (0, 0, 0..u64::MAX),
+    ) {
+        // If the req is bounded above, then recommend the topmost lane.
+        Version::new(bounds.upper.major, bounds.upper.minor, bounds.upper.patch)
+    } else if (bounds.lower.major, bounds.lower.minor, bounds.lower.patch) > (0, 0, 0) {
+        // Otherwise if the req is bounded below, recommend the bottom lane.
+        Version::new(bounds.lower.major, bounds.lower.minor, bounds.lower.patch)
+    } else {
+        // Arbitrary fallback example: "0.4"
+        Version::new(0, 4, 0)
+    };
+    compatibility_lane_for_version(&example_version)
+        .to_string()
+        .strip_prefix('^')
+        .unwrap()
+        .to_owned()
 }
 
 pub(crate) fn version_req_is_broad(req: &VersionReq) -> bool {
@@ -563,5 +586,27 @@ mod tests {
         assert_eq!(narrow("0.2.7"), "^0.2");
         assert_eq!(narrow("0.0.2"), "^0.0.2");
         assert_eq!(narrow("0.1.2-alpha"), "^0.1");
+    }
+
+    #[test]
+    fn test_example_compatibility_lane_for_error_message() {
+        fn example(req: &str) -> String {
+            let req = VersionReq::parse(req).unwrap();
+            let bounds = version_req_bounds(&req).unwrap();
+            example_compatibility_lane_for_error_message(&bounds).to_string()
+        }
+        assert_eq!(example(">=3, <9"), "8");
+        assert_eq!(example(">=0.3, <0.9"), "0.8");
+        assert_eq!(example(">=0.0.3, <0.0.9"), "0.0.8");
+        assert_eq!(example(">=3"), "3");
+        assert_eq!(example(">=0.3"), "0.3");
+        assert_eq!(example(">=0.0.3"), "0.0.3");
+        assert_eq!(example(">3"), "4");
+        assert_eq!(example(">0.3"), "0.4");
+        assert_eq!(example(">0.0.3"), "0.0.4");
+        assert_eq!(example("<=9"), "9");
+        assert_eq!(example("<=0.9"), "0.9");
+        assert_eq!(example("<=0.0.9"), "0.0.9");
+        assert_eq!(example("*"), "0.4");
     }
 }

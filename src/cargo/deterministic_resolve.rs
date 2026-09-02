@@ -140,14 +140,9 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
                     fixup.narrow_to,
                 )));
             }
-        }
-
-        if fixup.is_none() && !version_req_is_broad(&effective_req) {
+            assert!(!version_req_is_broad(&effective_req));
+        } else if !version_req_is_broad(&effective_req) {
             return Poll::Ready(Ok(dependency));
-        }
-
-        let narrowed_req = if fixup.is_some() && !version_req_is_broad(&effective_req) {
-            effective_req.clone()
         } else {
             let candidates = match self.candidate_versions(&dependency) {
                 Poll::Ready(Ok(candidates)) => candidates,
@@ -164,10 +159,10 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
                     parent,
                 )));
             };
-            narrowed_req
-        };
+            effective_req = narrowed_req;
+        }
 
-        dependency.set_version_req(OptVersionReq::Req(narrowed_req));
+        dependency.set_version_req(OptVersionReq::Req(effective_req));
         Poll::Ready(Ok(dependency))
     }
 
