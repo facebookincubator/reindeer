@@ -18,6 +18,7 @@ use std::task::Poll;
 use std::task::ready;
 
 use anyhow::Context;
+use anyhow::anyhow;
 use anyhow::bail;
 use cargo::core::Dependency;
 use cargo::core::Package as CargoPackage;
@@ -40,10 +41,9 @@ use semver::VersionReq;
 use crate::Paths;
 use crate::fixups::ResolverDependencyFixup;
 use crate::fixups::resolver_fixups_for_package;
-use crate::semver_ext::version_bounds_subset;
+use crate::semver_ext::compatibility_lane_for_version;
 use crate::semver_ext::version_req_bounds;
 use crate::semver_ext::version_req_is_broad;
-use crate::semver_ext::version_req_to_compatibility_lane;
 
 #[derive(Clone)]
 struct DeterministicSourceContext<'gctx> {
@@ -113,26 +113,34 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
             Ok(req) => req,
             Err(err) => return Poll::Ready(Err(err)),
         };
+
         let fixup = match self.resolver_fixup(parent, &dependency) {
             Ok(fixup) => fixup,
             Err(err) => return Poll::Ready(Err(err)),
         };
-        let effective_req = if let Some(fixup) = &fixup {
-            if let Err(err) = validate_version_req_subset(&fixup.narrow_to, &original_req) {
-                return Poll::Ready(Err(err).with_context(|| {
-                    format!(
-                        "resolver fixup for {} dependency {} narrows {} to {}",
-                        parent,
-                        dependency.name_in_toml(),
-                        original_req,
-                        fixup.narrow_to,
-                    )
-                }));
+
+        let mut effective_req = original_req.clone();
+        if let Some(fixup) = &fixup {
+            effective_req.comparators.push(semver::Comparator {
+                op: semver::Op::GreaterEq,
+                major: 0,
+                minor: Some(0),
+                patch: Some(0),
+                pre: semver::Prerelease::new("0.reindeer-explicit-narrow").unwrap(),
+            });
+            effective_req
+                .comparators
+                .extend_from_slice(&fixup.narrow_to.comparators);
+            if version_req_bounds(&effective_req).is_none() {
+                return Poll::Ready(Err(anyhow!(
+                    "resolver fixup for {} dependency {} narrows {} to {} which is unsatisfiable",
+                    parent,
+                    dependency.name_in_toml(),
+                    original_req,
+                    fixup.narrow_to,
+                )));
             }
-            fixup.narrow_to.clone()
-        } else {
-            original_req.clone()
-        };
+        }
 
         if fixup.is_none() && !version_req_is_broad(&effective_req) {
             return Poll::Ready(Ok(dependency));
@@ -149,7 +157,7 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
             let Some(narrowed_req) =
                 self.fresh_candidate_requirement(&dependency, &effective_req, candidates)
             else {
-                return Poll::Ready(Err(anyhow::anyhow!(
+                return Poll::Ready(Err(anyhow!(
                     "deterministic vendor could not find a stable or explicitly requested prerelease non-yanked candidate for broad indirect requirement {} {} from {}",
                     dependency.package_name(),
                     effective_req,
@@ -159,9 +167,6 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
             narrowed_req
         };
 
-        if let Err(err) = validate_version_req_subset(&narrowed_req, &effective_req) {
-            return Poll::Ready(Err(err));
-        }
         dependency.set_version_req(OptVersionReq::Req(narrowed_req));
         Poll::Ready(Ok(dependency))
     }
@@ -196,8 +201,17 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
         candidates.sort();
         while let Some(candidate) = candidates.pop() {
             if dependency.version_req().matches(&candidate) && effective_req.matches(&candidate) {
-                let narrowed_req = version_req_to_compatibility_lane(effective_req, &candidate);
-                assert!(narrowed_req.matches(&candidate));
+                let mut narrowed_req = effective_req.clone();
+                narrowed_req.comparators.push(semver::Comparator {
+                    op: semver::Op::GreaterEq,
+                    major: 0,
+                    minor: Some(0),
+                    patch: Some(0),
+                    pre: semver::Prerelease::new("0.reindeer-implicit-narrow").unwrap(),
+                });
+                narrowed_req
+                    .comparators
+                    .push(compatibility_lane_for_version(&candidate));
                 return Some(narrowed_req);
             }
         }
@@ -658,20 +672,6 @@ fn parse_dependency_req(dependency: &Dependency) -> anyhow::Result<VersionReq> {
             dependency.package_name(),
         )
     })
-}
-
-fn validate_version_req_subset(narrowed: &VersionReq, original: &VersionReq) -> anyhow::Result<()> {
-    let narrowed_bounds = version_req_bounds(narrowed)
-        .with_context(|| format!("failed to compute bounds for narrowed requirement {narrowed}"))?;
-    let original_bounds = version_req_bounds(original)
-        .with_context(|| format!("failed to compute bounds for original requirement {original}"))?;
-    if version_bounds_subset(&narrowed_bounds, &original_bounds) {
-        Ok(())
-    } else {
-        bail!(
-            "narrowed requirement {narrowed} allows versions outside original requirement {original}"
-        )
-    }
 }
 
 #[cfg(test)]
@@ -1612,7 +1612,7 @@ narrow_to = "0.10"
         assert!(matches!(second_pass_result, Poll::Ready(Ok(()))));
         assert_eq!(
             VersionReq::parse(&rewritten_req.unwrap()).unwrap(),
-            VersionReq::parse(">=2.0.0, <3.0.0").unwrap()
+            VersionReq::parse(">=1, <3, >=0.0.0-0.reindeer-implicit-narrow, ^2").unwrap()
         );
         assert!(second_pass_discovered_sources.borrow().is_empty());
     }
@@ -1820,8 +1820,14 @@ narrow_to = "1"
         );
 
         assert!(matches!(result, Poll::Ready(Ok(()))));
-        assert_eq!(dependency_reqs["http-02x"], "^0.2");
-        assert_eq!(dependency_reqs["http-1x"], "^1");
+        assert_eq!(
+            dependency_reqs["http-02x"],
+            ">=0.2, <0.4, >=0.0.0-0.reindeer-explicit-narrow, ^0.2",
+        );
+        assert_eq!(
+            dependency_reqs["http-1x"],
+            ">=1, <3, >=0.0.0-0.reindeer-explicit-narrow, ^1",
+        );
     }
 
     #[test]

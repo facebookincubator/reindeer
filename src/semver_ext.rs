@@ -7,7 +7,6 @@
 
 #![allow(clippy::manual_map)]
 
-use std::cmp;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
@@ -149,71 +148,22 @@ pub(crate) fn version_req_bounds(req: &VersionReq) -> Option<VersionBounds> {
     }
 }
 
-pub(crate) fn version_bounds_subset(narrowed: &VersionBounds, original: &VersionBounds) -> bool {
-    original.lower <= narrowed.lower && narrowed.upper <= original.upper
-}
-
-pub(crate) fn version_req_to_compatibility_lane(req: &VersionReq, version: &Version) -> VersionReq {
-    assert!(req.matches(version));
-
-    let original_bounds = version_req_bounds(req).expect("req is definitely satisfiable");
-
-    let compatibility_lane = Comparator {
+pub(crate) fn compatibility_lane_for_version(version: &Version) -> Comparator {
+    Comparator {
         op: Op::Caret,
         major: version.major,
-        minor: Some(if version.major == 0 { version.minor } else { 0 }),
-        patch: Some(if version.major == 0 && version.minor == 0 {
-            version.patch
+        minor: if version.major == 0 {
+            Some(version.minor)
         } else {
-            0
-        }),
-        pre: version.pre.clone(),
-    };
-    let (lane_lower, lane_upper) = caret_bounds(&compatibility_lane, &BTreeSet::new());
-
-    let lower = cmp::max(original_bounds.lower, lane_lower);
-    let upper = cmp::min(original_bounds.upper, lane_upper);
-    let mut compatibility_lane_req = VersionReq {
-        comparators: Vec::with_capacity(2),
-    };
-    compatibility_lane_req.comparators.push(Comparator {
-        op: if lower.exclusive {
-            Op::Greater
-        } else {
-            Op::GreaterEq
+            None
         },
-        major: lower.major,
-        minor: Some(lower.minor),
-        patch: Some(lower.patch),
-        pre: lower.pre,
-    });
-    if !upper.exclusive
-        && upper.pre.is_empty()
-        && let (next_patch, carry) = upper.patch.overflowing_add(1)
-        && let (next_minor, carry) = upper.minor.overflowing_add(u64::from(carry))
-        && let Some(next_major) = upper.major.checked_add(u64::from(carry))
-    {
-        compatibility_lane_req.comparators.push(Comparator {
-            op: Op::Less,
-            major: next_major,
-            minor: Some(next_minor),
-            patch: Some(next_patch),
-            pre: Prerelease::EMPTY,
-        });
-    } else {
-        compatibility_lane_req.comparators.push(Comparator {
-            op: if upper.exclusive {
-                Op::Less
-            } else {
-                Op::LessEq
-            },
-            major: upper.major,
-            minor: Some(upper.minor),
-            patch: Some(upper.patch),
-            pre: upper.pre,
-        });
+        patch: if version.major == 0 && version.minor == 0 {
+            Some(version.patch)
+        } else {
+            None
+        },
+        pre: Prerelease::EMPTY,
     }
-    compatibility_lane_req
 }
 
 pub(crate) fn version_req_is_broad(req: &VersionReq) -> bool {
@@ -577,12 +527,9 @@ mod tests {
         version_req_is_broad(&VersionReq::parse(req).unwrap())
     }
 
-    fn narrow(req: &str, version: &str) -> String {
-        version_req_to_compatibility_lane(
-            &VersionReq::parse(req).unwrap(),
-            &Version::parse(version).unwrap(),
-        )
-        .to_string()
+    fn narrow(version: &str) -> String {
+        let version = Version::parse(version).unwrap();
+        compatibility_lane_for_version(&version).to_string()
     }
 
     #[test]
@@ -611,17 +558,10 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_lane_narrowing_preserves_original_bounds() {
-        assert_eq!(narrow(">=1.4, <2.1", "2.0.3"), ">=2.0.0, <2.1.0");
-        assert_eq!(narrow(">=1.4, <3", "1.9.0"), ">=1.4.0, <2.0.0");
-        assert_eq!(narrow("*", "0.2.7"), ">=0.2.0, <0.3.0");
-        assert_eq!(narrow(">=0.0.1, <0.0.3", "0.0.2"), ">=0.0.2, <0.0.3");
-    }
-
-    #[test]
-    fn greater_than_partial_versions_follow_semver_semantics() {
-        assert_eq!(narrow(">1", "2.3.4"), ">=2.0.0, <3.0.0");
-        assert_eq!(narrow(">1.0", "1.3.4"), ">=1.1.0, <2.0.0");
-        assert_eq!(narrow(">1.0.0", "1.0.1"), ">=1.0.1, <2.0.0");
+    fn compatibility_lane_narrowing_follows_semver_semantics() {
+        assert_eq!(narrow("2.0.3"), "^2");
+        assert_eq!(narrow("0.2.7"), "^0.2");
+        assert_eq!(narrow("0.0.2"), "^0.0.2");
+        assert_eq!(narrow("0.1.2-alpha"), "^0.1");
     }
 }
