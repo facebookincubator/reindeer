@@ -24,6 +24,7 @@ use cargo::core::Package as CargoPackage;
 use cargo::core::PackageId;
 use cargo::core::SourceId;
 use cargo::core::Summary;
+use cargo::core::dependency::DepKind;
 use cargo::sources::IndexSummary;
 use cargo::sources::SourceConfigMap;
 use cargo::sources::source::MaybePackage;
@@ -127,7 +128,7 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
         mut dependency: Dependency,
     ) -> Poll<anyhow::Result<Dependency>> {
         self.record_dependency_source(dependency.source_id());
-        if !dependency.source_id().is_registry() {
+        if !dependency.source_id().is_registry() || dependency.kind() == DepKind::Development {
             return Poll::Ready(Ok(dependency));
         }
 
