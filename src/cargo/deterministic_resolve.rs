@@ -250,16 +250,16 @@ impl<'gctx> CargoSource for DeterministicSource<'gctx> {
         }
     }
 
-    fn download(&self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
-        self.delegate.download(pkg_id)
+    async fn download(&self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
+        self.delegate.download(pkg_id).await
     }
 
-    fn finish_download(
+    async fn finish_download(
         &self,
         pkg_id: PackageId,
         contents: Vec<u8>,
     ) -> anyhow::Result<CargoPackage> {
-        self.delegate.finish_download(pkg_id, contents)
+        self.delegate.finish_download(pkg_id, contents).await
     }
 
     fn fingerprint(&self, pkg: &CargoPackage) -> anyhow::Result<String> {
@@ -627,12 +627,16 @@ mod test {
             self.delegate.set_quiet(quiet);
         }
 
-        fn download(&self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
-            self.delegate.download(pkg_id)
+        async fn download(&self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
+            self.delegate.download(pkg_id).await
         }
 
-        fn finish_download(&self, pkg_id: PackageId, contents: Vec<u8>) -> anyhow::Result<Package> {
-            self.delegate.finish_download(pkg_id, contents)
+        async fn finish_download(
+            &self,
+            pkg_id: PackageId,
+            contents: Vec<u8>,
+        ) -> anyhow::Result<Package> {
+            self.delegate.finish_download(pkg_id, contents).await
         }
 
         fn fingerprint(&self, pkg: &Package) -> anyhow::Result<String> {
@@ -730,11 +734,11 @@ mod test {
 
         fn set_quiet(&mut self, _quiet: bool) {}
 
-        fn download(&self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
+        async fn download(&self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
             anyhow::bail!("unexpected download of {pkg_id}")
         }
 
-        fn finish_download(
+        async fn finish_download(
             &self,
             pkg_id: PackageId,
             _contents: Vec<u8>,

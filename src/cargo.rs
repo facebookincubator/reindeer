@@ -334,16 +334,22 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
         self.delegate.borrow_mut().set_quiet(quiet);
     }
 
-    fn download(&self, pkg_id: PackageId) -> anyhow::Result<cargo::sources::source::MaybePackage> {
-        self.delegate.borrow().download(pkg_id)
+    async fn download(
+        &self,
+        pkg_id: PackageId,
+    ) -> anyhow::Result<cargo::sources::source::MaybePackage> {
+        self.delegate.borrow().download(pkg_id).await
     }
 
-    fn finish_download(
+    async fn finish_download(
         &self,
         pkg_id: PackageId,
         contents: Vec<u8>,
     ) -> anyhow::Result<cargo::core::Package> {
-        self.delegate.borrow().finish_download(pkg_id, contents)
+        self.delegate
+            .borrow()
+            .finish_download(pkg_id, contents)
+            .await
     }
 
     fn fingerprint(&self, pkg: &cargo::core::Package) -> anyhow::Result<String> {
