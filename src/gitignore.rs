@@ -5,9 +5,11 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
+use anyhow::bail;
 use ignore::Match;
 use ignore::gitignore::Gitignore as Ignore;
 use ignore::gitignore::GitignoreBuilder;
@@ -88,17 +90,31 @@ pub(crate) fn load_gitignore(
 }
 
 fn push_matcher(matchers: &mut Vec<Ignore>, root: &Path, ignore_file: &Path) -> anyhow::Result<()> {
+    let content = match fs::read_to_string(ignore_file) {
+        Ok(file) => file,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => bail!("{}: {err}", ignore_file.display()),
+    };
+
     let mut builder = GitignoreBuilder::new(root);
-    if let Some(err) = builder.add(ignore_file) {
-        if is_not_found(&err) {
-            return Ok(());
+    for (i, line) in content.lines().enumerate() {
+        // Recognize reindeer-specific lines starting with "reindeer:". Example:
+        //
+        //    /vendor/
+        //    reindeer:!/vendor/
+        //
+        // In this use case, reindeer will unpack crate contents as if they were
+        // not ignored, but git will ignore them. Without the second line reindeer
+        // would not unpack any contents because unpacking skips ignored files.
+        let line = line.strip_prefix("reindeer:").unwrap_or(line);
+
+        if let Err(err) = builder.add_line(Some(ignore_file.to_path_buf()), line) {
+            log::warn!(
+                "Failed to read ignore file {} line {}: {err}",
+                ignore_file.display(),
+                i + 1,
+            );
         }
-        // Parse errors are per-line; valid patterns from the file remain usable.
-        log::warn!(
-            "Failed to read ignore file {}: {}",
-            ignore_file.display(),
-            err
-        );
     }
 
     let matcher = builder.build()?;
@@ -106,19 +122,6 @@ fn push_matcher(matchers: &mut Vec<Ignore>, root: &Path, ignore_file: &Path) -> 
         matchers.push(matcher);
     }
     Ok(())
-}
-
-fn is_not_found(mut err: &ignore::Error) -> bool {
-    loop {
-        match err {
-            ignore::Error::Io(err) => return err.kind() == ErrorKind::NotFound,
-            ignore::Error::WithPath {
-                path: _,
-                err: inner,
-            } => err = inner,
-            _ => return false,
-        }
-    }
 }
 
 #[cfg(test)]
