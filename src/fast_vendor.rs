@@ -335,7 +335,6 @@ fn fast_vendor(
 
         let original_source_config = cargo::sources::SourceConfigMap::empty(&gctx)?;
         let mut original_source_map = cargo::sources::source::SourceMap::new();
-        let yanked_whitelist = std::collections::HashSet::new();
         {
             let _lock = gctx.acquire_package_cache_lock(CacheLockMode::DownloadExclusive)?;
             for (index, source_id) in source_ids_to_load.iter().copied().enumerate() {
@@ -349,7 +348,7 @@ fn fast_vendor(
                     Box::new(git_source)
                 } else {
                     original_source_config
-                        .load(source_id, &yanked_whitelist)
+                        .load(source_id)
                         .with_context(|| format!("failed to load original source {source_id}"))?
                 };
                 original_source_map.insert(source);

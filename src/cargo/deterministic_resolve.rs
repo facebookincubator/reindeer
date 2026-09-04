@@ -9,7 +9,6 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::btree_map;
-use std::iter;
 use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -66,7 +65,13 @@ impl<'gctx> DeterministicSource<'gctx> {
 
 impl<'gctx> DeterministicSource<'gctx> {
     fn rewrite_index_summary(&self, summary: IndexSummary) -> anyhow::Result<IndexSummary> {
-        let rewritten_summary = self.rewrite_summary(summary.as_summary().clone())?;
+        let rewritten_summary = match &summary {
+            IndexSummary::Candidate(summary)
+            | IndexSummary::Yanked(summary)
+            | IndexSummary::Offline(summary)
+            | IndexSummary::Unsupported(summary, _)
+            | IndexSummary::Invalid(summary) => self.rewrite_summary(summary.clone())?,
+        };
         Ok(summary.map_summary(|_| rewritten_summary.clone()))
     }
 
@@ -273,17 +278,6 @@ impl<'gctx> CargoSource for DeterministicSource<'gctx> {
     fn describe(&self) -> String {
         self.delegate.describe()
     }
-
-    fn add_to_yanked_whitelist(&self, pkgs: &[PackageId]) {
-        self.delegate.add_to_yanked_whitelist(pkgs);
-        for source in self.candidate_sources.values() {
-            source.add_to_yanked_whitelist(pkgs);
-        }
-    }
-
-    async fn is_yanked(&self, pkg: PackageId) -> anyhow::Result<bool> {
-        self.delegate.is_yanked(pkg).await
-    }
 }
 
 pub(crate) fn resolve_ws_deterministically_with_original_sources<'gctx>(
@@ -310,7 +304,7 @@ pub(crate) fn resolve_ws_deterministically_with_original_sources<'gctx>(
             source_config.clone(),
         )?;
         for source_id in &source_ids {
-            let source = source_config.load(*source_id, &std::collections::HashSet::new())?;
+            let source = source_config.load(*source_id)?;
             registry.add_preloaded(Box::new(DeterministicSource::new(source, context.clone())));
         }
 
@@ -393,7 +387,6 @@ fn resolve_with_previous_allowing_locked_yanked<'gctx>(
                     "Allowing previously locked yanked package {} as resolver candidate",
                     package,
                 );
-                registry.add_to_yanked_whitelist(iter::once(package));
             }
         }
     }
@@ -650,14 +643,6 @@ mod test {
         fn describe(&self) -> String {
             self.delegate.describe()
         }
-
-        fn add_to_yanked_whitelist(&self, pkgs: &[PackageId]) {
-            self.delegate.add_to_yanked_whitelist(pkgs);
-        }
-
-        async fn is_yanked(&self, pkg: PackageId) -> anyhow::Result<bool> {
-            self.delegate.is_yanked(pkg).await
-        }
     }
 
     #[derive(Default)]
@@ -752,14 +737,6 @@ mod test {
 
         fn describe(&self) -> String {
             "recording source".to_owned()
-        }
-
-        fn add_to_yanked_whitelist(&self, pkgs: &[PackageId]) {
-            self.yanked_whitelist.borrow_mut().extend(pkgs);
-        }
-
-        async fn is_yanked(&self, pkg: PackageId) -> anyhow::Result<bool> {
-            Ok(self.yanked.contains(&pkg))
         }
     }
 
@@ -1024,17 +1001,22 @@ edition = "2021"
                 &dependency("root_dep", "=1.0.0", source_id),
                 QueryKind::Exact,
                 &mut |summary| {
-                    dependency_reqs = summary
-                        .as_summary()
-                        .dependencies()
-                        .iter()
-                        .map(|dependency| {
-                            (
-                                dependency.package_name().to_string(),
-                                dependency.version_req().to_string(),
-                            )
-                        })
-                        .collect();
+                    dependency_reqs = match summary {
+                        IndexSummary::Candidate(summary)
+                        | IndexSummary::Yanked(summary)
+                        | IndexSummary::Offline(summary)
+                        | IndexSummary::Unsupported(summary, _)
+                        | IndexSummary::Invalid(summary) => summary
+                            .dependencies()
+                            .iter()
+                            .map(|dependency| {
+                                (
+                                    dependency.package_name().to_string(),
+                                    dependency.version_req().to_string(),
+                                )
+                            })
+                            .collect(),
+                    };
                 },
             )
             .await
@@ -1085,11 +1067,15 @@ edition = "2021"
                 &dependency("root_dep", ">=1, <2", source_id),
                 QueryKind::Exact,
                 &mut |summary| {
-                    root_dep_req = Some(
-                        summary.as_summary().dependencies()[0]
-                            .version_req()
-                            .to_string(),
-                    );
+                    root_dep_req = Some(match summary {
+                        IndexSummary::Candidate(summary)
+                        | IndexSummary::Yanked(summary)
+                        | IndexSummary::Offline(summary)
+                        | IndexSummary::Unsupported(summary, _)
+                        | IndexSummary::Invalid(summary) => {
+                            summary.dependencies()[0].version_req().to_string()
+                        }
+                    });
                 },
             )
             .await
@@ -1100,11 +1086,15 @@ edition = "2021"
                 &dependency("other_dep", ">=1, <2", source_id),
                 QueryKind::Exact,
                 &mut |summary| {
-                    other_dep_req = Some(
-                        summary.as_summary().dependencies()[0]
-                            .version_req()
-                            .to_string(),
-                    );
+                    other_dep_req = Some(match summary {
+                        IndexSummary::Candidate(summary)
+                        | IndexSummary::Yanked(summary)
+                        | IndexSummary::Offline(summary)
+                        | IndexSummary::Unsupported(summary, _)
+                        | IndexSummary::Invalid(summary) => {
+                            summary.dependencies()[0].version_req().to_string()
+                        }
+                    });
                 },
             )
             .await
@@ -1387,11 +1377,15 @@ narrow_to = "0.10"
                 &dependency("b", "=0.10.0", alternate_source_id),
                 QueryKind::Exact,
                 &mut |summary| {
-                    rewritten_req = Some(
-                        summary.as_summary().dependencies()[0]
-                            .version_req()
-                            .to_string(),
-                    );
+                    rewritten_req = Some(match summary {
+                        IndexSummary::Candidate(summary)
+                        | IndexSummary::Yanked(summary)
+                        | IndexSummary::Offline(summary)
+                        | IndexSummary::Unsupported(summary, _)
+                        | IndexSummary::Invalid(summary) => {
+                            summary.dependencies()[0].version_req().to_string()
+                        }
+                    });
                 },
             )
             .await
@@ -1439,7 +1433,13 @@ narrow_to = "0.10"
                 &dependency("parent", "=1.0.0", registry_source_id),
                 QueryKind::Exact,
                 &mut |summary| {
-                    rewritten_dependency = Some(summary.as_summary().dependencies()[0].clone());
+                    rewritten_dependency = Some(match summary {
+                        IndexSummary::Candidate(summary)
+                        | IndexSummary::Yanked(summary)
+                        | IndexSummary::Offline(summary)
+                        | IndexSummary::Unsupported(summary, _)
+                        | IndexSummary::Invalid(summary) => summary.dependencies()[0].clone(),
+                    })
                 },
             )
             .await
@@ -1503,17 +1503,22 @@ narrow_to = "1"
                 &dependency("a", "=1.0.0", source_id),
                 QueryKind::Exact,
                 &mut |summary| {
-                    dependency_reqs = summary
-                        .as_summary()
-                        .dependencies()
-                        .iter()
-                        .map(|dependency| {
-                            (
-                                dependency.name_in_toml().to_string(),
-                                dependency.version_req().to_string(),
-                            )
-                        })
-                        .collect();
+                    dependency_reqs = match summary {
+                        IndexSummary::Candidate(summary)
+                        | IndexSummary::Yanked(summary)
+                        | IndexSummary::Offline(summary)
+                        | IndexSummary::Unsupported(summary, _)
+                        | IndexSummary::Invalid(summary) => summary
+                            .dependencies()
+                            .iter()
+                            .map(|dependency| {
+                                (
+                                    dependency.name_in_toml().to_string(),
+                                    dependency.version_req().to_string(),
+                                )
+                            })
+                            .collect(),
+                    };
                 },
             )
             .await

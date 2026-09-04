@@ -202,18 +202,17 @@ fn fast_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<
     // Instantiate package sources.
     let mut source_map = HashMap::default();
     let mut shared_sources = HashMap::default();
-    let yanked_whitelist = std::collections::HashSet::new();
     for pkg_id in resolve.iter() {
         let source_id = pkg_id.source_id();
         let hash_map::Entry::Vacant(entry) = source_map.entry(source_id) else {
             continue;
         };
-        let source = source_config.load(source_id, &yanked_whitelist)?;
+        let source = source_config.load(source_id)?;
         assert_eq!(source.source_id(), source_id);
         let replaced_source_id = source.replaced_source_id();
         let delegate = match shared_sources.entry(replaced_source_id) {
             hash_map::Entry::Vacant(entry) => {
-                let source = source_config.load(replaced_source_id, &yanked_whitelist)?;
+                let source = source_config.load(replaced_source_id)?;
                 assert_eq!(source.source_id(), replaced_source_id);
                 let rc = Rc::new(RefCell::new(source));
                 Rc::clone(entry.insert(rc))
@@ -365,15 +364,6 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
 
     fn describe(&self) -> String {
         self.delegate.borrow().describe()
-    }
-
-    fn add_to_yanked_whitelist(&self, pkgs: &[PackageId]) {
-        self.delegate.borrow().add_to_yanked_whitelist(pkgs);
-    }
-
-    #[allow(clippy::await_holding_refcell_ref)]
-    async fn is_yanked(&self, pkg: PackageId) -> anyhow::Result<bool> {
-        self.delegate.borrow().is_yanked(pkg).await
     }
 }
 
