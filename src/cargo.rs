@@ -317,6 +317,7 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
         self.delegate.borrow().requires_precise()
     }
 
+    #[allow(clippy::await_holding_refcell_ref)]
     async fn query(
         &self,
         dep: &cargo::core::Dependency,
@@ -334,6 +335,7 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
         self.delegate.borrow_mut().set_quiet(quiet);
     }
 
+    #[allow(clippy::await_holding_refcell_ref)]
     async fn download(
         &self,
         pkg_id: PackageId,
@@ -341,6 +343,7 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
         self.delegate.borrow().download(pkg_id).await
     }
 
+    #[allow(clippy::await_holding_refcell_ref)]
     async fn finish_download(
         &self,
         pkg_id: PackageId,
@@ -368,6 +371,7 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
         self.delegate.borrow().add_to_yanked_whitelist(pkgs);
     }
 
+    #[allow(clippy::await_holding_refcell_ref)]
     async fn is_yanked(&self, pkg: PackageId) -> anyhow::Result<bool> {
         self.delegate.borrow().is_yanked(pkg).await
     }
