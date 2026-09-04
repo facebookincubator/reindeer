@@ -29,6 +29,7 @@ use clap::Subcommand;
 use crate::buck::BuckPath;
 use crate::config::VendorConfig;
 use crate::config::VendorSourceConfig;
+use crate::generate_lockfile::generate_lockfile;
 use crate::path::buck_package;
 use crate::path::ensure_third_party_dir_exists;
 
@@ -92,6 +93,8 @@ pub struct Args {
 
 #[derive(Debug, Subcommand)]
 enum SubCommand {
+    /// Generate Cargo.lock using reindeer's deterministic resolver
+    GenerateLockfile,
     /// Vendor crate needed for build
     Vendor {
         /// Don't delete older crates in the vendor directory
@@ -216,6 +219,10 @@ fn try_main() -> anyhow::Result<()> {
     log::debug!("Args = {:#?}, paths {:#?}", args, paths);
 
     match &args.subcommand {
+        SubCommand::GenerateLockfile => {
+            let locked = false;
+            generate_lockfile(&config, &args, &paths, locked)?;
+        }
         SubCommand::Vendor {
             no_delete,
             #[cfg(fbcode_build)]
