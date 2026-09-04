@@ -13,9 +13,9 @@ use std::iter;
 use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::task::Poll;
 
 use anyhow::Context;
+use async_trait::async_trait;
 use cargo::core::Dependency;
 use cargo::core::Package as CargoPackage;
 use cargo::core::PackageId;
@@ -46,32 +46,32 @@ struct DeterministicSourceContext {
     discovered_sources: Rc<RefCell<BTreeSet<SourceId>>>,
 }
 
-struct DeterministicSource<'gctx, S> {
-    delegate: S,
+struct DeterministicSource<'gctx> {
+    delegate: Box<dyn CargoSource + 'gctx>,
     context: DeterministicSourceContext,
     candidate_sources: HashMap<SourceId, Box<dyn CargoSource + 'gctx>>,
-    fixup_cache: BTreeMap<PackageId, BTreeMap<String, ResolverDependencyFixup>>,
+    fixup_cache: RefCell<BTreeMap<PackageId, BTreeMap<String, ResolverDependencyFixup>>>,
 }
 
-impl<'gctx, S> DeterministicSource<'gctx, S> {
-    fn new(delegate: S, context: DeterministicSourceContext) -> Self {
+impl<'gctx> DeterministicSource<'gctx> {
+    fn new(delegate: Box<dyn CargoSource + 'gctx>, context: DeterministicSourceContext) -> Self {
         Self {
             delegate,
             context,
             candidate_sources: HashMap::default(),
-            fixup_cache: BTreeMap::new(),
+            fixup_cache: RefCell::new(BTreeMap::new()),
         }
     }
 }
 
-impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
-    fn rewrite_index_summary(&mut self, summary: IndexSummary) -> anyhow::Result<IndexSummary> {
+impl<'gctx> DeterministicSource<'gctx> {
+    fn rewrite_index_summary(&self, summary: IndexSummary) -> anyhow::Result<IndexSummary> {
         let rewritten_summary = self.rewrite_summary(summary.as_summary().clone())?;
         Ok(summary.map_summary(|_| rewritten_summary.clone()))
     }
 
     fn rewrite_summary(
-        &mut self,
+        &self,
         summary: cargo::core::Summary,
     ) -> anyhow::Result<cargo::core::Summary> {
         let parent = summary.package_id();
@@ -89,7 +89,7 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
     }
 
     fn rewrite_dependency(
-        &mut self,
+        &self,
         parent: PackageId,
         mut dependency: Dependency,
     ) -> anyhow::Result<Dependency> {
@@ -164,11 +164,12 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
     }
 
     fn resolver_fixup(
-        &mut self,
+        &self,
         parent: PackageId,
         dependency: &Dependency,
     ) -> anyhow::Result<Option<ResolverDependencyFixup>> {
-        let fixups = match self.fixup_cache.entry(parent) {
+        let mut fixup_cache = self.fixup_cache.borrow_mut();
+        let fixups = match fixup_cache.entry(parent) {
             btree_map::Entry::Occupied(entry) => entry.into_mut(),
             btree_map::Entry::Vacant(entry) => {
                 let fixups = resolver_fixups_for_package(
@@ -193,7 +194,8 @@ impl<'gctx, S: CargoSource> DeterministicSource<'gctx, S> {
     }
 }
 
-impl<'gctx, S: CargoSource> CargoSource for DeterministicSource<'gctx, S> {
+#[async_trait(?Send)]
+impl<'gctx> CargoSource for DeterministicSource<'gctx> {
     fn source_id(&self) -> SourceId {
         self.delegate.source_id()
     }
@@ -210,20 +212,18 @@ impl<'gctx, S: CargoSource> CargoSource for DeterministicSource<'gctx, S> {
         self.delegate.requires_precise()
     }
 
-    fn query(
-        &mut self,
+    async fn query(
+        &self,
         dep: &Dependency,
         kind: QueryKind,
         f: &mut dyn FnMut(IndexSummary),
-    ) -> Poll<anyhow::Result<()>> {
+    ) -> anyhow::Result<()> {
         let mut summaries = Vec::new();
-        match self.delegate.query(dep, kind, &mut |summary| {
-            summaries.push(summary);
-        }) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-            Poll::Pending => return Poll::Pending,
-        }
+        self.delegate
+            .query(dep, kind, &mut |summary| {
+                summaries.push(summary);
+            })
+            .await?;
 
         let mut rewritten = Vec::with_capacity(summaries.len());
         for summary in summaries {
@@ -233,12 +233,12 @@ impl<'gctx, S: CargoSource> CargoSource for DeterministicSource<'gctx, S> {
         for summary in rewritten {
             f(summary);
         }
-        Poll::Ready(Ok(()))
+        Ok(())
     }
 
-    fn invalidate_cache(&mut self) {
+    fn invalidate_cache(&self) {
         self.delegate.invalidate_cache();
-        for source in self.candidate_sources.values_mut() {
+        for source in self.candidate_sources.values() {
             source.invalidate_cache();
         }
     }
@@ -250,12 +250,12 @@ impl<'gctx, S: CargoSource> CargoSource for DeterministicSource<'gctx, S> {
         }
     }
 
-    fn download(&mut self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
+    fn download(&self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
         self.delegate.download(pkg_id)
     }
 
     fn finish_download(
-        &mut self,
+        &self,
         pkg_id: PackageId,
         contents: Vec<u8>,
     ) -> anyhow::Result<CargoPackage> {
@@ -266,31 +266,23 @@ impl<'gctx, S: CargoSource> CargoSource for DeterministicSource<'gctx, S> {
         self.delegate.fingerprint(pkg)
     }
 
+    fn verify(&self, pkg: PackageId) -> anyhow::Result<()> {
+        self.delegate.verify(pkg)
+    }
+
     fn describe(&self) -> String {
         self.delegate.describe()
     }
 
-    fn add_to_yanked_whitelist(&mut self, pkgs: &[PackageId]) {
+    fn add_to_yanked_whitelist(&self, pkgs: &[PackageId]) {
         self.delegate.add_to_yanked_whitelist(pkgs);
-        for source in self.candidate_sources.values_mut() {
+        for source in self.candidate_sources.values() {
             source.add_to_yanked_whitelist(pkgs);
         }
     }
 
-    fn is_yanked(&mut self, pkg: PackageId) -> Poll<anyhow::Result<bool>> {
-        self.delegate.is_yanked(pkg)
-    }
-
-    fn block_until_ready(&mut self) -> anyhow::Result<()> {
-        self.delegate.block_until_ready()?;
-        for source in self.candidate_sources.values_mut() {
-            source.block_until_ready()?;
-        }
-        Ok(())
-    }
-
-    fn verify(&self, pkg: PackageId) -> anyhow::Result<()> {
-        self.delegate.verify(pkg)
+    async fn is_yanked(&self, pkg: PackageId) -> anyhow::Result<bool> {
+        self.delegate.is_yanked(pkg).await
     }
 }
 
@@ -414,8 +406,8 @@ fn deterministic_source_ids<'gctx>(
 ) -> anyhow::Result<BTreeSet<SourceId>> {
     let mut sources = deterministic_initial_sources(workspace, previous_resolve, gctx)?;
     for patch_dependencies in workspace.root_patch()?.values() {
-        for dependency in patch_dependencies {
-            sources.insert(dependency.source_id());
+        for patch in patch_dependencies {
+            sources.insert(patch.dep.source_id());
         }
     }
     Ok(sources)
@@ -494,8 +486,8 @@ mod test {
     use std::fs;
     use std::path::PathBuf;
     use std::rc::Rc;
-    use std::task::Poll;
 
+    use async_trait::async_trait;
     use cargo::core::Dependency;
     use cargo::core::Package;
     use cargo::core::PackageId;
@@ -575,6 +567,7 @@ mod test {
         }
     }
 
+    #[async_trait(?Send)]
     impl<S: CargoSource> CargoSource for ConstrainedSource<S> {
         fn source_id(&self) -> SourceId {
             self.delegate.source_id()
@@ -592,35 +585,41 @@ mod test {
             self.delegate.requires_precise()
         }
 
-        fn query(
-            &mut self,
+        async fn query(
+            &self,
             dep: &Dependency,
             kind: QueryKind,
             f: &mut dyn FnMut(IndexSummary),
-        ) -> Poll<anyhow::Result<()>> {
+        ) -> anyhow::Result<()> {
             let constraints = &self.constraints;
-            self.delegate.query(dep, kind, &mut |summary| {
-                f(summary.map_summary(|summary| {
-                    let Some(package_constraints) = constraints.get(&summary.package_id()) else {
-                        return summary;
-                    };
-                    summary.map_dependencies(|mut dependency| {
-                        if let Some(constraint) = package_constraints.iter().find(|constraint| {
-                            dependency.package_name().as_str() == constraint.package_name
-                                && dependency.source_id() == constraint.source_id
-                                && dependency.version_req().to_string() == constraint.original_req
-                        }) {
-                            dependency.set_version_req(OptVersionReq::Req(
-                                constraint.narrowed_req.clone(),
-                            ));
-                        }
-                        dependency
-                    })
-                }));
-            })
+            self.delegate
+                .query(dep, kind, &mut |summary| {
+                    f(summary.map_summary(|summary| {
+                        let Some(package_constraints) = constraints.get(&summary.package_id())
+                        else {
+                            return summary;
+                        };
+                        summary.map_dependencies(|mut dependency| {
+                            if let Some(constraint) =
+                                package_constraints.iter().find(|constraint| {
+                                    dependency.package_name().as_str() == constraint.package_name
+                                        && dependency.source_id() == constraint.source_id
+                                        && dependency.version_req().to_string()
+                                            == constraint.original_req
+                                })
+                            {
+                                dependency.set_version_req(OptVersionReq::Req(
+                                    constraint.narrowed_req.clone(),
+                                ));
+                            }
+                            dependency
+                        })
+                    }));
+                })
+                .await
         }
 
-        fn invalidate_cache(&mut self) {
+        fn invalidate_cache(&self) {
             self.delegate.invalidate_cache();
         }
 
@@ -628,15 +627,11 @@ mod test {
             self.delegate.set_quiet(quiet);
         }
 
-        fn download(&mut self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
+        fn download(&self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
             self.delegate.download(pkg_id)
         }
 
-        fn finish_download(
-            &mut self,
-            pkg_id: PackageId,
-            contents: Vec<u8>,
-        ) -> anyhow::Result<Package> {
+        fn finish_download(&self, pkg_id: PackageId, contents: Vec<u8>) -> anyhow::Result<Package> {
             self.delegate.finish_download(pkg_id, contents)
         }
 
@@ -644,24 +639,20 @@ mod test {
             self.delegate.fingerprint(pkg)
         }
 
+        fn verify(&self, pkg: PackageId) -> anyhow::Result<()> {
+            self.delegate.verify(pkg)
+        }
+
         fn describe(&self) -> String {
             self.delegate.describe()
         }
 
-        fn add_to_yanked_whitelist(&mut self, pkgs: &[PackageId]) {
+        fn add_to_yanked_whitelist(&self, pkgs: &[PackageId]) {
             self.delegate.add_to_yanked_whitelist(pkgs);
         }
 
-        fn is_yanked(&mut self, pkg: PackageId) -> Poll<anyhow::Result<bool>> {
-            self.delegate.is_yanked(pkg)
-        }
-
-        fn block_until_ready(&mut self) -> anyhow::Result<()> {
-            self.delegate.block_until_ready()
-        }
-
-        fn verify(&self, pkg: PackageId) -> anyhow::Result<()> {
-            self.delegate.verify(pkg)
+        async fn is_yanked(&self, pkg: PackageId) -> anyhow::Result<bool> {
+            self.delegate.is_yanked(pkg).await
         }
     }
 
@@ -670,8 +661,8 @@ mod test {
         source_id: Option<SourceId>,
         summaries: Vec<Summary>,
         yanked: BTreeSet<PackageId>,
-        yanked_whitelist: BTreeSet<PackageId>,
-        queried_reqs: Vec<(String, String, Option<Version>)>,
+        yanked_whitelist: RefCell<BTreeSet<PackageId>>,
+        queried_reqs: RefCell<Vec<(String, String, Option<Version>)>>,
     }
 
     impl RecordingSource {
@@ -680,12 +671,13 @@ mod test {
                 source_id: Some(source_id),
                 summaries,
                 yanked: BTreeSet::new(),
-                yanked_whitelist: BTreeSet::new(),
-                queried_reqs: Vec::new(),
+                yanked_whitelist: RefCell::new(BTreeSet::new()),
+                queried_reqs: RefCell::new(Vec::new()),
             }
         }
     }
 
+    #[async_trait(?Send)]
     impl CargoSource for RecordingSource {
         fn source_id(&self) -> SourceId {
             self.source_id.expect("source id must be set")
@@ -699,13 +691,13 @@ mod test {
             false
         }
 
-        fn query(
-            &mut self,
+        async fn query(
+            &self,
             dep: &Dependency,
             kind: QueryKind,
             f: &mut dyn FnMut(IndexSummary),
-        ) -> Poll<anyhow::Result<()>> {
-            self.queried_reqs.push((
+        ) -> anyhow::Result<()> {
+            self.queried_reqs.borrow_mut().push((
                 dep.package_name().as_str().to_owned(),
                 dep.version_req().to_string(),
                 dep.version_req().locked_version().cloned(),
@@ -722,7 +714,7 @@ mod test {
                     let package_id = summary.package_id();
                     if self.yanked.contains(&package_id) {
                         if kind == QueryKind::RejectedVersions
-                            || self.yanked_whitelist.contains(&package_id)
+                            || self.yanked_whitelist.borrow().contains(&package_id)
                         {
                             f(IndexSummary::Yanked(summary.clone()));
                         }
@@ -731,19 +723,19 @@ mod test {
                     }
                 }
             }
-            Poll::Ready(Ok(()))
+            Ok(())
         }
 
-        fn invalidate_cache(&mut self) {}
+        fn invalidate_cache(&self) {}
 
         fn set_quiet(&mut self, _quiet: bool) {}
 
-        fn download(&mut self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
+        fn download(&self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
             anyhow::bail!("unexpected download of {pkg_id}")
         }
 
         fn finish_download(
-            &mut self,
+            &self,
             pkg_id: PackageId,
             _contents: Vec<u8>,
         ) -> anyhow::Result<Package> {
@@ -758,20 +750,12 @@ mod test {
             "recording source".to_owned()
         }
 
-        fn add_to_yanked_whitelist(&mut self, pkgs: &[PackageId]) {
-            self.yanked_whitelist.extend(pkgs);
+        fn add_to_yanked_whitelist(&self, pkgs: &[PackageId]) {
+            self.yanked_whitelist.borrow_mut().extend(pkgs);
         }
 
-        fn is_yanked(&mut self, pkg: PackageId) -> Poll<anyhow::Result<bool>> {
-            Poll::Ready(Ok(self.yanked.contains(&pkg)))
-        }
-
-        fn block_until_ready(&mut self) -> anyhow::Result<()> {
-            Ok(())
-        }
-
-        fn verify(&self, _pkg: PackageId) -> anyhow::Result<()> {
-            Ok(())
+        async fn is_yanked(&self, pkg: PackageId) -> anyhow::Result<bool> {
+            Ok(self.yanked.contains(&pkg))
         }
     }
 
@@ -917,7 +901,7 @@ git_parent = { git = "https://example.com/git-parent.git", rev = "0123456789abcd
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
@@ -947,7 +931,7 @@ edition = "2021"
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
@@ -998,8 +982,8 @@ edition = "2021"
         assert!(!sources.contains(&git_source_id));
     }
 
-    #[test]
-    fn test_constrained_source_narrows_parent_dependencies() {
+    #[tokio::test]
+    async fn test_constrained_source_narrows_parent_dependencies() {
         let source_id = registry_source_id();
         let delegate = RecordingSource::new(
             source_id,
@@ -1028,27 +1012,29 @@ edition = "2021"
             ),
             resolver_constraint("root_dep", "1.0.0", "beta", ">=1, <3", "^2", source_id),
         ];
-        let mut source = ConstrainedSource::new(delegate, constraints);
+        let source = ConstrainedSource::new(delegate, constraints);
 
         let mut dependency_reqs = Vec::new();
-        let result = source.query(
-            &dependency("root_dep", "=1.0.0", source_id),
-            QueryKind::Exact,
-            &mut |summary| {
-                dependency_reqs = summary
-                    .as_summary()
-                    .dependencies()
-                    .iter()
-                    .map(|dependency| {
-                        (
-                            dependency.package_name().to_string(),
-                            dependency.version_req().to_string(),
-                        )
-                    })
-                    .collect();
-            },
-        );
-        assert!(matches!(result, Poll::Ready(Ok(()))));
+        source
+            .query(
+                &dependency("root_dep", "=1.0.0", source_id),
+                QueryKind::Exact,
+                &mut |summary| {
+                    dependency_reqs = summary
+                        .as_summary()
+                        .dependencies()
+                        .iter()
+                        .map(|dependency| {
+                            (
+                                dependency.package_name().to_string(),
+                                dependency.version_req().to_string(),
+                            )
+                        })
+                        .collect();
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(
             dependency_reqs,
             vec![
@@ -1059,8 +1045,8 @@ edition = "2021"
         );
     }
 
-    #[test]
-    fn test_constrained_source_scopes_constraints_to_parent() {
+    #[tokio::test]
+    async fn test_constrained_source_scopes_constraints_to_parent() {
         let source_id = registry_source_id();
         let delegate = RecordingSource::new(
             source_id,
@@ -1087,35 +1073,39 @@ edition = "2021"
             "^0.1",
             source_id,
         )];
-        let mut source = ConstrainedSource::new(delegate, constraints);
+        let source = ConstrainedSource::new(delegate, constraints);
 
         let mut root_dep_req = None;
-        let root_result = source.query(
-            &dependency("root_dep", ">=1, <2", source_id),
-            QueryKind::Exact,
-            &mut |summary| {
-                root_dep_req = Some(
-                    summary.as_summary().dependencies()[0]
-                        .version_req()
-                        .to_string(),
-                );
-            },
-        );
+        source
+            .query(
+                &dependency("root_dep", ">=1, <2", source_id),
+                QueryKind::Exact,
+                &mut |summary| {
+                    root_dep_req = Some(
+                        summary.as_summary().dependencies()[0]
+                            .version_req()
+                            .to_string(),
+                    );
+                },
+            )
+            .await
+            .unwrap();
         let mut other_dep_req = None;
-        let other_result = source.query(
-            &dependency("other_dep", ">=1, <2", source_id),
-            QueryKind::Exact,
-            &mut |summary| {
-                other_dep_req = Some(
-                    summary.as_summary().dependencies()[0]
-                        .version_req()
-                        .to_string(),
-                );
-            },
-        );
+        source
+            .query(
+                &dependency("other_dep", ">=1, <2", source_id),
+                QueryKind::Exact,
+                &mut |summary| {
+                    other_dep_req = Some(
+                        summary.as_summary().dependencies()[0]
+                            .version_req()
+                            .to_string(),
+                    );
+                },
+            )
+            .await
+            .unwrap();
 
-        assert!(matches!(root_result, Poll::Ready(Ok(()))));
-        assert!(matches!(other_result, Poll::Ready(Ok(()))));
         assert_eq!(root_dep_req.as_deref(), Some("^0.1"));
         assert_eq!(other_dep_req.as_deref(), Some(">=0.1, <0.3"));
     }
@@ -1141,7 +1131,7 @@ root_dep = "=1.0.0"
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
@@ -1248,7 +1238,7 @@ narrow_to = "0.10"
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
@@ -1265,7 +1255,7 @@ narrow_to = "0.10"
             discovered_sources,
         );
         registry.add_preloaded(Box::new(DeterministicSource::new(
-            RecordingSource::new(
+            Box::new(RecordingSource::new(
                 source_id,
                 vec![
                     summary_with_deps(
@@ -1284,7 +1274,7 @@ narrow_to = "0.10"
                     summary("c", "1.0.0", source_id),
                     summary("c", "2.0.0", source_id),
                 ],
-            ),
+            )),
             context,
         )));
 
@@ -1313,8 +1303,8 @@ narrow_to = "0.10"
         assert_eq!(resolved["c"], "2.0.0");
     }
 
-    #[test]
-    fn test_deterministic_source_discovers_and_rewrites_alternate_registry_sources() {
+    #[tokio::test]
+    async fn test_deterministic_source_discovers_and_rewrites_alternate_registry_sources() {
         let tempdir = tempfile::tempdir().unwrap();
         let cargo_home = tempdir.path().join(".cargo");
         fs::create_dir_all(tempdir.path().join("fixups/a")).unwrap();
@@ -1327,7 +1317,7 @@ narrow_to = "0.10"
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
@@ -1337,8 +1327,8 @@ narrow_to = "0.10"
             SourceId::from_url("registry+https://example.com/alt-index").unwrap();
 
         let first_pass_discovered_sources = Rc::new(RefCell::new(BTreeSet::new()));
-        let mut first_pass_source = DeterministicSource::new(
-            RecordingSource::new(
+        let first_pass_source = DeterministicSource::new(
+            Box::new(RecordingSource::new(
                 primary_source_id,
                 vec![summary_with_deps(
                     "a",
@@ -1346,27 +1336,29 @@ narrow_to = "0.10"
                     primary_source_id,
                     vec![dependency("b", ">=0.8, <0.12", alternate_source_id)],
                 )],
-            ),
+            )),
             deterministic_source_context(
                 tempdir.path().to_owned(),
                 [primary_source_id],
                 Rc::clone(&first_pass_discovered_sources),
             ),
         );
-        let first_pass_result = first_pass_source.query(
-            &dependency("a", "=1.0.0", primary_source_id),
-            QueryKind::Exact,
-            &mut |_| {},
-        );
-        assert!(matches!(first_pass_result, Poll::Ready(Ok(()))));
+        first_pass_source
+            .query(
+                &dependency("a", "=1.0.0", primary_source_id),
+                QueryKind::Exact,
+                &mut |_| {},
+            )
+            .await
+            .unwrap();
         assert_eq!(
             first_pass_discovered_sources.borrow().clone(),
             BTreeSet::from([alternate_source_id])
         );
 
         let second_pass_discovered_sources = Rc::new(RefCell::new(BTreeSet::new()));
-        let mut second_pass_source = DeterministicSource::new(
-            RecordingSource::new(
+        let second_pass_source = DeterministicSource::new(
+            Box::new(RecordingSource::new(
                 alternate_source_id,
                 vec![
                     summary_with_deps(
@@ -1378,7 +1370,7 @@ narrow_to = "0.10"
                     summary("c", "1.0.0", alternate_source_id),
                     summary("c", "2.0.0", alternate_source_id),
                 ],
-            ),
+            )),
             deterministic_source_context(
                 tempdir.path().to_owned(),
                 [primary_source_id, alternate_source_id],
@@ -1386,18 +1378,20 @@ narrow_to = "0.10"
             ),
         );
         let mut rewritten_req = None;
-        let second_pass_result = second_pass_source.query(
-            &dependency("b", "=0.10.0", alternate_source_id),
-            QueryKind::Exact,
-            &mut |summary| {
-                rewritten_req = Some(
-                    summary.as_summary().dependencies()[0]
-                        .version_req()
-                        .to_string(),
-                );
-            },
-        );
-        assert!(matches!(second_pass_result, Poll::Ready(Ok(()))));
+        second_pass_source
+            .query(
+                &dependency("b", "=0.10.0", alternate_source_id),
+                QueryKind::Exact,
+                &mut |summary| {
+                    rewritten_req = Some(
+                        summary.as_summary().dependencies()[0]
+                            .version_req()
+                            .to_string(),
+                    );
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(
             VersionReq::parse(&rewritten_req.unwrap()).unwrap(),
             VersionReq::parse(">=1, <3, >=0.0.0-0.reindeer-implicit-narrow, ^2").unwrap()
@@ -1405,12 +1399,12 @@ narrow_to = "0.10"
         assert!(second_pass_discovered_sources.borrow().is_empty());
     }
 
-    #[test]
-    fn test_deterministic_source_discovers_git_dependency_sources_without_rewriting_edge() {
+    #[tokio::test]
+    async fn test_deterministic_source_discovers_git_dependency_sources_without_rewriting_edge() {
         let tempdir = tempfile::tempdir().unwrap();
         let cargo_home = tempdir.path().join(".cargo");
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
@@ -1418,8 +1412,8 @@ narrow_to = "0.10"
         let registry_source_id = SourceId::crates_io(&gctx).unwrap();
         let git_source_id = git_source_id();
         let discovered_sources = Rc::new(RefCell::new(BTreeSet::new()));
-        let mut source = DeterministicSource::new(
-            RecordingSource::new(
+        let source = DeterministicSource::new(
+            Box::new(RecordingSource::new(
                 registry_source_id,
                 vec![summary_with_deps(
                     "parent",
@@ -1427,7 +1421,7 @@ narrow_to = "0.10"
                     registry_source_id,
                     vec![dependency("git_child", "=0.1.0", git_source_id)],
                 )],
-            ),
+            )),
             deterministic_source_context(
                 tempdir.path().to_owned(),
                 [registry_source_id],
@@ -1436,15 +1430,17 @@ narrow_to = "0.10"
         );
 
         let mut rewritten_dependency = None;
-        let result = source.query(
-            &dependency("parent", "=1.0.0", registry_source_id),
-            QueryKind::Exact,
-            &mut |summary| {
-                rewritten_dependency = Some(summary.as_summary().dependencies()[0].clone());
-            },
-        );
+        source
+            .query(
+                &dependency("parent", "=1.0.0", registry_source_id),
+                QueryKind::Exact,
+                &mut |summary| {
+                    rewritten_dependency = Some(summary.as_summary().dependencies()[0].clone());
+                },
+            )
+            .await
+            .unwrap();
 
-        assert!(matches!(result, Poll::Ready(Ok(()))));
         let rewritten_dependency = rewritten_dependency.unwrap();
         assert_eq!(rewritten_dependency.source_id(), git_source_id);
         assert_eq!(rewritten_dependency.version_req().to_string(), "=0.1.0");
@@ -1454,8 +1450,8 @@ narrow_to = "0.10"
         );
     }
 
-    #[test]
-    fn test_resolver_fixup_uses_dependency_key_for_renamed_dependency_edges() {
+    #[tokio::test]
+    async fn test_resolver_fixup_uses_dependency_key_for_renamed_dependency_edges() {
         let tempdir = tempfile::tempdir().unwrap();
         let cargo_home = tempdir.path().join(".cargo");
         fs::create_dir_all(tempdir.path().join("fixups/a")).unwrap();
@@ -1471,14 +1467,14 @@ narrow_to = "1"
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
             .unwrap();
         let source_id = SourceId::crates_io(&gctx).unwrap();
-        let mut source = DeterministicSource::new(
-            RecordingSource::new(
+        let source = DeterministicSource::new(
+            Box::new(RecordingSource::new(
                 source_id,
                 vec![summary_with_deps(
                     "a",
@@ -1489,7 +1485,7 @@ narrow_to = "1"
                         renamed_dependency("http-1x", "http", ">=1, <3", source_id),
                     ],
                 )],
-            ),
+            )),
             deterministic_source_context(
                 tempdir.path().to_owned(),
                 [source_id],
@@ -1498,25 +1494,27 @@ narrow_to = "1"
         );
 
         let mut dependency_reqs = BTreeMap::new();
-        let result = source.query(
-            &dependency("a", "=1.0.0", source_id),
-            QueryKind::Exact,
-            &mut |summary| {
-                dependency_reqs = summary
-                    .as_summary()
-                    .dependencies()
-                    .iter()
-                    .map(|dependency| {
-                        (
-                            dependency.name_in_toml().to_string(),
-                            dependency.version_req().to_string(),
-                        )
-                    })
-                    .collect();
-            },
-        );
+        source
+            .query(
+                &dependency("a", "=1.0.0", source_id),
+                QueryKind::Exact,
+                &mut |summary| {
+                    dependency_reqs = summary
+                        .as_summary()
+                        .dependencies()
+                        .iter()
+                        .map(|dependency| {
+                            (
+                                dependency.name_in_toml().to_string(),
+                                dependency.version_req().to_string(),
+                            )
+                        })
+                        .collect();
+                },
+            )
+            .await
+            .unwrap();
 
-        assert!(matches!(result, Poll::Ready(Ok(()))));
         assert_eq!(
             dependency_reqs["http-02x"],
             ">=0.2, <0.4, >=0.0.0-0.reindeer-explicit-narrow, ^0.2",
@@ -1561,7 +1559,7 @@ root_dep = "=1.0.0"
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
@@ -1669,7 +1667,7 @@ alpha = { path = "alpha_patch" }
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
@@ -1760,7 +1758,7 @@ root_dep = "=1.0.0"
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
@@ -1838,7 +1836,7 @@ root_dep = "=1.0.0"
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
@@ -1928,7 +1926,7 @@ parent_right = "=1.0.0"
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
@@ -2038,7 +2036,7 @@ alpha = "1"
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])
@@ -2117,7 +2115,7 @@ alpha = "1"
         )
         .unwrap();
 
-        let shell = cargo::core::Shell::new();
+        let shell = cargo_util_terminal::Shell::new();
         let mut gctx =
             cargo::GlobalContext::new(shell, tempdir.path().to_owned(), cargo_home.clone());
         gctx.configure(0, true, None, false, false, false, &None, &[], &[])

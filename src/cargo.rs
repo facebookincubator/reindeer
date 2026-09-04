@@ -27,11 +27,11 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 use std::rc::Rc;
-use std::task::Poll;
 use std::thread;
 
 use anyhow::Context;
 use anyhow::bail;
+use async_trait::async_trait;
 use cargo::core::PackageId;
 use cargo::util::interning::InternedString;
 use foldhash::HashMap;
@@ -127,7 +127,7 @@ pub(crate) fn make_gctx(
     paths: &Paths,
     props: GctxProperties,
 ) -> anyhow::Result<cargo::GlobalContext> {
-    let shell = cargo::core::Shell::new();
+    let shell = cargo_util_terminal::Shell::new();
     let cwd = paths.third_party_dir.clone();
     let cargo_home = paths.cargo_home.clone();
     let mut gctx = cargo::GlobalContext::new(shell, cwd, cargo_home);
@@ -230,8 +230,7 @@ fn fast_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<
     // Load packages from each source into package registry.
     let mut registry =
         cargo::core::registry::PackageRegistry::new_with_source_config(&gctx, source_config)?;
-    for mut source in source_map.into_values() {
-        cargo::sources::source::Source::block_until_ready(&mut source)?;
+    for source in source_map.into_values() {
         registry.add_preloaded(Box::new(source));
     }
 
@@ -304,6 +303,7 @@ pub struct SharedSource<'gctx> {
     delegate: Rc<RefCell<Box<dyn cargo::sources::source::Source + 'gctx>>>,
 }
 
+#[async_trait(?Send)]
 impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
     fn source_id(&self) -> cargo::core::SourceId {
         self.delegate.borrow().source_id()
@@ -317,60 +317,53 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
         self.delegate.borrow().requires_precise()
     }
 
-    fn query(
-        &mut self,
+    async fn query(
+        &self,
         dep: &cargo::core::Dependency,
         kind: cargo::sources::source::QueryKind,
         f: &mut dyn FnMut(cargo::sources::IndexSummary),
-    ) -> Poll<anyhow::Result<()>> {
-        self.delegate.borrow_mut().query(dep, kind, f)
+    ) -> anyhow::Result<()> {
+        self.delegate.borrow().query(dep, kind, f).await
     }
 
-    fn invalidate_cache(&mut self) {
-        self.delegate.borrow_mut().invalidate_cache();
+    fn invalidate_cache(&self) {
+        self.delegate.borrow().invalidate_cache();
     }
 
     fn set_quiet(&mut self, quiet: bool) {
         self.delegate.borrow_mut().set_quiet(quiet);
     }
 
-    fn download(
-        &mut self,
-        pkg_id: PackageId,
-    ) -> anyhow::Result<cargo::sources::source::MaybePackage> {
-        self.delegate.borrow_mut().download(pkg_id)
+    fn download(&self, pkg_id: PackageId) -> anyhow::Result<cargo::sources::source::MaybePackage> {
+        self.delegate.borrow().download(pkg_id)
     }
 
     fn finish_download(
-        &mut self,
+        &self,
         pkg_id: PackageId,
         contents: Vec<u8>,
     ) -> anyhow::Result<cargo::core::Package> {
-        self.delegate.borrow_mut().finish_download(pkg_id, contents)
+        self.delegate.borrow().finish_download(pkg_id, contents)
     }
 
     fn fingerprint(&self, pkg: &cargo::core::Package) -> anyhow::Result<String> {
         self.delegate.borrow().fingerprint(pkg)
     }
 
+    fn verify(&self, pkg: PackageId) -> anyhow::Result<()> {
+        self.delegate.borrow().verify(pkg)
+    }
+
     fn describe(&self) -> String {
         self.delegate.borrow().describe()
     }
 
-    fn add_to_yanked_whitelist(&mut self, pkgs: &[PackageId]) {
-        self.delegate.borrow_mut().add_to_yanked_whitelist(pkgs);
+    fn add_to_yanked_whitelist(&self, pkgs: &[PackageId]) {
+        self.delegate.borrow().add_to_yanked_whitelist(pkgs);
     }
 
-    fn is_yanked(&mut self, pkg: PackageId) -> Poll<anyhow::Result<bool>> {
-        self.delegate.borrow_mut().is_yanked(pkg)
-    }
-
-    fn block_until_ready(&mut self) -> anyhow::Result<()> {
-        self.delegate.borrow_mut().block_until_ready()
-    }
-
-    fn verify(&self, pkg: PackageId) -> anyhow::Result<()> {
-        self.delegate.borrow().verify(pkg)
+    async fn is_yanked(&self, pkg: PackageId) -> anyhow::Result<bool> {
+        self.delegate.borrow().is_yanked(pkg).await
     }
 }
 

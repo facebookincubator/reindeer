@@ -10,8 +10,10 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0.104"
+async-trait = "0.1.92"
 cached = { version = "3.1.1", features = ["async", "redb_store"] }
-cargo = "0.94"
+cargo = "0.97.2"
+cargo-util-terminal = "0.1.1"
 cargo_toml = "1.0.0"
 clap = { version = "4.6.2", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 dunce = "1.0.5"
@@ -49,6 +51,7 @@ walkdir = "2.3"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["full", "test-util", "tracing"] }
 
 [target.'cfg(unix)'.dependencies]
 rlimit = "0.11"

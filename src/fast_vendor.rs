@@ -29,6 +29,8 @@ use anyhow::bail;
 use cargo::core::Package;
 use cargo::core::PackageId;
 use cargo::core::SourceId;
+use cargo::sources::GitSource;
+use cargo::sources::source::Source;
 use cargo::util::cache_lock::CacheLockMode;
 use sha2::Digest as _;
 
@@ -337,13 +339,19 @@ fn fast_vendor(
         {
             let _lock = gctx.acquire_package_cache_lock(CacheLockMode::DownloadExclusive)?;
             for (index, source_id) in source_ids_to_load.iter().copied().enumerate() {
-                if source_id.is_git() {
+                let source: Box<dyn Source> = if source_id.is_git() {
                     eprintln!("Fetching git source {source_id}...");
-                }
-                let mut source = original_source_config
-                    .load(source_id, &yanked_whitelist)
-                    .with_context(|| format!("failed to load original source {source_id}"))?;
-                cargo::sources::source::Source::block_until_ready(&mut source)?;
+                    let mut git_source = GitSource::new(source_id, &gctx)
+                        .with_context(|| format!("failed to load original source {source_id}"))?;
+                    git_source
+                        .read_packages()
+                        .with_context(|| format!("failed to fetch original source {source_id}"))?;
+                    Box::new(git_source)
+                } else {
+                    original_source_config
+                        .load(source_id, &yanked_whitelist)
+                        .with_context(|| format!("failed to load original source {source_id}"))?
+                };
                 original_source_map.insert(source);
                 let completed = index + 1;
                 if completed == source_ids_to_load.len() || completed.is_multiple_of(10) {
@@ -874,8 +882,8 @@ fn prepare_package_for_vendor(
     let mut warnings = Default::default();
     let mut errors = Default::default();
     let manifest = cargo::util::toml::to_real_manifest(
-        contents.to_owned(),
-        document.clone(),
+        contents.map(str::to_owned),
+        document.cloned(),
         original_toml,
         normalized_toml,
         features,
