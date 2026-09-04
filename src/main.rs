@@ -42,6 +42,7 @@ mod collection;
 mod config;
 mod fast_vendor;
 mod fixups;
+mod generate_lockfile;
 mod gitignore;
 mod glob;
 mod index;
