@@ -305,7 +305,12 @@ pub(crate) fn resolve_ws_deterministically_with_original_sources<'gctx>(
         )?;
         for source_id in &source_ids {
             let source = source_config.load(*source_id)?;
-            registry.add_preloaded(Box::new(DeterministicSource::new(source, context.clone())));
+            let deterministic_source = DeterministicSource::new(source, context.clone());
+            if !source_id.has_locked_precise() {
+                deterministic_source.invalidate_cache();
+                log::info!("Invalidating cache for source {}", source_id);
+            }
+            registry.add_preloaded(Box::new(deterministic_source));
         }
 
         let resolve_result = resolve_with_previous_allowing_locked_yanked(
