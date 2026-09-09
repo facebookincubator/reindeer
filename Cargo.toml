@@ -27,7 +27,7 @@ globset = { version = "0.4.20", features = ["serde1"] }
 ignore = "0.4.33"
 indoc = "2.0.2"
 itertools = "0.15.0"
-log = { version = "0.4.33", features = ["kv_unstable", "kv_unstable_std"] }
+log = { version = "0.4.34", features = ["kv_unstable", "kv_unstable_std"] }
 measure_time = "0.9"
 monostate = "1.0.3"
 nom = "8"
