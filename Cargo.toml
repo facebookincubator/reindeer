@@ -20,7 +20,7 @@ dunce = "1.0.5"
 dyn-clone = "1.0.20"
 env_logger = { version = "0.11.11", features = ["color"] }
 erased-serde = "0.4.10"
-flate2 = { version = "1.0.33", features = ["rust_backend"], default-features = false }
+flate2 = { version = "1.1.10", features = ["rust_backend"], default-features = false }
 fnv = "1.0"
 foldhash = "0.2.0"
 globset = { version = "0.4.20", features = ["serde1"] }
