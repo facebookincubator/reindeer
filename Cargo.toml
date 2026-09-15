@@ -11,7 +11,7 @@ license = "MIT"
 [dependencies]
 anyhow = "1.0.104"
 async-trait = "0.1.92"
-cached = { version = "3.1.1", features = ["async", "redb_store"] }
+cached = { version = "4.0.0", features = ["async", "redb_store"] }
 cargo = "0.99.0"
 cargo-util-terminal = "0.1.1"
 cargo_toml = "1.0.1"
