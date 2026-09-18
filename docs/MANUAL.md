@@ -528,7 +528,8 @@ ENVNAME = "..."
 
 ---
 
-- **`linker_flags`** — Example: `linker_flags = ["/STACK:2097152"]`
+- **`linker_flags`** — Extra linker flags for Rust libraries and binaries.
+  Example: `linker_flags = ["/STACK:2097152"]`
 
 ---
 

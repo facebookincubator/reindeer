@@ -1054,6 +1054,14 @@ fn generate_target_rules<'a>(
         |rule, (key, value)| rule.env.insert(key, value),
     )?;
 
+    evaluate_for_platforms(
+        &mut base,
+        &mut perplat,
+        &compatible_platforms,
+        |platform| Ok(Some(fixups.compute_linker_flags(platform))),
+        |rule, linker_flags| rule.linker_flags.extend(linker_flags),
+    )?;
+
     // "link_style" only really applies to binaries, so maintain separate binary base & perplat
     let mut bin_base = base.clone();
     let mut bin_perplat = perplat.clone();
@@ -1064,14 +1072,6 @@ fn generate_target_rules<'a>(
         &compatible_platforms,
         |platform| Ok(fixups.compute_link_style(platform)),
         |rule, link_style| rule.link_style = Some(link_style),
-    )?;
-
-    evaluate_for_platforms(
-        &mut bin_base,
-        &mut bin_perplat,
-        &compatible_platforms,
-        |platform| Ok(Some(fixups.compute_linker_flags(platform))),
-        |rule, linker_flags| rule.linker_flags.extend(linker_flags),
     )?;
 
     // "preferred_linkage" only really applies to libraries, so maintain separate library base &
