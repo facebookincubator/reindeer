@@ -196,6 +196,7 @@ struct RuleContext<'meta> {
     lockfile: &'meta Lockfile,
     fixups: FixupsCache<'meta>,
     collision_info: CollisionInfo,
+    http_client: reqwest::blocking::Client,
     done: Mutex<HashSet<(PackageId, TargetReq<'meta>)>>,
 }
 
@@ -414,6 +415,19 @@ fn generate_http_archive(
         }
     };
 
+    let url = format!(
+        "https://static.crates.io/crates/{}/{}/download",
+        pkg.name, pkg.version,
+    );
+    let size_bytes = crate::crate_size::crate_size_bytes(
+        &context.http_client,
+        context.paths,
+        &pkg.name,
+        &pkg.version,
+        &sha256,
+        &url,
+    )?;
+
     Ok(Rule::HttpArchive(HttpArchive {
         owner: PackageVersion {
             name: pkg.name.clone(),
@@ -421,12 +435,10 @@ fn generate_http_archive(
         },
         name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
         sha256,
+        size_bytes,
         strip_prefix: format!("{}-{}", pkg.name, pkg.version),
         sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
-        urls: vec![format!(
-            "https://static.crates.io/crates/{}/{}/download",
-            pkg.name, pkg.version,
-        )],
+        urls: vec![url],
         visibility: Visibility::Private,
         sort_key: Name(format!("{}-{}", pkg.name, pkg.version)),
     }))
@@ -1670,6 +1682,7 @@ pub(crate) fn buckify(
         lockfile: &lockfile,
         fixups,
         collision_info,
+        http_client: crate::crate_size::build_http_client()?,
         done: Mutex::new(HashSet::default()),
     };
     let rules = do_buckify(&context)?;

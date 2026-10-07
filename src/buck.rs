@@ -383,6 +383,7 @@ pub struct HttpArchive {
     pub owner: PackageVersion,
     pub name: Name,
     pub sha256: String,
+    pub size_bytes: u64,
     pub strip_prefix: String,
     pub sub_targets: BTreeSet<BuckPath>,
     pub urls: Vec<String>,
@@ -396,6 +397,7 @@ impl Serialize for HttpArchive {
             owner: _,
             name,
             sha256,
+            size_bytes,
             strip_prefix,
             sub_targets,
             urls,
@@ -405,6 +407,7 @@ impl Serialize for HttpArchive {
         let mut map = ser.serialize_map(None)?;
         map.serialize_entry("name", name)?;
         map.serialize_entry("sha256", sha256)?;
+        map.serialize_entry("size_bytes", size_bytes)?;
         map.serialize_entry("strip_prefix", strip_prefix)?;
         if !sub_targets.is_empty() {
             map.serialize_entry("sub_targets", sub_targets)?;
@@ -1482,6 +1485,7 @@ mod tests {
             owner,
             name: Name(name.to_owned()),
             sha256: String::new(),
+            size_bytes: 0,
             strip_prefix: String::new(),
             sub_targets: BTreeSet::new(),
             urls: Vec::new(),

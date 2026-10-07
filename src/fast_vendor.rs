@@ -578,7 +578,7 @@ fn find_cached_registry_archive(
     find_cached_registry_archive_by_tarball(cargo_home, &pkg_id.tarball_name(), expected_checksum)
 }
 
-fn find_cached_registry_archive_by_tarball(
+pub(crate) fn find_cached_registry_archive_by_tarball(
     cargo_home: &Path,
     tarball_name: &str,
     expected_checksum: &str,

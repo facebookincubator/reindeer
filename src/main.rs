@@ -41,6 +41,7 @@ mod cargo;
 mod cfg;
 mod collection;
 mod config;
+mod crate_size;
 mod fast_vendor;
 mod fixups;
 mod generate_lockfile;
