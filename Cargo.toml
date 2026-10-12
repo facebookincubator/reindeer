@@ -13,7 +13,7 @@ anyhow = "1.0.104"
 async-trait = "0.1.92"
 cached = { version = "4.0.0", features = ["async", "redb_store"] }
 cargo = "0.99.0"
-cargo-util-terminal = "0.1.1"
+cargo-util-terminal = "0.1.2"
 cargo_toml = "1.0.1"
 clap = { version = "4.6.2", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 dunce = "1.0.5"
