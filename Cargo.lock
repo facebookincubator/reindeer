@@ -566,9 +566,9 @@ dependencies = [
 
 [[package]]
 name = "cargo-credential-macos-keychain"
-version = "0.4.24"
+version = "0.4.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06f5b56bc59e9f3fe2a0450cd379057c8a327662c1d04ccecab61cd79818325e"
+checksum = "cf917177a4bb7f238e1b8b3084cae37a688910e3b7bd95403f43f7c3d5a93b0e"
 dependencies = [
  "cargo-credential",
  "security-framework",
