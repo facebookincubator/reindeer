@@ -958,9 +958,9 @@ dependencies = [
 
 [[package]]
 name = "crates-io"
-version = "0.41.1"
+version = "0.41.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61eac17e797075f82dc4f2ca6c2b807abcb7f2b101f1fd1f627c5f1cde27b0d5"
+checksum = "c047c636cac168acc89c2df97a9017f2751e96742faaa35941fabec8c9d057a9"
 dependencies = [
  "http",
  "percent-encoding",
