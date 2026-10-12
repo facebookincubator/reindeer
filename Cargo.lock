@@ -4490,9 +4490,9 @@ dependencies = [
 
 [[package]]
 name = "rustfix"
-version = "0.9.7"
+version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ab550bf03e3428c98b8e0354800a18f366f1f5f25544b908463b4634374f34f"
+checksum = "c614151d9f1b1e1f23041dacbf5f8dfab85687455b9e553f19f3d70275d1fe1c"
 dependencies = [
  "serde",
  "serde_json",
