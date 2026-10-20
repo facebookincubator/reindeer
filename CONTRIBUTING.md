@@ -10,7 +10,7 @@ we'd like to see issues and PRs to add those features.
 
 ## Our Development Process
 
-Reindeer's primary repository is mainained internally at Facebook, which is
+Reindeer's primary repository is maintained internally at Facebook, which is
 periodically synced with github. Code changes are first merged with the internal
 version and republished.
 

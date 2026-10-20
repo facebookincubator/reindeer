@@ -195,7 +195,7 @@ mod tests {
             "2.0.1",
             Source::Git {
                 repo: "https://github.com/siege-engines/catapult".to_owned(),
-                commit_hash: "trebuchet1trebuchet1trebuchet1tre".to_owned(),
+                commit_hash: "trebuchet1trebuchet1trebuchet1tre".to_owned(), // typos:ignore-line
             },
         );
         let m2 = make_manifest(

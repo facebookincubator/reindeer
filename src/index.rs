@@ -730,7 +730,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                             }
                         }
                         // For staticlib and cdylib artifacts, the extern_name
-                        // wil be the package's library target's name.
+                        // will be the package's library target's name.
                         ArtifactKind::Staticlib | ArtifactKind::Cdylib => {
                             if let Some(library_target) = library_target {
                                 if dep_kind.extern_name.as_ref() == Some(&library_target.name) {

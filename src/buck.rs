@@ -181,7 +181,7 @@ impl Serialize for Visibility {
         match self {
             Visibility::Public => ["PUBLIC"].as_slice().serialize(ser),
             Visibility::Private => (&[] as &[&str]).serialize(ser),
-            Visibility::Custom(custom_visiblity) => custom_visiblity.serialize(ser),
+            Visibility::Custom(custom_visibility) => custom_visibility.serialize(ser),
         }
     }
 }
@@ -1286,7 +1286,7 @@ fn rule_sort_key(rule: &Rule) -> impl Ord + '_ {
         GitFetch(&'a Name),
         // Due to how PartialOrd is generated it will compare
         // the fields of the tuple in order. This means the priority
-        // must come before the name in this defintion.
+        // must come before the name in this definition.
         Owned(&'a PackageVersion, usize, &'a Name),
         // Root package goes last since it's an uninteresting list of
         // deps that looks awkward anywhere else.

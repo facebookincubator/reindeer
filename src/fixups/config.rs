@@ -330,7 +330,7 @@ pub struct FixupConfig {
     /// Extra features
     #[serde(default)]
     pub features: BTreeSet<String>,
-    /// Features to forcably omit. This doesn't change dependency
+    /// Features to forcibly omit. This doesn't change dependency
     /// resolution, just what the targets are compiled with.
     #[serde(default)]
     pub omit_features: BTreeSet<String>,
