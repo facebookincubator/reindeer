@@ -279,7 +279,12 @@ impl<'meta> Fixups<'meta> {
     }
 
     pub fn visibility(&self, index: &Index) -> Visibility {
-        let mut visibility = &Visibility::Public;
+        let mut visibility = self
+            .config
+            .buck
+            .public_visibility
+            .as_ref()
+            .unwrap_or(&Visibility::Public);
 
         for config in self.platform_independent_configs() {
             if let Some(custom_visibility) = &config.visibility {

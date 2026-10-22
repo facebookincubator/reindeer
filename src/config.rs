@@ -35,6 +35,7 @@ use serde::de::Visitor;
 use serde::de::value::MapAccessDeserializer;
 
 use crate::Args;
+use crate::buck::Visibility;
 use crate::fixups::CargoEnvs;
 use crate::glob::TrackedGlobSet;
 use crate::platform::PlatformConfig;
@@ -166,6 +167,11 @@ pub struct BuckConfig {
     /// of those platforms contain no platform-specific information.
     #[serde(default)]
     pub platform_compatibility_on_all_targets: bool,
+
+    /// Visibility for exposed crates in place of `["PUBLIC"]`. A crate's
+    /// `visibility` fixup still takes precedence.
+    #[serde(default)]
+    pub public_visibility: Option<Visibility>,
 
     /// Banner for the top of all generated bzl files, namely BUCK and METADATA.bzl
     #[serde(default)]
