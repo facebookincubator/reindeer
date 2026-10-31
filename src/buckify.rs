@@ -497,7 +497,7 @@ pub fn short_name_for_git_repo(repo: &str, commit_hash: &str) -> anyhow::Result<
 }
 
 /// Find the git repository containing the given manifest directory.
-fn find_repository_root(manifest_dir: &Path) -> anyhow::Result<&Path> {
+pub fn find_repository_root(manifest_dir: &Path) -> anyhow::Result<&Path> {
     let mut dir = manifest_dir;
     loop {
         if dir.join(".git").exists() {
