@@ -69,6 +69,17 @@ pub struct Config {
     #[serde(default)]
     pub precise_srcs: bool,
 
+    /// Default for every fixup's `buildscript.run.rustc_link_lib`: translate
+    /// `cargo::rustc-link-lib` into `-l` flags. Off, a native library is
+    /// expected to be a Buck target reached via `extra_deps`.
+    #[serde(default)]
+    pub rustc_link_lib: bool,
+
+    /// Default for every fixup's `buildscript.run.rustc_link_search`, as above
+    /// for `cargo::rustc-link-search` into `-L`.
+    #[serde(default)]
+    pub rustc_link_search: bool,
+
     /// List of glob patterns for filenames likely to contain license terms
     #[serde(default)]
     pub license_patterns: TrackedGlobSet,
