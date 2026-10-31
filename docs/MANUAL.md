@@ -91,6 +91,11 @@ the source code at `src/config.rs` (see `Config`).
   resolved from `reindeer.toml`. Defaults to `fixups` under `third_party_dir`.
 - `precise_srcs` (bool): Try to compute a precise list of sources rather than
   using globbing.
+- `rustc_link_lib`, `rustc_link_search` (bool): Default for every fixup's
+  `buildscript.run.rustc_link_lib` / `rustc_link_search`: honor a build
+  script's `cargo::rustc-link-lib` / `cargo::rustc-link-search` as Cargo does.
+  Off, a native library is expected to be a Buck target reached via
+  `extra_deps`.
 - `include_top_level` (bool): Include root package as top-level public target in
   Buck file.
 - `cargo_env` (bool or list of env vars): List of Cargo environment variables

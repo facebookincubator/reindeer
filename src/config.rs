@@ -69,6 +69,17 @@ pub struct Config {
     #[serde(default)]
     pub precise_srcs: bool,
 
+    /// Default for every fixup's `buildscript.run.rustc_link_lib`: translate
+    /// `cargo::rustc-link-lib` into `-l` flags. Off, a native library is
+    /// expected to be a Buck target reached via `extra_deps`.
+    #[serde(default)]
+    pub rustc_link_lib: bool,
+
+    /// Default for every fixup's `buildscript.run.rustc_link_search`, as above
+    /// for `cargo::rustc-link-search` into `-L`.
+    #[serde(default)]
+    pub rustc_link_search: bool,
+
     /// List of glob patterns for filenames likely to contain license terms
     #[serde(default)]
     pub license_patterns: TrackedGlobSet,
@@ -620,5 +631,16 @@ mod tests {
             config.resolved_fixups_dir(Path::new("third-party/rust")),
             Path::new("config/root/shared-fixups"),
         );
+    }
+
+    #[test]
+    fn link_directives_default_off() {
+        let config = Config::default_for_test();
+        assert!(!config.rustc_link_lib);
+        assert!(!config.rustc_link_search);
+
+        let config: Config = toml::from_str("rustc_link_lib = true").unwrap();
+        assert!(config.rustc_link_lib);
+        assert!(!config.rustc_link_search);
     }
 }

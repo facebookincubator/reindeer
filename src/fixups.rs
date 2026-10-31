@@ -1069,7 +1069,7 @@ impl<'meta> Fixups<'meta> {
                 &mut buildscript_run.platform,
                 &buildscript_platforms,
                 |platform_name| {
-                    let mut rustc_link_lib = false;
+                    let mut rustc_link_lib = self.config.rustc_link_lib;
                     for fixup in self.configs(platform_name) {
                         if let Some(fixup_buildscript_run) = &fixup.buildscript.run {
                             if let Some(fixup_rustc_link_lib) = fixup_buildscript_run.rustc_link_lib
@@ -1088,7 +1088,7 @@ impl<'meta> Fixups<'meta> {
                 &mut buildscript_run.platform,
                 &buildscript_platforms,
                 |platform_name| {
-                    let mut rustc_link_search = false;
+                    let mut rustc_link_search = self.config.rustc_link_search;
                     for fixup in self.configs(platform_name) {
                         if let Some(fixup_buildscript_run) = &fixup.buildscript.run {
                             if let Some(fixup_rustc_link_search) =
