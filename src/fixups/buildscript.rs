@@ -67,10 +67,10 @@ pub struct BuildscriptRun {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     /// Whether to translate cargo::rustc-link-lib into `-l` flags for rustc.
-    /// Overrides `buildscript.rustc_link_lib` in reindeer.toml.
+    /// Overrides `rustc_link_lib` in reindeer.toml.
     pub rustc_link_lib: Option<bool>,
     /// Whether to translate cargo::rustc-link-search into `-L` flags for rustc.
-    /// Overrides `buildscript.rustc_link_search` in reindeer.toml.
+    /// Overrides `rustc_link_search` in reindeer.toml.
     pub rustc_link_search: Option<bool>,
 }
 
