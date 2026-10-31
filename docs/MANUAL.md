@@ -109,6 +109,10 @@ the source code at `src/config.rs` (see `Config`).
 - `buck.split` (bool): Split mode, with each crate getting a separate generated
   `BUCK` file.
 - `buck.buckfile_imports` (string): Front matter for the generated `BUCK` file.
+- `buildscript.rustc_link_lib`, `buildscript.rustc_link_search` (bool): Honor
+  every build script's `cargo::rustc-link-lib` / `cargo::rustc-link-search`, as
+  Cargo does. Default false: link the native library as a Buck target via
+  `extra_deps` instead. A fixup's `[buildscript.run]` overrides per package.
 - `platform`: See the "Custom platforms" section.
 - `extern_crates`: See the "External Crates" section.
 

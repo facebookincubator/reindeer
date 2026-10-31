@@ -120,6 +120,9 @@ pub struct Config {
     #[serde(default)]
     pub buck: BuckConfig,
 
+    #[serde(default)]
+    pub buildscript: BuildscriptConfig,
+
     #[serde(default, deserialize_with = "deserialize_vendor_config")]
     pub vendor: VendorConfig,
 
@@ -149,6 +152,21 @@ pub struct CargoConfig {
     /// Support Cargo's unstable "artifact dependencies" functionality, RFC 3028.
     #[serde(default)]
     pub bindeps: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildscriptConfig {
+    /// Translate `cargo::rustc-link-lib` from every build script into `-l`
+    /// flags unless a fixup's `[buildscript.run]` says otherwise. Default
+    /// false: a monorepo usually links the native library as a Buck target via
+    /// `extra_deps` instead. Set true for Cargo parity with `-sys` crates that
+    /// build their own library.
+    #[serde(default)]
+    pub rustc_link_lib: bool,
+    /// As `rustc_link_lib`, for `cargo::rustc-link-search` into `-L`.
+    #[serde(default)]
+    pub rustc_link_search: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -620,5 +638,16 @@ mod tests {
             config.resolved_fixups_dir(Path::new("third-party/rust")),
             Path::new("config/root/shared-fixups"),
         );
+    }
+
+    #[test]
+    fn buildscript_link_directives_default_off() {
+        let config = Config::default_for_test();
+        assert!(!config.buildscript.rustc_link_lib);
+        assert!(!config.buildscript.rustc_link_search);
+
+        let config: Config = toml::from_str("[buildscript]\nrustc_link_lib = true").unwrap();
+        assert!(config.buildscript.rustc_link_lib);
+        assert!(!config.buildscript.rustc_link_search);
     }
 }
