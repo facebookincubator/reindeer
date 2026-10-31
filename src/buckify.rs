@@ -445,7 +445,7 @@ fn generate_http_archive(
 }
 
 fn generate_git_fetch(repo: &str, commit_hash: &str) -> anyhow::Result<Rule> {
-    let short_name = short_name_for_git_repo(repo)?;
+    let short_name = short_name_for_git_repo(repo, commit_hash)?;
 
     Ok(Rule::GitFetch(GitFetch {
         name: Name(format!("{}.git", short_name)),
@@ -456,8 +456,9 @@ fn generate_git_fetch(repo: &str, commit_hash: &str) -> anyhow::Result<Rule> {
     }))
 }
 
-/// Create a uniquely hashed directory name for the arbitrary source url
-pub fn short_name_for_git_repo(repo: &str) -> anyhow::Result<String> {
+/// Unique directory name for a git source at one commit. A workspace may pin
+/// one repo at several commits; each needs its own `git_fetch`.
+pub fn short_name_for_git_repo(repo: &str, commit_hash: &str) -> anyhow::Result<String> {
     let mut canonical = Url::parse(&repo.to_lowercase()).context("invalid git url")?;
 
     anyhow::ensure!(
@@ -489,6 +490,7 @@ pub fn short_name_for_git_repo(repo: &str) -> anyhow::Result<String> {
 
     let mut hasher = FnvHasher::default();
     canonical.hash(&mut hasher);
+    commit_hash.hash(&mut hasher);
     let url_hash = hasher.finish();
 
     Ok(format!("{repo_name}-{url_hash:016x}"))
@@ -748,8 +750,11 @@ fn generate_target_rules<'a>(
     } else {
         mapped_manifest_dir = if let VendorConfig::LocalRegistry = config.vendor {
             PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
-        } else if let Source::Git { repo, .. } = &pkg.source {
-            let short_name = short_name_for_git_repo(repo)?;
+        } else if let Source::Git {
+            repo, commit_hash, ..
+        } = &pkg.source
+        {
+            let short_name = short_name_for_git_repo(repo, commit_hash)?;
             let repository_root = find_repository_root(manifest_dir)?;
             let path_within_repo = relative_path(repository_root, manifest_dir);
             manifest_dir_subtarget = Some(SubtargetOrPath::Subtarget(Subtarget {
@@ -863,8 +868,11 @@ fn generate_target_rules<'a>(
             let extract_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
             base.srcs
                 .insert(BuckPath(PathBuf::from(extract_archive_target)));
-        } else if let Source::Git { repo, .. } = &pkg.source {
-            let short_name = short_name_for_git_repo(repo)?;
+        } else if let Source::Git {
+            repo, commit_hash, ..
+        } = &pkg.source
+        {
+            let short_name = short_name_for_git_repo(repo, commit_hash)?;
             let git_fetch_target = format!(":{}.git", short_name);
             base.srcs.insert(BuckPath(PathBuf::from(git_fetch_target)));
         } else {
@@ -1462,9 +1470,12 @@ fn generate_target_rules<'a>(
                     BuckPath(mapped_manifest_dir.clone()),
                     SubtargetOrPath::Path(BuckPath(PathBuf::from(extract_archive_target))),
                 )]))
-            } else if let Source::Git { repo, .. } = &pkg.source {
+            } else if let Source::Git {
+                repo, commit_hash, ..
+            } = &pkg.source
+            {
                 // e.g. {":foo-123.git": "foo-123"}
-                let short_name = short_name_for_git_repo(repo)?;
+                let short_name = short_name_for_git_repo(repo, commit_hash)?;
                 let git_fetch_target = format!(":{}.git", short_name);
                 FilegroupSources::Map(BTreeMap::from([(
                     BuckPath(mapped_manifest_dir.clone()),
@@ -2115,24 +2126,39 @@ mod test {
 
     #[test]
     fn hashes_with_same_repo_variations() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let canonical =
+            short_name_for_git_repo("https://github.com/facebookincubator/reindeer.git", commit)
+                .unwrap();
         for url in [
             "https://github.com/facebookincubator/reindeer.git",
             "https://github.com/facebookincubator/reindeer",
             "https://github.com/FacebookIncubator/reindeer.git",
         ] {
             assert_eq!(
-                short_name_for_git_repo(url).unwrap(),
-                "reindeer-09128a716876493e",
-                "{url}",
+                short_name_for_git_repo(url, commit).unwrap(),
+                canonical,
+                "{url}"
             );
         }
+        assert!(canonical.starts_with("reindeer-"), "{canonical}");
+    }
+
+    #[test]
+    fn hashes_distinguish_commits() {
+        let url = "https://github.com/facebookincubator/reindeer";
+        let a = short_name_for_git_repo(url, "1111111111111111111111111111111111111111").unwrap();
+        let b = short_name_for_git_repo(url, "2222222222222222222222222222222222222222").unwrap();
+        assert_ne!(a, b);
     }
 
     #[test]
     fn hashes_non_github() {
-        assert_eq!(
-            short_name_for_git_repo("https://gitlab.com/gilrs-project/gilrs.git").unwrap(),
-            "gilrs-bbe0e8b5f013041b",
-        );
+        let name = short_name_for_git_repo(
+            "https://gitlab.com/gilrs-project/gilrs.git",
+            "0123456789abcdef0123456789abcdef01234567",
+        )
+        .unwrap();
+        assert!(name.starts_with("gilrs-"), "{name}");
     }
 }
