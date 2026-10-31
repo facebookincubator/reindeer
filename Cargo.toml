@@ -57,6 +57,9 @@ tokio = { version = "1.53.2", features = ["full", "test-util", "tracing"] }
 [target.'cfg(unix)'.dependencies]
 rlimit = "0.11"
 
+[patch.crates-io]
+rustls-native-certs = { git = "https://github.com/rustls/rustls-native-certs", rev = "9734b4cc0bfa88224e0fc49867abafa1c56fa28d" }
+
 [workspace]
 members = ["."]
 

@@ -4502,7 +4502,7 @@ dependencies = [
 [[package]]
 name = "rustls-native-certs"
 version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+https://github.com/rustls/rustls-native-certs?rev=9734b4cc0bfa88224e0fc49867abafa1c56fa28d#9734b4cc0bfa88224e0fc49867abafa1c56fa28d"
 dependencies = [
  "openssl-probe 0.2.1",
  "rustls-pki-types",
