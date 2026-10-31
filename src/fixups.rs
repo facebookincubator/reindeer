@@ -45,6 +45,7 @@ use crate::buck::StringOrPath;
 use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
 use crate::buckify::evaluate_for_platforms;
+use crate::buckify::find_repository_root;
 use crate::buckify::short_name_for_git_repo;
 use crate::buckify::split_srcs;
 use crate::buckify::vendor_crate_visibility;
@@ -1477,8 +1478,16 @@ impl<'meta> Fixups<'meta> {
                         self.package.name, self.package.version,
                     ))
                 } else if let Source::Git { repo, .. } = &self.package.source {
-                    let short_name = short_name_for_git_repo(repo)?;
-                    StringOrPath::String(short_name.to_owned())
+                    // The whole repo is fetched under <short_name>/; a crate in
+                    // a subdirectory needs its real dir (proc-macro-crate reads
+                    // $CARGO_MANIFEST_DIR/Cargo.toml), as crate_root does.
+                    let mut dir = PathBuf::from(short_name_for_git_repo(repo)?);
+                    let subdir =
+                        relative_path(find_repository_root(self.manifest_dir)?, self.manifest_dir);
+                    if subdir.components().next().is_some() {
+                        dir.push(subdir); // push("") would add a trailing slash
+                    }
+                    StringOrPath::String(dir.to_string_lossy().into_owned())
                 } else {
                     StringOrPath::String(format!(
                         "{}-{}.crate",
