@@ -259,9 +259,12 @@ impl<'meta> Fixups<'meta> {
             let manifest_dir = relative_path(self.third_party_dir, self.manifest_dir);
             let path = manifest_dir.join(relative_to_manifest_dir);
             Ok(SubtargetOrPath::Path(BuckPath(path)))
-        } else if let Source::Git { repo, .. } = &self.package.source {
+        } else if let Source::Git {
+            repo, commit_hash, ..
+        } = &self.package.source
+        {
             // Subtarget inside a git_fetch: ":serde-643d78919f35d883.git[src/lib.rs]"
-            let short_name = short_name_for_git_repo(repo)?;
+            let short_name = short_name_for_git_repo(repo, commit_hash)?;
             Ok(SubtargetOrPath::Subtarget(Subtarget {
                 target: Name(format!("{short_name}.git")),
                 relative: BuckPath(relative_to_manifest_dir.to_owned()),
@@ -1476,8 +1479,11 @@ impl<'meta> Fixups<'meta> {
                         "{}-{}.crate",
                         self.package.name, self.package.version,
                     ))
-                } else if let Source::Git { repo, .. } = &self.package.source {
-                    let short_name = short_name_for_git_repo(repo)?;
+                } else if let Source::Git {
+                    repo, commit_hash, ..
+                } = &self.package.source
+                {
+                    let short_name = short_name_for_git_repo(repo, commit_hash)?;
                     StringOrPath::String(short_name.to_owned())
                 } else {
                     StringOrPath::String(format!(
