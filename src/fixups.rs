@@ -538,6 +538,7 @@ impl<'meta> Fixups<'meta> {
                 name,
                 srcs,
                 headers,
+                exported_header_style,
                 exported_headers,
                 public,
                 include_paths,
@@ -594,6 +595,7 @@ impl<'meta> Fixups<'meta> {
                         .into_iter()
                         .map(|path| SubtargetOrPath::Path(BuckPath(path)))
                         .collect(),
+                    exported_header_style: exported_header_style.clone(),
                     exported_headers: match exported_headers {
                         ExportedHeaders::Set(exported_headers) => {
                             let exported_header_globs = Globs::new(exported_headers, exclude);
@@ -713,6 +715,7 @@ impl<'meta> Fixups<'meta> {
 
                         headers
                     },
+                    exported_header_style: exported_header_style.clone(),
                     exported_headers: match exported_headers {
                         ExportedHeaders::Set(exported_headers) => {
                             let exported_header_globs = Globs::new(exported_headers, exclude);

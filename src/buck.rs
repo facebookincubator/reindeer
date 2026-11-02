@@ -1022,6 +1022,7 @@ pub struct CxxLibrary {
     pub common: Common,
     pub srcs: BTreeSet<SubtargetOrPath>,
     pub headers: BTreeSet<SubtargetOrPath>,
+    pub exported_header_style: Option<String>,
     pub exported_headers: SetOrMap<SubtargetOrPath>,
     pub compiler_flags: Vec<String>,
     pub preprocessor_flags: Vec<String>,
@@ -1048,6 +1049,7 @@ impl Serialize for CxxLibrary {
                 },
             srcs,
             headers,
+            exported_header_style,
             exported_headers,
             compiler_flags,
             preprocessor_flags,
@@ -1064,6 +1066,9 @@ impl Serialize for CxxLibrary {
         map.serialize_entry("headers", headers)?;
         if let Some(header_namespace) = header_namespace {
             map.serialize_entry("header_namespace", header_namespace)?;
+        }
+        if let Some(exported_header_style) = exported_header_style {
+            map.serialize_entry("exported_header_style", exported_header_style)?;
         }
         if !exported_headers.is_empty() {
             map.serialize_entry("exported_headers", exported_headers)?;

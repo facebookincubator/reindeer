@@ -89,6 +89,7 @@ pub struct CxxLibraryFixup {
     pub targets: Vec<(TargetKind, Option<String>)>,
     #[serde(default)]
     pub headers: TrackedGlobSet, // header globs
+    pub exported_header_style: Option<String>,
     #[serde(default)]
     pub exported_headers: ExportedHeaders, // exported header globs
     #[serde(default = "set_true")]
