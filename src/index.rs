@@ -411,6 +411,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                 }
                 for dep_platform_name in platforms_for_dependency(
                     node_dep,
+                    manifest_dep,
                     self.pkgid_to_pkg[&node_dep.pkg],
                     platform_name,
                     &self.config.platform[platform_name],
@@ -482,6 +483,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                                 let node_dep = self.resolve_dep(pkgid, manifest_dep)?;
                                 let dep_platforms = platforms_for_dependency(
                                     node_dep,
+                                    manifest_dep,
                                     self.pkgid_to_pkg[&node_dep.pkg],
                                     platform_name,
                                     &self.config.platform[platform_name],
@@ -573,6 +575,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                 }
                 for dep_platform_name in platforms_for_dependency(
                     node_dep,
+                    manifest_dep,
                     self.pkgid_to_pkg[&node_dep.pkg],
                     platform_name,
                     &self.config.platform[platform_name],
@@ -797,6 +800,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
 
 fn platforms_for_dependency<'meta>(
     node_dep: &'meta NodeDep,
+    manifest_dep: &'meta ManifestDep,
     manifest: &'meta Manifest,
     platform_name: &'meta PlatformName,
     platform_config: &'meta PlatformConfig,
@@ -804,7 +808,10 @@ fn platforms_for_dependency<'meta>(
     let mut is_target_dep = false;
     let mut is_exec_dep = false;
 
-    for dep_kind in &node_dep.dep_kinds {
+    // Cargo can merge normal and build edges; features belong to the current declaration.
+    for dep_kind in node_dep.dep_kinds.iter().filter(|dep_kind| {
+        dep_kind.kind == manifest_dep.kind && dep_kind.target == manifest_dep.target
+    }) {
         match dep_kind.kind {
             DepKind::Normal => {
                 if dep_kind.artifact.is_none()
@@ -830,4 +837,130 @@ fn platforms_for_dependency<'meta>(
         dep_platforms.extend(&platform_config.execution_platforms);
     }
     dep_platforms
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::Paths;
+    use crate::buck::BuckPath;
+    use crate::gitignore::Gitignore;
+
+    #[test]
+    fn normal_and_build_dependency_features_are_separate() {
+        assert_features_are_separated(false);
+    }
+
+    #[test]
+    fn optional_build_dependency_features_are_separate() {
+        assert_features_are_separated(true);
+    }
+
+    fn assert_features_are_separated(optional_build_dependency: bool) {
+        // app uses shared as both a normal dependency and a build dependency.
+        // Cargo merges them into one edge, but they compile for different platforms:
+        // normal features belong on the target; build features belong on the host.
+        // Making the build dependency optional must not change that separation.
+        let host: PlatformName = serde_json::from_value(json!("host")).unwrap();
+        let target: PlatformName = serde_json::from_value(json!("target")).unwrap();
+        let platform = PlatformConfig {
+            target: None,
+            is_execution_platform: Some(false),
+            features: None,
+            execution_platforms: BTreeSet::from([host.clone()]),
+            cfg: HashMap::default(),
+        };
+        let mut host_platform = platform.clone();
+        host_platform.is_execution_platform = Some(true);
+        let mut config = Config::default_for_test();
+        config.platform = [(host.clone(), host_platform), (target.clone(), platform)]
+            .into_iter()
+            .collect();
+        let package = |name: &str| {
+            json!({
+                "name": name,
+                "version": "1.0.0",
+                "id": format!("path+file:///{name}#{name}@1.0.0"),
+                "source": null,
+                "dependencies": [],
+                "targets": [{
+                    "name": name,
+                    "kind": ["lib"],
+                    "crate_types": ["lib"],
+                    "src_path": "src/lib.rs",
+                    "doctest": false,
+                }],
+                "features": {},
+                "manifest_path": format!("{name}/Cargo.toml"),
+                "authors": [],
+                "edition": "2021",
+            })
+        };
+
+        let mut app = package("app");
+        app["dependencies"] = json!([
+            {
+                "name": "shared", "req": "1", "kind": null,
+                "optional": false, "uses_default_features": false,
+                "features": ["normal-feature"],
+            },
+            {
+                "name": "shared", "req": "1", "kind": "build",
+                "optional": optional_build_dependency, "uses_default_features": false,
+                "features": ["build-feature"],
+            },
+        ]);
+        if optional_build_dependency {
+            app["features"] = json!({"default": ["dep:shared"]});
+        }
+        let mut shared = package("shared");
+        shared["features"] = json!({"normal-feature": [], "build-feature": []});
+        let metadata: Metadata = serde_json::from_value(json!({
+            "packages": [app, shared],
+            "workspace_members": ["path+file:///app#app@1.0.0"],
+            "resolve": {
+                "root": null,
+                "nodes": [
+                    {
+                        "id": "path+file:///app#app@1.0.0",
+                        "deps": [{
+                            "name": "shared",
+                            "pkg": "path+file:///shared#shared@1.0.0",
+                            "dep_kinds": [
+                                {"kind": null, "target": null},
+                                {"kind": "build", "target": null},
+                            ],
+                        }],
+                    },
+                    {"id": "path+file:///shared#shared@1.0.0", "deps": []},
+                ],
+            },
+        }))
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            buck_package: BuckPath(PathBuf::new()),
+            third_party_dir: directory.path().to_owned(),
+            manifest_path: directory.path().join("Cargo.toml"),
+            lockfile_path: directory.path().join("Cargo.lock"),
+            cargo_home: directory.path().join(".cargo"),
+        };
+        let gitignore = Gitignore::empty();
+        let fixups = FixupsCache::new(&config, &paths, &gitignore);
+        let index = Index::new(&config, &metadata, &fixups).unwrap();
+        let shared = &metadata.packages[1];
+        assert_eq!(
+            index.resolved_features(shared, &target),
+            BTreeSet::from(["normal-feature"]),
+        );
+        assert!(
+            index
+                .resolved_features(shared, &host)
+                .contains("build-feature")
+        );
+    }
 }
