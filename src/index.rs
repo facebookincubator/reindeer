@@ -382,10 +382,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         // Go through the manifest dependencies and enable all that are non-optional.
         for manifest_dep in &pkg.dependencies {
             if !manifest_dep.optional
-                && match manifest_dep.kind {
-                    DepKind::Normal | DepKind::Build => true,
-                    DepKind::Dev => false,
-                }
+                && is_dep_kind_enabled(manifest_dep.kind, platform_name, &fixups)
                 && self.evaluate_target_cfg(&manifest_dep.target, platform_name, &fixups)
                 && !fixups.omit_dep(
                     platform_name,
@@ -469,10 +466,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                         // Find which dependency this feature refers to.
                         for manifest_dep in &self.pkgid_to_pkg[&pkgid].dependencies {
                             if dep == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
-                                && match manifest_dep.kind {
-                                    DepKind::Normal | DepKind::Build => true,
-                                    DepKind::Dev => false,
-                                }
+                                && is_dep_kind_enabled(manifest_dep.kind, platform_name, &fixups)
                                 && self.evaluate_target_cfg(
                                     &manifest_dep.target,
                                     platform_name,
@@ -548,10 +542,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         for manifest_dep in &pkg.dependencies {
             if enable_dependency == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
                 && manifest_dep.optional
-                && match manifest_dep.kind {
-                    DepKind::Normal | DepKind::Build => true,
-                    DepKind::Dev => false,
-                }
+                && is_dep_kind_enabled(manifest_dep.kind, platform_name, &fixups)
                 && self.evaluate_target_cfg(&manifest_dep.target, platform_name, &fixups)
                 && !fixups.omit_dep(platform_name, enable_dependency, manifest_dep.kind)
             {
@@ -792,6 +783,16 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         }
 
         platform_expr.eval(&self.config.platform[platform_name], None, &extra_cfgs)
+    }
+}
+
+/// Build-dependencies are only needed if fixups enable running the build
+/// script. Otherwise no Buck target is generated for the build script.
+fn is_dep_kind_enabled(kind: DepKind, platform_name: &PlatformName, fixups: &Fixups) -> bool {
+    match kind {
+        DepKind::Normal => true,
+        DepKind::Build => fixups.has_buildscript_for_platform(platform_name),
+        DepKind::Dev => false,
     }
 }
 
