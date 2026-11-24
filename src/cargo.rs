@@ -32,7 +32,16 @@ use std::thread;
 use anyhow::Context;
 use anyhow::bail;
 use async_trait::async_trait;
+use cargo::core::Dependency;
 use cargo::core::PackageId;
+use cargo::core::SourceId;
+use cargo::core::Summary;
+use cargo::core::resolver::Resolve as CargoResolve;
+use cargo::sources::IndexSummary;
+use cargo::sources::ReplacedSource;
+use cargo::sources::source::MaybePackage;
+use cargo::sources::source::QueryKind;
+use cargo::sources::source::Source as CargoSource;
 use cargo::util::interning::InternedString;
 use foldhash::HashMap;
 use foldhash::HashSet;
@@ -199,14 +208,28 @@ fn fast_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<
         "});
     };
 
-    // Instantiate package sources.
-    let mut source_map = HashMap::default();
-    let mut shared_sources = HashMap::default();
+    // The vendor directory is shared by every source, so it cannot tell which
+    // source a vendored crate came from. Restrict each source to the packages
+    // Cargo.lock attributes to it.
+    let mut locked_packages = BTreeMap::<SourceId, LockedPackages>::new();
     for pkg_id in resolve.iter() {
-        let source_id = pkg_id.source_id();
-        let hash_map::Entry::Vacant(entry) = source_map.entry(source_id) else {
-            continue;
-        };
+        let locked = locked_packages.entry(pkg_id.source_id()).or_default();
+        locked
+            .allowed
+            .insert((pkg_id.name(), pkg_id.version().clone()));
+    }
+    for &pkg_id in resolve.unused_patches() {
+        let locked = locked_packages.entry(pkg_id.source_id()).or_default();
+        locked
+            .allowed
+            .insert((pkg_id.name(), pkg_id.version().clone()));
+        locked.unused_patches.push(pkg_id);
+    }
+
+    // Instantiate package sources.
+    let mut source_map = Vec::new();
+    let mut shared_sources = HashMap::default();
+    for (source_id, locked) in locked_packages {
         let source = source_config.load(source_id)?;
         assert_eq!(source.source_id(), source_id);
         let replaced_source_id = source.replaced_source_id();
@@ -219,34 +242,40 @@ fn fast_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<
             }
             hash_map::Entry::Occupied(entry) => Rc::clone(entry.get()),
         };
-        entry.insert(cargo::sources::ReplacedSource::new(
-            source_id,
-            replaced_source_id,
-            Box::new(SharedSource { delegate }),
-        ));
+        source_map.push(LockfileSource {
+            inner: ReplacedSource::new(
+                source_id,
+                replaced_source_id,
+                Box::new(SharedSource { delegate }),
+            ),
+            locked,
+        });
     }
 
     // Load packages from each source into package registry.
     let mut registry =
         cargo::core::registry::PackageRegistry::new_with_source_config(&gctx, source_config)?;
-    for source in source_map.into_values() {
+    for source in source_map {
         registry.add_preloaded(Box::new(source));
     }
 
-    // Resolve dependency graph.
+    // Resolve dependency graph. This is only to compute features and per-edge
+    // dependency details, which Cargo.lock does not record.
     let keep_previous = None;
     let specs = [];
     let register_patches = true;
+    let lockfile_resolve = resolve;
     let resolve = cargo::ops::resolve_with_previous(
         &mut registry,
         &workspace,
         &cargo::core::resolver::CliFeatures::new_all(true),
         cargo::core::resolver::HasDevUnits::Yes,
-        Some(&resolve),
+        Some(&lockfile_resolve),
         keep_previous,
         &specs,
         register_patches,
     )?;
+    check_resolve_matches_lockfile(&lockfile_resolve, &resolve, &paths.lockfile_path)?;
 
     // Load vendored Cargo.tomls.
     let packages = Vec::from_iter(resolve.iter());
@@ -296,6 +325,168 @@ fn fast_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<
         .map(cargo::core::Package::package_id);
 
     Ok(metadata)
+}
+
+/// Fail if re-resolving against the vendored sources did not reproduce exactly
+/// the packages and dependency edges recorded in Cargo.lock.
+fn check_resolve_matches_lockfile(
+    lockfile_resolve: &CargoResolve,
+    resolve: &CargoResolve,
+    lockfile_path: &Path,
+) -> anyhow::Result<()> {
+    let graph = |resolve: &CargoResolve| -> BTreeSet<(PackageId, Option<PackageId>)> {
+        resolve
+            .iter()
+            .flat_map(|pkg_id| {
+                iter::once((pkg_id, None)).chain(
+                    resolve
+                        .deps(pkg_id)
+                        .map(move |(dep_id, _)| (pkg_id, Some(dep_id))),
+                )
+            })
+            .collect()
+    };
+    let expected = graph(lockfile_resolve);
+    let actual = graph(resolve);
+    if expected == actual {
+        return Ok(());
+    }
+
+    const MAX_LINES: usize = 20;
+    let display = |pkg_id: PackageId| format!("{} v{}", pkg_id.name(), pkg_id.version());
+    let mut differences = expected
+        .difference(&actual)
+        .map(|entry| ('-', entry))
+        .chain(actual.difference(&expected).map(|entry| ('+', entry)))
+        .map(|(sign, &(pkg_id, dep_id))| match dep_id {
+            Some(dep_id) => format!("  {sign} {} -> {}", display(pkg_id), display(dep_id)),
+            None => format!("  {sign} {}", display(pkg_id)),
+        });
+    let mut message = differences.by_ref().take(MAX_LINES).collect::<Vec<_>>();
+    let remaining = differences.count();
+    if remaining > 0 {
+        message.push(format!("  ... and {remaining} more"));
+    }
+
+    bail!(
+        "resolving against vendored sources produced a different dependency graph than {} \
+         (- in Cargo.lock, + resolved by buckify):\n{}\n\
+         Run `reindeer vendor` to bring Cargo.lock and the vendor directory back in sync.",
+        lockfile_path.display(),
+        message.join("\n"),
+    );
+}
+
+#[derive(Default)]
+struct LockedPackages {
+    /// Name and version of every package Cargo.lock attributes to the source.
+    allowed: BTreeSet<(InternedString, semver::Version)>,
+    /// `[[patch.unused]]` entries from Cargo.lock. Vendoring does not keep
+    /// these, so they might not exist in the vendor directory.
+    unused_patches: Vec<PackageId>,
+}
+
+/// Source that only reports packages that Cargo.lock attributes to it.
+///
+/// Without this, every source would see all crates in the shared vendor
+/// directory: a git `[patch]` source would see the crates.io version of the
+/// patched crate. If that does not match the patch's locked version, Cargo
+/// unlocks the patch along with everything it depends on, and dependencies
+/// with broad version requirements resolve differently than in Cargo.lock.
+struct LockfileSource<'gctx> {
+    inner: ReplacedSource<'gctx>,
+    locked: LockedPackages,
+}
+
+#[async_trait(?Send)]
+impl<'gctx> CargoSource for LockfileSource<'gctx> {
+    fn source_id(&self) -> SourceId {
+        self.inner.source_id()
+    }
+
+    fn replaced_source_id(&self) -> SourceId {
+        self.inner.replaced_source_id()
+    }
+
+    fn supports_checksums(&self) -> bool {
+        self.inner.supports_checksums()
+    }
+
+    fn requires_precise(&self) -> bool {
+        self.inner.requires_precise()
+    }
+
+    async fn query(
+        &self,
+        dep: &Dependency,
+        kind: QueryKind,
+        f: &mut dyn FnMut(IndexSummary),
+    ) -> anyhow::Result<()> {
+        let mut found = BTreeSet::new();
+        self.inner
+            .query(dep, kind, &mut |summary| {
+                let pkg_id = summary.package_id();
+                if self
+                    .locked
+                    .allowed
+                    .contains(&(pkg_id.name(), pkg_id.version().clone()))
+                {
+                    found.insert(pkg_id);
+                    f(summary);
+                }
+            })
+            .await?;
+
+        // Stand in for unused patches that are not vendored, so that Cargo
+        // keeps them locked. Nothing depends on them, so they never need a
+        // real manifest.
+        for &pkg_id in &self.locked.unused_patches {
+            if dep.matches_id(pkg_id) && !found.contains(&pkg_id) {
+                let features = BTreeMap::new();
+                let summary =
+                    Summary::new(pkg_id, Vec::new(), &features, None::<InternedString>, None)?;
+                f(IndexSummary::Candidate(summary));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn invalidate_cache(&self) {
+        self.inner.invalidate_cache();
+    }
+
+    fn set_quiet(&mut self, quiet: bool) {
+        self.inner.set_quiet(quiet);
+    }
+
+    async fn download(&self, pkg_id: PackageId) -> anyhow::Result<MaybePackage> {
+        self.inner.download(pkg_id).await
+    }
+
+    async fn finish_download(
+        &self,
+        pkg_id: PackageId,
+        contents: Vec<u8>,
+    ) -> anyhow::Result<cargo::core::Package> {
+        self.inner.finish_download(pkg_id, contents).await
+    }
+
+    fn fingerprint(&self, pkg: &cargo::core::Package) -> anyhow::Result<String> {
+        self.inner.fingerprint(pkg)
+    }
+
+    fn verify(&self, pkg_id: PackageId) -> anyhow::Result<()> {
+        self.inner.verify(pkg_id)
+    }
+
+    fn describe(&self) -> String {
+        self.inner.describe()
+    }
+
+    fn is_replaced(&self) -> bool {
+        self.inner.is_replaced()
+    }
 }
 
 pub struct SharedSource<'gctx> {
