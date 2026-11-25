@@ -318,6 +318,113 @@ fn fast_vendor(
         }
     }
 
+    // Generate .cargo/config.toml with source replacements before mutating the
+    // vendor tree so serialization failures are caught early.
+    let vendor_config = generate_vendor_config(&sources)?;
+
+    let total = pending_crates.len();
+    if total > 0 {
+        eprintln!("Checking {total} vendored crates...");
+    }
+
+    // Crates from cached registry archives already have known expected
+    // contents. Compare them with the vendor directory in the background while
+    // Cargo loads the other crates on this thread. This only reads. The vendor
+    // directory is not modified until everything has loaded successfully.
+    let is_archive_crate = pending_crates
+        .iter()
+        .map(|pending| {
+            matches!(
+                pending.materialization,
+                PendingMaterialization::RegistryArchive { .. },
+            )
+        })
+        .collect::<Vec<_>>();
+    let archive_crates = pending_crates
+        .iter()
+        .filter_map(|pending| match &pending.materialization {
+            PendingMaterialization::RegistryArchive { archive } => Some(ExpectedCrate {
+                dst_name: pending.dst_name.clone(),
+                dst: pending.dst.clone(),
+                pkg_cksum: pending.pkg_cksum.clone(),
+                materialization: Materialization::RegistryArchive {
+                    archive: archive.clone(),
+                },
+            }),
+            PendingMaterialization::LoadFromPackageSet => None,
+        })
+        .collect::<Vec<_>>();
+    let (archive_crate_matches, expected_crates) = thread::scope(|scope| {
+        let archive_crate_matches = scope.spawn(|| {
+            parallel_map(&archive_crates, |expected| {
+                vendor_dir_matches_expected_source(config, expected, gitignore)
+                    .with_context(|| format!("failed to vendor {}", expected.dst_name))
+            })
+        });
+        let expected_crates = load_expected_crates(&gctx, paths, pending_crates, &package_load_ids);
+        let archive_crate_matches = archive_crate_matches
+            .join()
+            .unwrap_or_else(|err| panic::resume_unwind(err));
+        (archive_crate_matches, expected_crates)
+    });
+    let expected_crates = expected_crates?;
+    let mut archive_crate_matches = archive_crate_matches.into_iter();
+    let known_matches = is_archive_crate
+        .into_iter()
+        .map(|is_archive_crate| {
+            is_archive_crate
+                .then(|| {
+                    archive_crate_matches
+                        .next()
+                        .expect("should have compared every archive crate")
+                })
+                .transpose()
+        })
+        .collect::<anyhow::Result<Vec<_>>>()
+        .context(PARTIAL_UPDATE_HELP)?;
+
+    // Compare the remaining crates in parallel and replace only mismatches.
+    let crates = expected_crates
+        .into_iter()
+        .zip(known_matches)
+        .collect::<Vec<_>>();
+    let progress = AtomicUsize::new(0);
+    let process_result = parallel_map(&crates, |(expected, known_match)| {
+        process_expected_crate(config, expected, *known_match, gitignore)
+            .with_context(|| format!("failed to vendor {}", expected.dst_name))?;
+        let completed = progress.fetch_add(1, Ordering::Relaxed) + 1;
+        if completed == total || completed.is_multiple_of(250) {
+            eprintln!("Checked {completed}/{total} vendored crates...");
+        }
+        Ok(())
+    })
+    .into_iter()
+    .collect::<anyhow::Result<()>>();
+    process_result.context(PARTIAL_UPDATE_HELP)?;
+
+    // Remove stale vendor entries left behind by prior runs or by drift in the
+    // top-level vendor directory.
+    for stale in &to_remove {
+        remove_existing_path(stale)?;
+    }
+
+    fs::create_dir_all(&paths.cargo_home)?;
+    write_regular_file_if_changed(&cargo_config_path, vendor_config.as_bytes())
+        .with_context(|| format!("failed to write {}", cargo_config_path.display()))?;
+
+    Ok(())
+}
+
+const PARTIAL_UPDATE_HELP: &str = "fast vendoring failed; if the vendor tree was partially updated, run `sl revert third-party/rust/vendor third-party/rust/.cargo/config.toml`, then `sl purge --cwd \"$FBSOURCE\" --all third-party/rust/vendor`, then retry `fbcode/common/rust/tools/reindeer/vendor --fast`";
+
+/// Expected contents of each pending crate, loading the packages that are not
+/// in a cached registry archive.
+fn load_expected_crates(
+    gctx: &cargo::GlobalContext,
+    paths: &Paths,
+    pending_crates: Vec<PendingCrate>,
+    package_load_ids: &[PackageId],
+) -> anyhow::Result<Vec<ExpectedCrate>> {
     let original_package_set = if package_load_ids.is_empty() {
         None
     } else {
@@ -331,14 +438,14 @@ fn fast_vendor(
             package_load_ids.len(),
         );
 
-        let original_source_config = cargo::sources::SourceConfigMap::empty(&gctx)?;
+        let original_source_config = cargo::sources::SourceConfigMap::empty(gctx)?;
         let mut original_source_map = cargo::sources::source::SourceMap::new();
         {
             let _lock = gctx.acquire_package_cache_lock(CacheLockMode::DownloadExclusive)?;
             for (index, source_id) in source_ids_to_load.iter().copied().enumerate() {
                 let source: Box<dyn Source> = if source_id.is_git() {
                     eprintln!("Fetching git source {source_id}...");
-                    let mut git_source = GitSource::new(source_id, &gctx)
+                    let mut git_source = GitSource::new(source_id, gctx)
                         .with_context(|| format!("failed to load original source {source_id}"))?;
                     git_source
                         .read_packages()
@@ -361,7 +468,7 @@ fn fast_vendor(
         }
 
         let package_set =
-            cargo::core::PackageSet::new(&package_load_ids, original_source_map, &gctx)?;
+            cargo::core::PackageSet::new(package_load_ids, original_source_map, gctx)?;
         eprintln!(
             "Downloading/materializing {} git or missing-cache crate(s)...",
             package_load_ids.len(),
@@ -409,7 +516,7 @@ fn fast_vendor(
                     let file_paths = cargo::sources::PathSource::new(
                         original_pkg.root(),
                         pending.pkg_id.source_id(),
-                        &gctx,
+                        gctx,
                     )
                     .list_files(original_pkg)?
                     .into_iter()
@@ -420,7 +527,7 @@ fn fast_vendor(
                             original_pkg,
                             &file_paths,
                             &src_root,
-                            &gctx,
+                            gctx,
                         )?)
                     } else {
                         None
@@ -442,44 +549,7 @@ fn fast_vendor(
         });
     }
 
-    // Generate .cargo/config.toml with source replacements before mutating the
-    // vendor tree so serialization failures are caught early.
-    let vendor_config = generate_vendor_config(&sources)?;
-
-    // Compare expected crates in parallel and replace only mismatches.
-    let total = expected_crates.len();
-    let progress = AtomicUsize::new(0);
-
-    if total > 0 {
-        eprintln!("Checking {total} vendored crates...");
-    }
-
-    let process_result = parallel_map(&expected_crates, |expected| {
-        process_expected_crate(config, expected, gitignore)
-            .with_context(|| format!("failed to vendor {}", expected.dst_name))?;
-        let completed = progress.fetch_add(1, Ordering::Relaxed) + 1;
-        if completed == total || completed.is_multiple_of(250) {
-            eprintln!("Checked {completed}/{total} vendored crates...");
-        }
-        Ok(())
-    })
-    .into_iter()
-    .collect::<anyhow::Result<()>>();
-    process_result.context(
-        "fast vendoring failed; if the vendor tree was partially updated, run `sl revert third-party/rust/vendor third-party/rust/.cargo/config.toml`, then `sl purge --cwd \"$FBSOURCE\" --all third-party/rust/vendor`, then retry `fbcode/common/rust/tools/reindeer/vendor --fast`",
-    )?;
-
-    // Remove stale vendor entries left behind by prior runs or by drift in the
-    // top-level vendor directory.
-    for stale in &to_remove {
-        remove_existing_path(stale)?;
-    }
-
-    fs::create_dir_all(&paths.cargo_home)?;
-    write_regular_file_if_changed(&cargo_config_path, vendor_config.as_bytes())
-        .with_context(|| format!("failed to write {}", cargo_config_path.display()))?;
-
-    Ok(())
+    Ok(expected_crates)
 }
 
 /// Apply `f` to every item on multiple threads. Threads take the next item
@@ -673,12 +743,19 @@ fn is_split_buck_file(config: &Config, relative: &Path) -> bool {
     config.buck.split && *relative == *config.buck.file_name
 }
 
+/// Replace the vendored crate if it does not match its expected contents.
+/// `known_match` is the result of comparing them, if already done.
 fn process_expected_crate(
     config: &Config,
     expected: &ExpectedCrate,
+    known_match: Option<bool>,
     gitignore: &Gitignore,
 ) -> anyhow::Result<()> {
-    if vendor_dir_matches_expected_source(config, expected, gitignore)? {
+    let matches = match known_match {
+        Some(matches) => matches,
+        None => vendor_dir_matches_expected_source(config, expected, gitignore)?,
+    };
+    if matches {
         return Ok(());
     }
 
