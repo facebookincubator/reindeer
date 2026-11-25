@@ -112,6 +112,19 @@ where
     .parse(i)
 }
 
+// Parse a target name the way Cargo accepts it in `[target.<name>]`. Unlike
+// an atom it may contain dots, for example `thumbv8m.main-none-eabihf`.
+fn target<'a, E>(i: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
+    preceded(
+        sp,
+        take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '-' || c == '.'),
+    )
+    .parse(i)
+}
+
 // Parses: `keyword` '(' inner ')'
 fn operator<'a, F>(
     kw: &'static str,
@@ -179,7 +192,7 @@ where
                 keyword("cfg"),
                 cut(delimited(sep('('), parse_predicate, sep(')'))),
             ),
-            map(atom, |triple| PlatformExpr::Target(triple.to_owned())),
+            map(target, |triple| PlatformExpr::Target(triple.to_owned())),
         )),
     )
     .parse(i)
@@ -195,6 +208,16 @@ mod test {
         let res = cfg::parse::<(_, nom::error::ErrorKind)>("x86_64-unknown-linux-gnu");
         println!("res = {:?}", res);
         assert_eq!(res, Ok(("", Target("x86_64-unknown-linux-gnu".to_owned()))));
+    }
+
+    #[test]
+    fn test_target_triple_with_dot() {
+        let res = cfg::parse::<(_, nom::error::ErrorKind)>("thumbv8m.main-none-eabihf");
+        println!("res = {:?}", res);
+        assert_eq!(
+            res,
+            Ok(("", Target("thumbv8m.main-none-eabihf".to_owned())))
+        );
     }
 
     #[test]
