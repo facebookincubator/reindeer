@@ -17,6 +17,8 @@ use std::fs;
 use std::io;
 use std::io::ErrorKind;
 use std::io::Read as _;
+use std::num::NonZero;
+use std::panic;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
@@ -235,7 +237,29 @@ fn fast_vendor(
         eprintln!("Preparing expected contents for {n} vendored crates...");
     }
 
+    // Finding a cached registry archive involves hashing it, so look them all
+    // up in parallel. Errors are reported in order in the loop below.
+    let registry_checksums = original_package_ids
+        .iter()
+        .map(|&pkg_id| {
+            let pkg_cksum = resolve.checksums().get(&pkg_id).cloned().flatten();
+            (
+                pkg_id,
+                pkg_cksum.filter(|_| pkg_id.source_id().is_registry()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut cached_registry_archives =
+        parallel_map(&registry_checksums, |(pkg_id, pkg_cksum)| match pkg_cksum {
+            Some(pkg_cksum) => find_cached_registry_archive(&paths.cargo_home, *pkg_id, pkg_cksum),
+            None => Ok(None),
+        })
+        .into_iter();
+
     for pkg_id in original_package_ids.iter().copied() {
+        let cached_registry_archive = cached_registry_archives
+            .next()
+            .expect("should have looked up every package");
         if pkg_id.source_id().is_git() {
             eprintln!("Preparing git crate {pkg_id}...");
         }
@@ -261,12 +285,10 @@ fn fast_vendor(
         let pkg_cksum = resolve.checksums().get(&pkg_id).and_then(|c| c.clone());
 
         let materialization = if pkg_id.source_id().is_registry() {
-            let pkg_cksum = pkg_cksum.as_deref().with_context(|| {
+            pkg_cksum.as_deref().with_context(|| {
                 format!("missing lockfile checksum for registry package {pkg_id}")
             })?;
-            if let Some(archive) =
-                find_cached_registry_archive(&paths.cargo_home, pkg_id, pkg_cksum)?
-            {
+            if let Some(archive) = cached_registry_archive? {
                 PendingMaterialization::RegistryArchive { archive }
             } else {
                 package_load_ids.push(pkg_id);
@@ -425,8 +447,6 @@ fn fast_vendor(
     let vendor_config = generate_vendor_config(&sources)?;
 
     // Compare expected crates in parallel and replace only mismatches.
-    let num_threads = std::thread::available_parallelism().map_or(8, |n| n.get());
-    let chunk_size = expected_crates.len().div_ceil(num_threads.max(1));
     let total = expected_crates.len();
     let progress = AtomicUsize::new(0);
 
@@ -434,30 +454,17 @@ fn fast_vendor(
         eprintln!("Checking {total} vendored crates...");
     }
 
-    let progress = &progress;
-    let process_result = thread::scope(|s| {
-        let handles: Vec<_> = expected_crates
-            .chunks(chunk_size.max(1))
-            .map(|chunk| {
-                s.spawn(move || {
-                    for expected in chunk {
-                        process_expected_crate(config, expected, gitignore)
-                            .with_context(|| format!("failed to vendor {}", expected.dst_name))?;
-                        let completed = progress.fetch_add(1, Ordering::Relaxed) + 1;
-                        if completed == total || completed.is_multiple_of(250) {
-                            eprintln!("Checked {completed}/{total} vendored crates...");
-                        }
-                    }
-                    Ok::<_, anyhow::Error>(())
-                })
-            })
-            .collect();
-
-        for handle in handles {
-            handle.join().expect("vendor thread panicked")?;
+    let process_result = parallel_map(&expected_crates, |expected| {
+        process_expected_crate(config, expected, gitignore)
+            .with_context(|| format!("failed to vendor {}", expected.dst_name))?;
+        let completed = progress.fetch_add(1, Ordering::Relaxed) + 1;
+        if completed == total || completed.is_multiple_of(250) {
+            eprintln!("Checked {completed}/{total} vendored crates...");
         }
-        Ok::<_, anyhow::Error>(())
-    });
+        Ok(())
+    })
+    .into_iter()
+    .collect::<anyhow::Result<()>>();
     process_result.context(
         "fast vendoring failed; if the vendor tree was partially updated, run `sl revert third-party/rust/vendor third-party/rust/.cargo/config.toml`, then `sl purge --cwd \"$FBSOURCE\" --all third-party/rust/vendor`, then retry `fbcode/common/rust/tools/reindeer/vendor --fast`",
     )?;
@@ -473,6 +480,53 @@ fn fast_vendor(
         .with_context(|| format!("failed to write {}", cargo_config_path.display()))?;
 
     Ok(())
+}
+
+/// Apply `f` to every item on multiple threads. Threads take the next item
+/// when they finish one, so a few large items do not hold up a fixed share of
+/// the rest. Returns results in the same order as `items`.
+fn parallel_map<T, R>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+{
+    // The work here is mostly reading files. Beyond a few dozen threads,
+    // contention in the kernel grows faster than throughput: checking the
+    // fbsource vendor directory with 316 threads instead of 64 took longer and
+    // used 7 times the system CPU time.
+    const MAX_THREADS: usize = 64;
+    let next = AtomicUsize::new(0);
+    let threads = thread::available_parallelism()
+        .map_or(8, NonZero::get)
+        .min(MAX_THREADS)
+        .min(items.len())
+        .max(1);
+    let mut results = thread::scope(|scope| {
+        let handles = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut results = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(item) = items.get(i) else {
+                            return results;
+                        };
+                        results.push((i, f(item)));
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .flat_map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|err| panic::resume_unwind(err))
+            })
+            .collect::<Vec<_>>()
+    });
+    results.sort_by_key(|(i, _)| *i);
+    results.into_iter().map(|(_, result)| result).collect()
 }
 
 fn path_file_type_no_follow(path: &Path) -> anyhow::Result<Option<fs::FileType>> {
