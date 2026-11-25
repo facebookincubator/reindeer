@@ -27,13 +27,14 @@ use cargo::sources::source::QueryKind;
 use cargo::sources::source::Source as CargoSource;
 use cargo::util::OptVersionReq;
 use cargo::util::cache_lock::CacheLockMode;
+use cargo::util::interning::InternedString;
 use foldhash::HashMap;
 use semver::Version;
 use semver::VersionReq;
 
 use crate::Paths;
+use crate::fixups::FixupConfigFile;
 use crate::fixups::ResolverDependencyFixup;
-use crate::fixups::resolver_fixups_for_package;
 use crate::semver_ext::compatibility_lane_for_version;
 use crate::semver_ext::topmost_compatible_version;
 use crate::semver_ext::version_req_bounds;
@@ -51,6 +52,9 @@ struct DeterministicSource<'gctx> {
     context: DeterministicSourceContext,
     candidate_sources: HashMap<SourceId, Box<dyn CargoSource + 'gctx>>,
     fixup_cache: RefCell<BTreeMap<PackageId, BTreeMap<String, ResolverDependencyFixup>>>,
+    /// Loaded fixups.toml by package name. Resolution looks at many versions
+    /// of each package.
+    fixup_files: RefCell<BTreeMap<InternedString, Rc<FixupConfigFile>>>,
 }
 
 impl<'gctx> DeterministicSource<'gctx> {
@@ -60,6 +64,7 @@ impl<'gctx> DeterministicSource<'gctx> {
             context,
             candidate_sources: HashMap::default(),
             fixup_cache: RefCell::new(BTreeMap::new()),
+            fixup_files: RefCell::new(BTreeMap::new()),
         }
     }
 }
@@ -178,16 +183,25 @@ impl<'gctx> DeterministicSource<'gctx> {
         let fixups = match fixup_cache.entry(parent) {
             btree_map::Entry::Occupied(entry) => entry.into_mut(),
             btree_map::Entry::Vacant(entry) => {
-                let fixups = resolver_fixups_for_package(
-                    &self.context.fixups_dir,
-                    parent.name().as_str(),
-                    parent.version(),
-                )?;
-                entry.insert(fixups)
+                let fixup_file = self.fixup_file(parent.name())?;
+                entry.insert(fixup_file.resolver_fixups_for_version(parent.version()))
             }
         };
 
         Ok(fixups.get(dependency.name_in_toml().as_str()).cloned())
+    }
+
+    fn fixup_file(&self, name: InternedString) -> anyhow::Result<Rc<FixupConfigFile>> {
+        if let Some(fixup_file) = self.fixup_files.borrow().get(&name) {
+            return Ok(Rc::clone(fixup_file));
+        }
+        let fixup_file = Rc::new(FixupConfigFile::load(
+            self.context.fixups_dir.join(name.as_str()),
+        )?);
+        self.fixup_files
+            .borrow_mut()
+            .insert(name, Rc::clone(&fixup_file));
+        Ok(fixup_file)
     }
 
     fn record_dependency_source(&self, source_id: SourceId) {

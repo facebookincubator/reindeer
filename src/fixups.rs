@@ -159,15 +159,6 @@ impl<'meta> FixupsCache<'meta> {
     }
 }
 
-pub(crate) fn resolver_fixups_for_package(
-    fixups_dir: &Path,
-    package_name: &str,
-    package_version: &semver::Version,
-) -> anyhow::Result<BTreeMap<String, ResolverDependencyFixup>> {
-    let fixup_dir = fixups_dir.join(package_name);
-    Ok(FixupConfigFile::load(fixup_dir)?.resolver_fixups_for_version(package_version))
-}
-
 impl<'meta> Fixups<'meta> {
     fn configs(&self, platform_name: &PlatformName) -> Vec<&FixupConfig> {
         let mut configs = Vec::with_capacity(1 + self.fixup_config.platform_fixup.len());
