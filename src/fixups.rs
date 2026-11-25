@@ -68,7 +68,7 @@ use crate::fixups::config::CargoEnvPurpose;
 pub use crate::fixups::config::CargoEnvs;
 pub use crate::fixups::config::ExportSources;
 use crate::fixups::config::FixupConfig;
-use crate::fixups::config::FixupConfigFile;
+pub(crate) use crate::fixups::config::FixupConfigFile;
 pub(crate) use crate::fixups::config::ResolverDependencyFixup;
 use crate::gitignore::Gitignore;
 use crate::glob::GlobSetKind;

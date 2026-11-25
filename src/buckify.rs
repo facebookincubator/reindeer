@@ -24,21 +24,24 @@ use std::mem;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::PoisonError;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::thread;
 
 use anyhow::Context;
 use anyhow::bail;
-use cached::macros::cached;
 use cargo::core::PackageId;
 use fnv::FnvHasher;
 use foldhash::HashMap;
 use foldhash::HashSet;
 use indoc::writedoc;
 use itertools::Itertools;
+use serde::Deserialize;
 use url::Url;
 
 use crate::Args;
@@ -82,6 +85,7 @@ use crate::config::Config;
 use crate::config::VendorConfig;
 use crate::config::VendorSourceConfig;
 use crate::fixups::ExportSources;
+use crate::fixups::FixupConfigFile;
 use crate::fixups::FixupsCache;
 use crate::gitignore::Gitignore;
 use crate::gitignore::load_gitignore;
@@ -197,6 +201,7 @@ struct RuleContext<'meta> {
     fixups: FixupsCache<'meta>,
     collision_info: CollisionInfo,
     http_client: reqwest::blocking::Client,
+    srcfiles: Arc<SrcfilesCache>,
     done: Mutex<HashSet<(PackageId, TargetReq<'meta>)>>,
 }
 
@@ -513,14 +518,35 @@ pub fn find_repository_root(manifest_dir: &Path) -> anyhow::Result<&Path> {
     }
 }
 
-#[cached]
-fn srcfiles(manifest_dir: PathBuf, crate_root: PathBuf) -> Vec<PathBuf> {
-    let sources = crate_srcfiles(&manifest_dir, &crate_root);
+/// Memoized `crate_srcfiles` by manifest dir and crate root. Asking for a
+/// crate that another thread is in the middle of computing waits for that
+/// thread's result.
+#[derive(Default)]
+struct SrcfilesCache {
+    memo: Mutex<HashMap<(PathBuf, PathBuf), Arc<OnceLock<Vec<PathBuf>>>>>,
+}
+
+impl SrcfilesCache {
+    fn get(&self, manifest_dir: &Path, crate_root: &Path) -> Vec<PathBuf> {
+        let cell = Arc::clone(
+            self.memo
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry((manifest_dir.to_owned(), crate_root.to_owned()))
+                .or_default(),
+        );
+        cell.get_or_init(|| srcfiles(manifest_dir, crate_root))
+            .clone()
+    }
+}
+
+fn srcfiles(manifest_dir: &Path, crate_root: &Path) -> Vec<PathBuf> {
+    let sources = crate_srcfiles(manifest_dir, crate_root);
     if sources.errors.is_empty() {
         let srcs = sources
             .files
             .into_iter()
-            .map(|src| normalize_path(&relative_path(&manifest_dir, &src)))
+            .map(|src| normalize_path(&relative_path(manifest_dir, &src)))
             .collect::<Vec<_>>();
         log::debug!("crate_srcfiles returned {:#?}", srcs);
         srcs
@@ -528,6 +554,117 @@ fn srcfiles(manifest_dir: PathBuf, crate_root: PathBuf) -> Vec<PathBuf> {
         log::debug!("crate_srcfiles failed: {:?}", sources.errors);
         vec![]
     }
+}
+
+/// Fill `cache` in the background with the srcs of every vendored crate's
+/// library and build script. Parsing all of the source files is most of
+/// buckify's CPU time, while the first several seconds of buckify are
+/// single-threaded in Cargo's resolver.
+fn prewarm_srcfiles(cache: Arc<SrcfilesCache>, config: &Config, paths: &Paths) {
+    let vendor_dir = paths.third_party_dir.join("vendor");
+    let fixups_dir = config.resolved_fixups_dir(&paths.third_party_dir);
+    let default_precise_srcs = config.precise_srcs;
+    thread::spawn(move || {
+        let Ok(read_dir) = fs::read_dir(&vendor_dir) else {
+            return;
+        };
+        let manifest_dirs = read_dir
+            .filter_map(|entry| Some(entry.ok()?.path()))
+            .collect::<Vec<_>>();
+        let next = AtomicUsize::new(0);
+        let workers =
+            thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1).max(1));
+        thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    while let Some(manifest_dir) =
+                        manifest_dirs.get(next.fetch_add(1, Ordering::Relaxed))
+                    {
+                        let crate_roots = precise_srcs_crate_roots(
+                            manifest_dir,
+                            &fixups_dir,
+                            default_precise_srcs,
+                        );
+                        for crate_root in crate_roots {
+                            cache.get(manifest_dir, &crate_root);
+                            // Release this thread's copies of the source files
+                            // parsed so far. No spans that refer to them are
+                            // still alive.
+                            proc_macro2::extra::invalidate_current_thread_spans();
+                        }
+                    }
+                });
+            }
+        });
+    });
+}
+
+/// Library and build script of a vendored crate, if `generate_target_rules`
+/// would get their srcs from `srcfiles`.
+fn precise_srcs_crate_roots(
+    manifest_dir: &Path,
+    fixups_dir: &Path,
+    default_precise_srcs: bool,
+) -> Vec<PathBuf> {
+    #[derive(Deserialize)]
+    struct CargoToml {
+        package: Package,
+        #[serde(default)]
+        lib: Lib,
+    }
+
+    #[derive(Deserialize)]
+    struct Package {
+        name: String,
+        version: semver::Version,
+        edition: Option<Edition>,
+        build: Option<Build>,
+    }
+
+    #[derive(Deserialize, Default)]
+    struct Lib {
+        path: Option<PathBuf>,
+        edition: Option<Edition>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Build {
+        Enabled(bool),
+        Path(PathBuf),
+    }
+
+    let Ok(cargo_toml) = fs::read_to_string(manifest_dir.join("Cargo.toml")) else {
+        return Vec::new();
+    };
+    let Ok(CargoToml { package, lib }) = toml::from_str(&cargo_toml) else {
+        return Vec::new();
+    };
+    let Ok(fixups) = FixupConfigFile::load(fixups_dir.join(&package.name)) else {
+        return Vec::new();
+    };
+    if !fixups
+        .precise_srcs(&package.version)
+        .unwrap_or(default_precise_srcs)
+    {
+        return Vec::new();
+    }
+
+    let edition = package.edition.unwrap_or(Edition::Rust2015);
+    let lib_root = (lib.edition.unwrap_or(edition) >= Edition::Rust2018)
+        .then(|| lib.path.unwrap_or_else(|| PathBuf::from("src/lib.rs")));
+    let build_root = match package.build {
+        _ if edition < Edition::Rust2018 => None,
+        Some(Build::Enabled(false)) => None,
+        Some(Build::Path(path)) => Some(path),
+        Some(Build::Enabled(true)) | None => Some(PathBuf::from("build.rs")),
+    };
+    lib_root
+        .into_iter()
+        .chain(build_root)
+        .map(|crate_root| manifest_dir.join(crate_root))
+        .filter(|crate_root| crate_root.is_file())
+        .collect()
 }
 
 /// Visibility scoped to a single crate's own vendor directory.
@@ -833,7 +970,7 @@ fn generate_target_rules<'a>(
                 tgt.name,
                 tgt.src_path.display()
             ));
-            srcs = srcfiles(manifest_dir.to_owned(), tgt.src_path.clone());
+            srcs = context.srcfiles.get(manifest_dir, &tgt.src_path);
             buckify_diagnostic(format_args!(
                 "srcfiles finish package={pkg} target={} files={}",
                 tgt.name,
@@ -1663,6 +1800,11 @@ pub(crate) fn buckify(
 ) -> anyhow::Result<()> {
     buckify_diagnostic(format_args!("buckify start fast={fast} stdout={stdout}"));
 
+    let srcfiles = Arc::new(SrcfilesCache::default());
+    if let VendorConfig::Source(_) = config.vendor {
+        prewarm_srcfiles(Arc::clone(&srcfiles), config, paths);
+    }
+
     let gitignore = load_gitignore(paths, source_config)?;
 
     let (lockfile, metadata) = {
@@ -1701,6 +1843,7 @@ pub(crate) fn buckify(
         fixups,
         collision_info,
         http_client: crate::crate_size::build_http_client()?,
+        srcfiles,
         done: Mutex::new(HashSet::default()),
     };
     let rules = do_buckify(&context)?;

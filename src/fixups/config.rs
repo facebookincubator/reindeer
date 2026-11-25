@@ -156,6 +156,19 @@ impl FixupConfigFile {
         Ok(fixup_config)
     }
 
+    /// The `precise_srcs` setting for a version of the crate, if it has one.
+    /// Unlike `Fixups::precise_srcs`, this does not mark any fixups as used.
+    pub(crate) fn precise_srcs(&self, version: &Version) -> Option<bool> {
+        iter::once(&self.base)
+            .chain(
+                self.platform_fixup
+                    .iter()
+                    .filter(|fixup| fixup.platform.eval_only_version(version) == Some(true)),
+            )
+            .filter_map(|fixup| fixup.precise_srcs)
+            .last()
+    }
+
     pub fn collect_unused(
         &self,
         pkg: &str,
