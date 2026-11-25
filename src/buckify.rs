@@ -985,7 +985,7 @@ fn generate_target_rules<'a>(
                     }),
                     visibility: Visibility::Private,
                     licenses: Default::default(),
-                    metadata,
+                    metadata: metadata.clone(),
                     compatible_with: vec![],
                     target_compatible_with: Select {
                         common: vec![],
@@ -1005,7 +1005,6 @@ fn generate_target_rules<'a>(
             buildscript,
             config,
             manifest_dir_subtarget,
-            index,
             tgt,
             &compatible_platforms,
             collision_info,
@@ -1208,7 +1207,7 @@ fn generate_target_rules<'a>(
                         Visibility::Private
                     },
                     licenses,
-                    metadata,
+                    metadata: metadata.clone(),
                     compatible_with: fixups.compatible_with().clone(),
                     target_compatible_with: Select {
                         common: fixups.target_compatible_with().clone(),
@@ -1375,7 +1374,7 @@ fn generate_target_rules<'a>(
                         Visibility::Private
                     },
                     licenses,
-                    metadata,
+                    metadata: metadata.clone(),
                     compatible_with: fixups.compatible_with().clone(),
                     target_compatible_with: Select {
                         common: fixups.target_compatible_with().clone(),
@@ -1423,6 +1422,14 @@ fn generate_target_rules<'a>(
 
         vec![]
     };
+
+    rules.extend(fixups.emit_cxx_library_rules(
+        config,
+        &metadata,
+        index,
+        &compatible_platforms,
+        collision_info,
+    )?);
 
     for ExportSources {
         name,

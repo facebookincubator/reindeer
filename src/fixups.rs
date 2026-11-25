@@ -33,6 +33,7 @@ use crate::buck::Common;
 use crate::buck::CxxLibrary;
 use crate::buck::Filegroup;
 use crate::buck::FilegroupSources;
+use crate::buck::Metadata;
 use crate::buck::Name;
 use crate::buck::PackageVersion;
 use crate::buck::PlatformBuildscriptGenrule;
@@ -465,14 +466,11 @@ impl<'meta> Fixups<'meta> {
         mut buildscript_build: RustBinary,
         config: &'meta Config,
         manifest_dir: Option<SubtargetOrPath>,
-        index: &Index,
         target: &ManifestTarget,
         compatible_platforms: &BTreeSet<&PlatformName>,
         collision_info: &CollisionInfo,
     ) -> anyhow::Result<Vec<Rule>> {
         let mut res = Vec::new();
-
-        let rel_fixup = relative_path(self.third_party_dir, &self.fixup_config.fixup_dir);
 
         let buildscript_rule_name = match self.buildscript_rule_name(collision_info) {
             None => {
@@ -513,408 +511,10 @@ impl<'meta> Fixups<'meta> {
             }
         }
 
-        let configs_grouped_by_platform = self.configs_grouped_by_platform(compatible_platforms);
-        let mut cxx_libraries = Vec::new();
-        let mut prebuilt_cxx_libraries = Vec::new();
-        for (fixup, platforms) in &configs_grouped_by_platform {
-            for library in &fixup.cxx_library {
-                cxx_libraries.push((library, platforms));
-            }
-            for library in &fixup.prebuilt_cxx_library {
-                prebuilt_cxx_libraries.push((library, platforms));
-            }
-        }
-
         let mut buildscript_platforms = BTreeSet::new();
         for &platform_name in compatible_platforms {
             if self.has_buildscript_for_platform(platform_name) {
                 buildscript_platforms.insert(platform_name);
-            }
-        }
-
-        // Emit a C++ library build rule (elsewhere - add a dependency to it)
-        for (
-            CxxLibraryFixup {
-                name,
-                srcs,
-                headers,
-                exported_header_style,
-                exported_headers,
-                public,
-                include_paths,
-                fixup_include_paths,
-                exclude,
-                compiler_flags,
-                preprocessor_flags,
-                header_namespace,
-                deps,
-                compatible_with,
-                target_compatible_with,
-                preferred_linkage,
-                undefined_symbols,
-                ..
-            },
-            cxx_library_platforms,
-        ) in cxx_libraries
-        {
-            let cxx_library_target = if self.config.buck.split {
-                res.push(Rule::CxxLibrary(CxxLibrary {
-                    owner: PackageVersion {
-                        name: self.package.name.clone(),
-                        version: self.package.version.clone(),
-                    },
-                    common: Common {
-                        name: Name(name.clone()),
-                        visibility: Visibility::Custom(vec![
-                            format!("//{}:", self.paths.buck_package),
-                            format!(
-                                "//{}{}vendor/...",
-                                self.paths.buck_package,
-                                if self.paths.buck_package.is_empty() {
-                                    ""
-                                } else {
-                                    "/"
-                                },
-                            ),
-                        ]),
-                        licenses: Default::default(),
-                        metadata: buildscript_build.common.common.metadata.clone(),
-                        compatible_with: compatible_with.clone(),
-                        target_compatible_with: Select {
-                            common: target_compatible_with.clone(),
-                            selects: vec![],
-                        },
-                    },
-                    srcs: Globs::new(srcs, exclude)
-                        .walk(self.manifest_dir, self.gitignore)?
-                        .into_iter()
-                        .map(|path| SubtargetOrPath::Path(BuckPath(path)))
-                        .collect(),
-                    headers: Globs::new(headers, exclude)
-                        .walk(self.manifest_dir, self.gitignore)?
-                        .into_iter()
-                        .map(|path| SubtargetOrPath::Path(BuckPath(path)))
-                        .collect(),
-                    exported_header_style: exported_header_style.clone(),
-                    exported_headers: match exported_headers {
-                        ExportedHeaders::Set(exported_headers) => {
-                            let exported_header_globs = Globs::new(exported_headers, exclude);
-                            let exported_headers = exported_header_globs
-                                .walk(self.manifest_dir, self.gitignore)?
-                                .into_iter()
-                                .map(|path| SubtargetOrPath::Path(BuckPath(path)))
-                                .collect();
-                            SetOrMap::Set(exported_headers)
-                        }
-                        ExportedHeaders::Map(exported_headers) => SetOrMap::Map(
-                            exported_headers
-                                .iter()
-                                .map(|(name, path)| {
-                                    (
-                                        name.clone(),
-                                        SubtargetOrPath::Path(BuckPath(PathBuf::from(
-                                            path.clone(),
-                                        ))),
-                                    )
-                                })
-                                .collect(),
-                        ),
-                    },
-                    include_directories: fixup_include_paths
-                        .iter()
-                        .map(|path| {
-                            SubtargetOrPath::Path(BuckPath(PathBuf::from(format!(
-                                "//{}{}fixups/{}/{}:include",
-                                self.paths.buck_package,
-                                if self.paths.buck_package.is_empty() {
-                                    ""
-                                } else {
-                                    "/"
-                                },
-                                self.package.name,
-                                path.to_str().unwrap(),
-                            ))))
-                        })
-                        .chain(
-                            include_paths
-                                .iter()
-                                .map(|path| SubtargetOrPath::Path(BuckPath(path.clone()))),
-                        )
-                        .collect(),
-                    compiler_flags: compiler_flags.clone(),
-                    preprocessor_flags: preprocessor_flags.clone(),
-                    header_namespace: header_namespace.clone(),
-                    deps: deps.iter().cloned().map(RuleRef::new).collect(),
-                    preferred_linkage: preferred_linkage.clone(),
-                    undefined_symbols: *undefined_symbols,
-                    platforms: self
-                        .config
-                        .buck
-                        .platform_compatibility_on_all_targets
-                        .then(|| cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
-                }));
-                RuleRef::new(format!(
-                    "//{}{}vendor/{}:{}",
-                    self.paths.buck_package,
-                    if self.paths.buck_package.is_empty() {
-                        ""
-                    } else {
-                        "/"
-                    },
-                    self.package,
-                    name,
-                ))
-            } else {
-                let disp = collision_info.target_display(self.package);
-                let target_name = Name(format!("{}-{}", disp, name));
-                res.push(Rule::CxxLibrary(CxxLibrary {
-                    owner: PackageVersion {
-                        name: self.package.name.clone(),
-                        version: self.package.version.clone(),
-                    },
-                    common: Common {
-                        name: target_name.clone(),
-                        visibility: Visibility::Private,
-                        licenses: Default::default(),
-                        metadata: buildscript_build.common.common.metadata.clone(),
-                        compatible_with: compatible_with.clone(),
-                        target_compatible_with: Select {
-                            common: target_compatible_with.clone(),
-                            selects: vec![],
-                        },
-                    },
-                    // Just collect the sources, excluding things in the exclude list
-                    srcs: Globs::new(srcs, exclude)
-                        .walk(self.manifest_dir, self.gitignore)?
-                        .into_iter()
-                        .map(|path| self.subtarget_or_path(&path))
-                        .collect::<anyhow::Result<_>>()?,
-                    // Collect the nominated headers, plus everything in the fixup include
-                    // path(s).
-                    headers: {
-                        let globs = Globs::new(headers, exclude);
-                        let mut headers = BTreeSet::new();
-                        for path in globs.walk(self.manifest_dir, self.gitignore)? {
-                            headers.insert(self.subtarget_or_path(&path)?);
-                        }
-
-                        let globs = Globs::new(
-                            GlobSetKind::from_iter(["**/*.asm", "**/*.h"]).unwrap(),
-                            NO_EXCLUDE,
-                        );
-                        for fixup_include_path in fixup_include_paths {
-                            for path in globs.walk(
-                                self.fixup_config.fixup_dir.join(fixup_include_path),
-                                self.gitignore,
-                            )? {
-                                headers.insert(SubtargetOrPath::Path(BuckPath(
-                                    rel_fixup.join(fixup_include_path).join(path),
-                                )));
-                            }
-                        }
-
-                        headers
-                    },
-                    exported_header_style: exported_header_style.clone(),
-                    exported_headers: match exported_headers {
-                        ExportedHeaders::Set(exported_headers) => {
-                            let exported_header_globs = Globs::new(exported_headers, exclude);
-                            let exported_headers = exported_header_globs
-                                .walk(self.manifest_dir, self.gitignore)?
-                                .into_iter()
-                                .map(|path| self.subtarget_or_path(&path))
-                                .collect::<anyhow::Result<_>>()?;
-                            SetOrMap::Set(exported_headers)
-                        }
-                        ExportedHeaders::Map(exported_headers) => SetOrMap::Map(
-                            exported_headers
-                                .iter()
-                                .map(|(name, path)| {
-                                    Ok((name.clone(), self.subtarget_or_path(Path::new(path))?))
-                                })
-                                .collect::<anyhow::Result<_>>()?,
-                        ),
-                    },
-                    include_directories: fixup_include_paths
-                        .iter()
-                        .map(|path| Ok(SubtargetOrPath::Path(BuckPath(rel_fixup.join(path)))))
-                        .chain(
-                            include_paths
-                                .iter()
-                                .map(|path| self.subtarget_or_path(path)),
-                        )
-                        .collect::<anyhow::Result<_>>()?,
-                    compiler_flags: compiler_flags.clone(),
-                    preprocessor_flags: preprocessor_flags.clone(),
-                    header_namespace: header_namespace.clone(),
-                    deps: deps.iter().cloned().map(RuleRef::new).collect(),
-                    preferred_linkage: preferred_linkage.clone(),
-                    undefined_symbols: *undefined_symbols,
-                    platforms: self
-                        .config
-                        .buck
-                        .platform_compatibility_on_all_targets
-                        .then(|| cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
-                }));
-                RuleRef::from(target_name)
-            };
-
-            if *public {
-                res.push(Rule::Alias(Alias {
-                    owner: PackageVersion {
-                        name: self.package.name.clone(),
-                        version: self.package.version.clone(),
-                    },
-                    name: Name(format!("{}-{}", index.public_rule_name(self.package), name)),
-                    actual: cxx_library_target,
-                    platforms: (!config.buck.alias_with_platforms.is_default)
-                        .then(|| cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
-                    target_compatible_with: Select {
-                        common: target_compatible_with.clone(),
-                        selects: Vec::new(),
-                    },
-                    visibility: self.visibility(index),
-                    sort_key: Name(format!("{}-{}", self.package, name)),
-                }));
-            }
-        }
-
-        // Emit a prebuilt C++ library rule for each static library (elsewhere - add dependencies to them)
-        for (
-            PrebuiltCxxLibraryFixup {
-                name,
-                static_libs,
-                public,
-                compatible_with,
-                target_compatible_with,
-                preferred_linkage,
-                ..
-            },
-            prebuilt_cxx_library_platforms,
-        ) in prebuilt_cxx_libraries
-        {
-            let static_lib_globs = Globs::new(static_libs, NO_EXCLUDE);
-            for static_lib in static_lib_globs.walk(self.manifest_dir, self.gitignore)? {
-                let static_lib_file_name = static_lib.file_name().unwrap().to_string_lossy();
-                let prebuilt_cxx_library_target = if self.config.buck.split {
-                    let target_name = Name(format!("{}-{}", name, static_lib_file_name));
-                    res.push(Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
-                        owner: PackageVersion {
-                            name: self.package.name.clone(),
-                            version: self.package.version.clone(),
-                        },
-                        common: Common {
-                            name: target_name.clone(),
-                            visibility: Visibility::Custom(vec![
-                                format!("//{}:", self.paths.buck_package),
-                                format!(
-                                    "//{}{}vendor/...",
-                                    self.paths.buck_package,
-                                    if self.paths.buck_package.is_empty() {
-                                        ""
-                                    } else {
-                                        "/"
-                                    },
-                                ),
-                            ]),
-                            licenses: Default::default(),
-                            metadata: buildscript_build.common.common.metadata.clone(),
-                            compatible_with: compatible_with.clone(),
-                            target_compatible_with: Select {
-                                common: target_compatible_with.clone(),
-                                selects: vec![],
-                            },
-                        },
-                        static_lib: SubtargetOrPath::Path(BuckPath(static_lib.to_owned())),
-                        preferred_linkage: preferred_linkage.clone(),
-                        platforms: self.config.buck.platform_compatibility_on_all_targets.then(
-                            || {
-                                prebuilt_cxx_library_platforms
-                                    .iter()
-                                    .map(|&p| p.clone())
-                                    .collect()
-                            },
-                        ),
-                    }));
-                    RuleRef::new(format!(
-                        "//{}{}vendor/{}:{}",
-                        self.paths.buck_package,
-                        if self.paths.buck_package.is_empty() {
-                            ""
-                        } else {
-                            "/"
-                        },
-                        self.package,
-                        target_name,
-                    ))
-                } else {
-                    let disp = collision_info.target_display(self.package);
-                    let target_name = Name(format!(
-                        "{}-{}-{}",
-                        disp,
-                        name,
-                        static_lib.file_name().unwrap().to_string_lossy(),
-                    ));
-                    res.push(Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
-                        owner: PackageVersion {
-                            name: self.package.name.clone(),
-                            version: self.package.version.clone(),
-                        },
-                        common: Common {
-                            name: target_name.clone(),
-                            visibility: Visibility::Private,
-                            licenses: Default::default(),
-                            metadata: buildscript_build.common.common.metadata.clone(),
-                            compatible_with: compatible_with.clone(),
-                            target_compatible_with: Select {
-                                common: target_compatible_with.clone(),
-                                selects: vec![],
-                            },
-                        },
-                        static_lib: self.subtarget_or_path(&static_lib)?,
-                        preferred_linkage: preferred_linkage.clone(),
-                        platforms: self.config.buck.platform_compatibility_on_all_targets.then(
-                            || {
-                                prebuilt_cxx_library_platforms
-                                    .iter()
-                                    .map(|&p| p.clone())
-                                    .collect()
-                            },
-                        ),
-                    }));
-                    RuleRef::from(target_name)
-                };
-
-                if *public {
-                    res.push(Rule::Alias(Alias {
-                        owner: PackageVersion {
-                            name: self.package.name.clone(),
-                            version: self.package.version.clone(),
-                        },
-                        name: Name(format!(
-                            "{}-{}-{}",
-                            index.public_rule_name(self.package),
-                            name,
-                            static_lib_file_name,
-                        )),
-                        actual: prebuilt_cxx_library_target,
-                        platforms: (!config.buck.alias_with_platforms.is_default).then(|| {
-                            prebuilt_cxx_library_platforms
-                                .iter()
-                                .map(|&p| p.clone())
-                                .collect()
-                        }),
-                        target_compatible_with: Select {
-                            common: target_compatible_with.clone(),
-                            selects: Vec::new(),
-                        },
-                        visibility: self.visibility(index),
-                        sort_key: Name(format!(
-                            "{}-{}-{}",
-                            self.package, name, static_lib_file_name,
-                        )),
-                    }));
-                }
             }
         }
 
@@ -1132,6 +732,422 @@ impl<'meta> Fixups<'meta> {
 
             // Emit rule to get its stdout and filter it into args
             res.push(Rule::BuildscriptGenrule(buildscript_run));
+        }
+
+        Ok(res)
+    }
+
+    /// Return rules for `[[cxx_library]]` and `[[prebuilt_cxx_library]]`
+    /// fixups. These are emitted unconditionally; dependencies on them are
+    /// added by `compute_deps` for targets that have `add_dep`.
+    pub fn emit_cxx_library_rules(
+        &self,
+        config: &'meta Config,
+        metadata: &BTreeMap<String, Box<dyn Metadata>>,
+        index: &Index,
+        compatible_platforms: &BTreeSet<&PlatformName>,
+        collision_info: &CollisionInfo,
+    ) -> anyhow::Result<Vec<Rule>> {
+        let mut res = Vec::new();
+
+        let rel_fixup = relative_path(self.third_party_dir, &self.fixup_config.fixup_dir);
+
+        let configs_grouped_by_platform = self.configs_grouped_by_platform(compatible_platforms);
+        let mut cxx_libraries = Vec::new();
+        let mut prebuilt_cxx_libraries = Vec::new();
+        for (fixup, platforms) in &configs_grouped_by_platform {
+            for library in &fixup.cxx_library {
+                cxx_libraries.push((library, platforms));
+            }
+            for library in &fixup.prebuilt_cxx_library {
+                prebuilt_cxx_libraries.push((library, platforms));
+            }
+        }
+
+        // Emit a C++ library build rule (elsewhere - add a dependency to it)
+        for (
+            CxxLibraryFixup {
+                name,
+                srcs,
+                headers,
+                exported_header_style,
+                exported_headers,
+                public,
+                include_paths,
+                fixup_include_paths,
+                exclude,
+                compiler_flags,
+                preprocessor_flags,
+                header_namespace,
+                deps,
+                compatible_with,
+                target_compatible_with,
+                preferred_linkage,
+                undefined_symbols,
+                ..
+            },
+            cxx_library_platforms,
+        ) in cxx_libraries
+        {
+            let cxx_library_target = if self.config.buck.split {
+                res.push(Rule::CxxLibrary(CxxLibrary {
+                    owner: PackageVersion {
+                        name: self.package.name.clone(),
+                        version: self.package.version.clone(),
+                    },
+                    common: Common {
+                        name: Name(name.clone()),
+                        visibility: Visibility::Custom(vec![
+                            format!("//{}:", self.paths.buck_package),
+                            format!(
+                                "//{}{}vendor/...",
+                                self.paths.buck_package,
+                                if self.paths.buck_package.is_empty() {
+                                    ""
+                                } else {
+                                    "/"
+                                },
+                            ),
+                        ]),
+                        licenses: Default::default(),
+                        metadata: metadata.clone(),
+                        compatible_with: compatible_with.clone(),
+                        target_compatible_with: Select {
+                            common: target_compatible_with.clone(),
+                            selects: vec![],
+                        },
+                    },
+                    srcs: Globs::new(srcs, exclude)
+                        .walk(self.manifest_dir, self.gitignore)?
+                        .into_iter()
+                        .map(|path| SubtargetOrPath::Path(BuckPath(path)))
+                        .collect(),
+                    headers: Globs::new(headers, exclude)
+                        .walk(self.manifest_dir, self.gitignore)?
+                        .into_iter()
+                        .map(|path| SubtargetOrPath::Path(BuckPath(path)))
+                        .collect(),
+                    exported_header_style: exported_header_style.clone(),
+                    exported_headers: match exported_headers {
+                        ExportedHeaders::Set(exported_headers) => {
+                            let exported_header_globs = Globs::new(exported_headers, exclude);
+                            let exported_headers = exported_header_globs
+                                .walk(self.manifest_dir, self.gitignore)?
+                                .into_iter()
+                                .map(|path| SubtargetOrPath::Path(BuckPath(path)))
+                                .collect();
+                            SetOrMap::Set(exported_headers)
+                        }
+                        ExportedHeaders::Map(exported_headers) => SetOrMap::Map(
+                            exported_headers
+                                .iter()
+                                .map(|(name, path)| {
+                                    (
+                                        name.clone(),
+                                        SubtargetOrPath::Path(BuckPath(PathBuf::from(
+                                            path.clone(),
+                                        ))),
+                                    )
+                                })
+                                .collect(),
+                        ),
+                    },
+                    include_directories: fixup_include_paths
+                        .iter()
+                        .map(|path| {
+                            SubtargetOrPath::Path(BuckPath(PathBuf::from(format!(
+                                "//{}{}fixups/{}/{}:include",
+                                self.paths.buck_package,
+                                if self.paths.buck_package.is_empty() {
+                                    ""
+                                } else {
+                                    "/"
+                                },
+                                self.package.name,
+                                path.to_str().unwrap(),
+                            ))))
+                        })
+                        .chain(
+                            include_paths
+                                .iter()
+                                .map(|path| SubtargetOrPath::Path(BuckPath(path.clone()))),
+                        )
+                        .collect(),
+                    compiler_flags: compiler_flags.clone(),
+                    preprocessor_flags: preprocessor_flags.clone(),
+                    header_namespace: header_namespace.clone(),
+                    deps: deps.iter().cloned().map(RuleRef::new).collect(),
+                    preferred_linkage: preferred_linkage.clone(),
+                    undefined_symbols: *undefined_symbols,
+                    platforms: self
+                        .config
+                        .buck
+                        .platform_compatibility_on_all_targets
+                        .then(|| cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
+                }));
+                RuleRef::new(format!(
+                    "//{}{}vendor/{}:{}",
+                    self.paths.buck_package,
+                    if self.paths.buck_package.is_empty() {
+                        ""
+                    } else {
+                        "/"
+                    },
+                    self.package,
+                    name,
+                ))
+            } else {
+                let disp = collision_info.target_display(self.package);
+                let target_name = Name(format!("{}-{}", disp, name));
+                res.push(Rule::CxxLibrary(CxxLibrary {
+                    owner: PackageVersion {
+                        name: self.package.name.clone(),
+                        version: self.package.version.clone(),
+                    },
+                    common: Common {
+                        name: target_name.clone(),
+                        visibility: Visibility::Private,
+                        licenses: Default::default(),
+                        metadata: metadata.clone(),
+                        compatible_with: compatible_with.clone(),
+                        target_compatible_with: Select {
+                            common: target_compatible_with.clone(),
+                            selects: vec![],
+                        },
+                    },
+                    // Just collect the sources, excluding things in the exclude list
+                    srcs: Globs::new(srcs, exclude)
+                        .walk(self.manifest_dir, self.gitignore)?
+                        .into_iter()
+                        .map(|path| self.subtarget_or_path(&path))
+                        .collect::<anyhow::Result<_>>()?,
+                    // Collect the nominated headers, plus everything in the fixup include
+                    // path(s).
+                    headers: {
+                        let globs = Globs::new(headers, exclude);
+                        let mut headers = BTreeSet::new();
+                        for path in globs.walk(self.manifest_dir, self.gitignore)? {
+                            headers.insert(self.subtarget_or_path(&path)?);
+                        }
+
+                        let globs = Globs::new(
+                            GlobSetKind::from_iter(["**/*.asm", "**/*.h"]).unwrap(),
+                            NO_EXCLUDE,
+                        );
+                        for fixup_include_path in fixup_include_paths {
+                            for path in globs.walk(
+                                self.fixup_config.fixup_dir.join(fixup_include_path),
+                                self.gitignore,
+                            )? {
+                                headers.insert(SubtargetOrPath::Path(BuckPath(
+                                    rel_fixup.join(fixup_include_path).join(path),
+                                )));
+                            }
+                        }
+
+                        headers
+                    },
+                    exported_header_style: exported_header_style.clone(),
+                    exported_headers: match exported_headers {
+                        ExportedHeaders::Set(exported_headers) => {
+                            let exported_header_globs = Globs::new(exported_headers, exclude);
+                            let exported_headers = exported_header_globs
+                                .walk(self.manifest_dir, self.gitignore)?
+                                .into_iter()
+                                .map(|path| self.subtarget_or_path(&path))
+                                .collect::<anyhow::Result<_>>()?;
+                            SetOrMap::Set(exported_headers)
+                        }
+                        ExportedHeaders::Map(exported_headers) => SetOrMap::Map(
+                            exported_headers
+                                .iter()
+                                .map(|(name, path)| {
+                                    Ok((name.clone(), self.subtarget_or_path(Path::new(path))?))
+                                })
+                                .collect::<anyhow::Result<_>>()?,
+                        ),
+                    },
+                    include_directories: fixup_include_paths
+                        .iter()
+                        .map(|path| Ok(SubtargetOrPath::Path(BuckPath(rel_fixup.join(path)))))
+                        .chain(
+                            include_paths
+                                .iter()
+                                .map(|path| self.subtarget_or_path(path)),
+                        )
+                        .collect::<anyhow::Result<_>>()?,
+                    compiler_flags: compiler_flags.clone(),
+                    preprocessor_flags: preprocessor_flags.clone(),
+                    header_namespace: header_namespace.clone(),
+                    deps: deps.iter().cloned().map(RuleRef::new).collect(),
+                    preferred_linkage: preferred_linkage.clone(),
+                    undefined_symbols: *undefined_symbols,
+                    platforms: self
+                        .config
+                        .buck
+                        .platform_compatibility_on_all_targets
+                        .then(|| cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
+                }));
+                RuleRef::from(target_name)
+            };
+
+            if *public {
+                res.push(Rule::Alias(Alias {
+                    owner: PackageVersion {
+                        name: self.package.name.clone(),
+                        version: self.package.version.clone(),
+                    },
+                    name: Name(format!("{}-{}", index.public_rule_name(self.package), name)),
+                    actual: cxx_library_target,
+                    platforms: (!config.buck.alias_with_platforms.is_default)
+                        .then(|| cxx_library_platforms.iter().map(|&p| p.clone()).collect()),
+                    target_compatible_with: Select {
+                        common: target_compatible_with.clone(),
+                        selects: Vec::new(),
+                    },
+                    visibility: self.visibility(index),
+                    sort_key: Name(format!("{}-{}", self.package, name)),
+                }));
+            }
+        }
+
+        // Emit a prebuilt C++ library rule for each static library (elsewhere - add dependencies to them)
+        for (
+            PrebuiltCxxLibraryFixup {
+                name,
+                static_libs,
+                public,
+                compatible_with,
+                target_compatible_with,
+                preferred_linkage,
+                ..
+            },
+            prebuilt_cxx_library_platforms,
+        ) in prebuilt_cxx_libraries
+        {
+            let static_lib_globs = Globs::new(static_libs, NO_EXCLUDE);
+            for static_lib in static_lib_globs.walk(self.manifest_dir, self.gitignore)? {
+                let static_lib_file_name = static_lib.file_name().unwrap().to_string_lossy();
+                let prebuilt_cxx_library_target = if self.config.buck.split {
+                    let target_name = Name(format!("{}-{}", name, static_lib_file_name));
+                    res.push(Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
+                        owner: PackageVersion {
+                            name: self.package.name.clone(),
+                            version: self.package.version.clone(),
+                        },
+                        common: Common {
+                            name: target_name.clone(),
+                            visibility: Visibility::Custom(vec![
+                                format!("//{}:", self.paths.buck_package),
+                                format!(
+                                    "//{}{}vendor/...",
+                                    self.paths.buck_package,
+                                    if self.paths.buck_package.is_empty() {
+                                        ""
+                                    } else {
+                                        "/"
+                                    },
+                                ),
+                            ]),
+                            licenses: Default::default(),
+                            metadata: metadata.clone(),
+                            compatible_with: compatible_with.clone(),
+                            target_compatible_with: Select {
+                                common: target_compatible_with.clone(),
+                                selects: vec![],
+                            },
+                        },
+                        static_lib: SubtargetOrPath::Path(BuckPath(static_lib.to_owned())),
+                        preferred_linkage: preferred_linkage.clone(),
+                        platforms: self.config.buck.platform_compatibility_on_all_targets.then(
+                            || {
+                                prebuilt_cxx_library_platforms
+                                    .iter()
+                                    .map(|&p| p.clone())
+                                    .collect()
+                            },
+                        ),
+                    }));
+                    RuleRef::new(format!(
+                        "//{}{}vendor/{}:{}",
+                        self.paths.buck_package,
+                        if self.paths.buck_package.is_empty() {
+                            ""
+                        } else {
+                            "/"
+                        },
+                        self.package,
+                        target_name,
+                    ))
+                } else {
+                    let disp = collision_info.target_display(self.package);
+                    let target_name = Name(format!(
+                        "{}-{}-{}",
+                        disp,
+                        name,
+                        static_lib.file_name().unwrap().to_string_lossy(),
+                    ));
+                    res.push(Rule::PrebuiltCxxLibrary(PrebuiltCxxLibrary {
+                        owner: PackageVersion {
+                            name: self.package.name.clone(),
+                            version: self.package.version.clone(),
+                        },
+                        common: Common {
+                            name: target_name.clone(),
+                            visibility: Visibility::Private,
+                            licenses: Default::default(),
+                            metadata: metadata.clone(),
+                            compatible_with: compatible_with.clone(),
+                            target_compatible_with: Select {
+                                common: target_compatible_with.clone(),
+                                selects: vec![],
+                            },
+                        },
+                        static_lib: self.subtarget_or_path(&static_lib)?,
+                        preferred_linkage: preferred_linkage.clone(),
+                        platforms: self.config.buck.platform_compatibility_on_all_targets.then(
+                            || {
+                                prebuilt_cxx_library_platforms
+                                    .iter()
+                                    .map(|&p| p.clone())
+                                    .collect()
+                            },
+                        ),
+                    }));
+                    RuleRef::from(target_name)
+                };
+
+                if *public {
+                    res.push(Rule::Alias(Alias {
+                        owner: PackageVersion {
+                            name: self.package.name.clone(),
+                            version: self.package.version.clone(),
+                        },
+                        name: Name(format!(
+                            "{}-{}-{}",
+                            index.public_rule_name(self.package),
+                            name,
+                            static_lib_file_name,
+                        )),
+                        actual: prebuilt_cxx_library_target,
+                        platforms: (!config.buck.alias_with_platforms.is_default).then(|| {
+                            prebuilt_cxx_library_platforms
+                                .iter()
+                                .map(|&p| p.clone())
+                                .collect()
+                        }),
+                        target_compatible_with: Select {
+                            common: target_compatible_with.clone(),
+                            selects: Vec::new(),
+                        },
+                        visibility: self.visibility(index),
+                        sort_key: Name(format!(
+                            "{}-{}-{}",
+                            self.package, name, static_lib_file_name,
+                        )),
+                    }));
+                }
+            }
         }
 
         Ok(res)
