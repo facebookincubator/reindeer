@@ -9,6 +9,10 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::hash_map;
+use std::panic;
+use std::rc::Rc;
+use std::thread;
 
 use anyhow::Context as _;
 use anyhow::bail;
@@ -157,23 +161,74 @@ impl<'meta> Index<'meta> {
             }
         }
 
-        for (platform_name, platform_config) in &config.platform {
-            let mut resolve = FeatureResolver {
-                pkgid_platform_features: &mut index.pkgid_platform_features,
-                pkgid_to_pkg: &index.pkgid_to_pkg,
-                manifest_deps: &manifest_deps,
-                config,
-                fixups,
-            };
-            // Feature selection for the current workspace.
-            for pkg in &index.workspace_members {
-                resolve.enable_crate_for_platform(pkg.id, platform_name)?;
-                if let Some(features) = &platform_config.features {
-                    for feature in features {
-                        resolve.enable_feature_for_platform(pkg.id, platform_name, feature)?;
+        // Resolution only ever adds to the resolved features, so resolving each
+        // platform's workspace features independently and merging the results
+        // produces the same result as resolving them all into one map. The
+        // per-platform resolutions overlap where they reach a platform's
+        // execution platforms.
+        let per_platform = thread::scope(|scope| {
+            let handles = config
+                .platform
+                .iter()
+                .map(|(platform_name, platform_config)| {
+                    let index = &index;
+                    let manifest_deps = &manifest_deps;
+                    scope.spawn(move || -> anyhow::Result<_> {
+                        let mut pkgid_platform_features = HashMap::default();
+                        let mut resolve = FeatureResolver {
+                            pkgid_platform_features: &mut pkgid_platform_features,
+                            pkgid_to_pkg: &index.pkgid_to_pkg,
+                            manifest_deps,
+                            config,
+                            fixups: ResolverFixups {
+                                cache: fixups,
+                                by_pkg: HashMap::default(),
+                            },
+                        };
+                        // Feature selection for the current workspace.
+                        for pkg in &index.workspace_members {
+                            resolve.enable_crate_for_platform(pkg.id, platform_name)?;
+                            if let Some(features) = &platform_config.features {
+                                for feature in features {
+                                    resolve.enable_feature_for_platform(
+                                        pkg.id,
+                                        platform_name,
+                                        feature,
+                                    )?;
+                                }
+                            } else if pkg.features.contains_key("default") {
+                                resolve.enable_feature_for_platform(
+                                    pkg.id,
+                                    platform_name,
+                                    "default",
+                                )?;
+                            }
+                        }
+                        Ok(pkgid_platform_features)
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|err| panic::resume_unwind(err))
+                })
+                .collect::<Vec<_>>()
+        });
+        for pkgid_platform_features in per_platform {
+            for (key, resolved) in pkgid_platform_features? {
+                match index.pkgid_platform_features.entry(key) {
+                    hash_map::Entry::Vacant(entry) => {
+                        entry.insert(resolved);
                     }
-                } else if pkg.features.contains_key("default") {
-                    resolve.enable_feature_for_platform(pkg.id, platform_name, "default")?;
+                    hash_map::Entry::Occupied(mut entry) => {
+                        let entry = entry.get_mut();
+                        entry.enabled |= resolved.enabled;
+                        entry.features.extend(resolved.features);
+                        entry.deps.extend(resolved.deps);
+                    }
                 }
             }
         }
@@ -345,7 +400,6 @@ impl<'meta> Index<'meta> {
 }
 
 /// Information referenced while computing feature resolution for an Index.
-#[derive(Debug)]
 struct FeatureResolver<'a, 'meta> {
     pkgid_platform_features:
         &'a mut HashMap<(PackageId, &'meta PlatformName), ResolvedFeatures<'meta>>,
@@ -355,7 +409,25 @@ struct FeatureResolver<'a, 'meta> {
         Vec<(&'meta NodeDep, &'meta NodeDepKind, &'meta Manifest)>,
     >,
     config: &'meta Config,
-    fixups: &'a FixupsCache<'meta>,
+    fixups: ResolverFixups<'a, 'meta>,
+}
+
+/// Memoizes `FixupsCache::get` for one `FeatureResolver`, so that resolvers
+/// running in parallel do not contend on `FixupsCache`'s lock.
+struct ResolverFixups<'a, 'meta> {
+    cache: &'a FixupsCache<'meta>,
+    by_pkg: HashMap<PackageId, Rc<Fixups<'meta>>>,
+}
+
+impl<'meta> ResolverFixups<'_, 'meta> {
+    fn get(&mut self, pkg: &'meta Manifest) -> anyhow::Result<Rc<Fixups<'meta>>> {
+        if let Some(fixups) = self.by_pkg.get(&pkg.id) {
+            return Ok(Rc::clone(fixups));
+        }
+        let fixups = Rc::new(self.cache.get(pkg)?);
+        self.by_pkg.insert(pkg.id, Rc::clone(&fixups));
+        Ok(fixups)
+    }
 }
 
 impl<'a, 'meta> FeatureResolver<'a, 'meta> {
