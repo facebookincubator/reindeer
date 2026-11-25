@@ -447,6 +447,10 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
             .pkgid_platform_features
             .entry((pkgid, platform_name))
             .or_insert_with(ResolvedFeatures::default);
+        if resolve.features.contains(enable_feature) {
+            // Already been enabled.
+            return Ok(());
+        }
 
         // Omit features according to fixups.
         let pkg = self.pkgid_to_pkg[&pkgid];
