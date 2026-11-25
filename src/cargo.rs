@@ -35,6 +35,7 @@ use async_trait::async_trait;
 use cargo::core::Dependency;
 use cargo::core::PackageId;
 use cargo::core::SourceId;
+use cargo::core::SourceKind;
 use cargo::core::Summary;
 use cargo::core::resolver::Resolve as CargoResolve;
 use cargo::sources::IndexSummary;
@@ -237,7 +238,7 @@ fn fast_metadata(config: &Config, args: &Args, paths: &Paths) -> anyhow::Result<
             hash_map::Entry::Vacant(entry) => {
                 let source = source_config.load(replaced_source_id)?;
                 assert_eq!(source.source_id(), replaced_source_id);
-                let rc = Rc::new(RefCell::new(source));
+                let rc = Rc::new(SharedDelegate::new(source));
                 Rc::clone(entry.insert(rc))
             }
             hash_map::Entry::Occupied(entry) => Rc::clone(entry.get()),
@@ -490,21 +491,43 @@ impl<'gctx> CargoSource for LockfileSource<'gctx> {
 }
 
 pub struct SharedSource<'gctx> {
-    delegate: Rc<RefCell<Box<dyn cargo::sources::source::Source + 'gctx>>>,
+    delegate: Rc<SharedDelegate<'gctx>>,
+}
+
+struct SharedDelegate<'gctx> {
+    source: RefCell<Box<dyn cargo::sources::source::Source + 'gctx>>,
+    /// For a directory source, every package in it grouped by name, built on
+    /// first query. Cargo's `DirectorySource` answers every query by scanning
+    /// all of its packages, which is quadratic over a resolve of a large
+    /// vendor directory.
+    by_name: Option<RefCell<Option<HashMap<InternedString, Vec<IndexSummary>>>>>,
+}
+
+impl<'gctx> SharedDelegate<'gctx> {
+    fn new(source: Box<dyn cargo::sources::source::Source + 'gctx>) -> Self {
+        let by_name = match source.source_id().kind() {
+            SourceKind::Directory => Some(RefCell::new(None)),
+            _ => None,
+        };
+        SharedDelegate {
+            source: RefCell::new(source),
+            by_name,
+        }
+    }
 }
 
 #[async_trait(?Send)]
 impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
     fn source_id(&self) -> cargo::core::SourceId {
-        self.delegate.borrow().source_id()
+        self.delegate.source.borrow().source_id()
     }
 
     fn supports_checksums(&self) -> bool {
-        self.delegate.borrow().supports_checksums()
+        self.delegate.source.borrow().supports_checksums()
     }
 
     fn requires_precise(&self) -> bool {
-        self.delegate.borrow().requires_precise()
+        self.delegate.source.borrow().requires_precise()
     }
 
     #[allow(clippy::await_holding_refcell_ref)]
@@ -514,15 +537,49 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
         kind: cargo::sources::source::QueryKind,
         f: &mut dyn FnMut(cargo::sources::IndexSummary),
     ) -> anyhow::Result<()> {
-        self.delegate.borrow().query(dep, kind, f).await
+        // `DirectorySource` returns all of its packages for an
+        // `AlternativeNames` query, and the ones that `dep.matches` for every
+        // other kind of query.
+        let Some(by_name) = &self.delegate.by_name else {
+            return self.delegate.source.borrow().query(dep, kind, f).await;
+        };
+        if let QueryKind::AlternativeNames = kind {
+            return self.delegate.source.borrow().query(dep, kind, f).await;
+        }
+
+        if by_name.borrow().is_none() {
+            let mut map = HashMap::<InternedString, Vec<IndexSummary>>::default();
+            self.delegate
+                .source
+                .borrow()
+                .query(dep, QueryKind::AlternativeNames, &mut |summary| {
+                    map.entry(summary.package_id().name())
+                        .or_default()
+                        .push(summary);
+                })
+                .await?;
+            *by_name.borrow_mut() = Some(map);
+        }
+
+        let by_name = by_name.borrow();
+        let by_name = by_name.as_ref().expect("should have been populated above");
+        for summary in by_name.get(&dep.package_name()).into_iter().flatten() {
+            if dep.matches_id(summary.package_id()) {
+                f(summary.clone());
+            }
+        }
+        Ok(())
     }
 
     fn invalidate_cache(&self) {
-        self.delegate.borrow().invalidate_cache();
+        self.delegate.source.borrow().invalidate_cache();
+        if let Some(by_name) = &self.delegate.by_name {
+            *by_name.borrow_mut() = None;
+        }
     }
 
     fn set_quiet(&mut self, quiet: bool) {
-        self.delegate.borrow_mut().set_quiet(quiet);
+        self.delegate.source.borrow_mut().set_quiet(quiet);
     }
 
     #[allow(clippy::await_holding_refcell_ref)]
@@ -530,7 +587,7 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
         &self,
         pkg_id: PackageId,
     ) -> anyhow::Result<cargo::sources::source::MaybePackage> {
-        self.delegate.borrow().download(pkg_id).await
+        self.delegate.source.borrow().download(pkg_id).await
     }
 
     #[allow(clippy::await_holding_refcell_ref)]
@@ -540,21 +597,22 @@ impl<'gctx> cargo::sources::source::Source for SharedSource<'gctx> {
         contents: Vec<u8>,
     ) -> anyhow::Result<cargo::core::Package> {
         self.delegate
+            .source
             .borrow()
             .finish_download(pkg_id, contents)
             .await
     }
 
     fn fingerprint(&self, pkg: &cargo::core::Package) -> anyhow::Result<String> {
-        self.delegate.borrow().fingerprint(pkg)
+        self.delegate.source.borrow().fingerprint(pkg)
     }
 
     fn verify(&self, pkg: PackageId) -> anyhow::Result<()> {
-        self.delegate.borrow().verify(pkg)
+        self.delegate.source.borrow().verify(pkg)
     }
 
     fn describe(&self) -> String {
-        self.delegate.borrow().describe()
+        self.delegate.source.borrow().describe()
     }
 }
 
