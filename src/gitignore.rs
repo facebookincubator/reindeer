@@ -35,19 +35,29 @@ impl Gitignore {
     }
 
     /// Returns whether `path` is excluded, including exclusions on its parents.
+    ///
+    /// As in Git, a negated pattern cannot re-include a path whose parent
+    /// directory is excluded.
     pub(crate) fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
         debug_assert!(
             path.is_absolute(),
             "gitignore matching requires an absolute path, got {}",
             path.display(),
         );
+        path.ancestors()
+            .skip(1)
+            .any(|parent| self.matched(parent, true))
+            || self.matched(path, is_dir)
+    }
+
+    fn matched(&self, path: &Path, is_dir: bool) -> bool {
         let mut ignored = false;
         for matcher in &self.matchers {
             // Some non-vendored manifests live outside the third-party tree.
-            if !path.starts_with(matcher.path()) {
+            if path == matcher.path() || !path.starts_with(matcher.path()) {
                 continue;
             }
-            match matcher.matched_path_or_any_parents(path, is_dir) {
+            match matcher.matched(path, is_dir) {
                 Match::Ignore(_) => ignored = true,
                 Match::Whitelist(_) => ignored = false,
                 Match::None => {}
@@ -230,6 +240,37 @@ mod tests {
         assert!(
             !filter.is_ignored(&crate_dir.join("generated.txt"), false),
             "descendant .gitignore files should not be loaded"
+        );
+    }
+
+    #[test]
+    fn negation_does_not_reinclude_path_under_excluded_directory() {
+        let third_party = tempfile::tempdir().expect("temp directory should be created");
+        fs::write(
+            third_party.path().join(".gitignore"),
+            "/vendor/example-*/bundled/*\n!/vendor/example-*/bundled/LICENSE\n!experiments\n",
+        )
+        .expect("gitignore should be written");
+        let bundled = third_party.path().join("vendor/example-0.1.0/bundled");
+
+        let filter = load_at(third_party.path());
+
+        assert!(
+            filter.is_ignored(&bundled.join("src/experiments/config.cc"), false),
+            "a negated directory name should not re-include contents of an excluded directory"
+        );
+        assert!(
+            !filter.is_ignored(&bundled.join("LICENSE"), false),
+            "a negated file directly in a matched directory should be re-included"
+        );
+        assert!(
+            !filter.is_ignored(
+                &third_party
+                    .path()
+                    .join("vendor/other-0.1.0/experiments/mod.rs"),
+                false,
+            ),
+            "a negated directory name should apply outside excluded directories"
         );
     }
 
