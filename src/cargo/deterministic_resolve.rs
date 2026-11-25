@@ -16,6 +16,7 @@ use std::rc::Rc;
 use anyhow::Context;
 use async_trait::async_trait;
 use cargo::core::Dependency;
+use cargo::core::GitReference;
 use cargo::core::Package as CargoPackage;
 use cargo::core::PackageId;
 use cargo::core::SourceId;
@@ -304,7 +305,7 @@ pub(crate) fn resolve_ws_deterministically_with_original_sources<'gctx>(
             source_config.clone(),
         )?;
         for source_id in &source_ids {
-            let source = source_config.load(*source_id)?;
+            let source = source_config.load(lock_git_commit_hash(*source_id))?;
             let deterministic_source = DeterministicSource::new(source, context.clone());
             if !source_id.has_locked_precise() {
                 deterministic_source.invalidate_cache();
@@ -354,6 +355,23 @@ pub(crate) fn resolve_ws_deterministically_with_original_sources<'gctx>(
             paths.lockfile_path.display()
         );
         return Ok(resolve);
+    }
+}
+
+/// A git dependency on a full commit hash, as if Cargo.lock had locked it to
+/// that commit. Otherwise `GitSource` fetches the repository even if the
+/// commit is already in the local git database, which it can't change the
+/// meaning of.
+fn lock_git_commit_hash(source_id: SourceId) -> SourceId {
+    match source_id.git_reference() {
+        Some(GitReference::Rev(rev))
+            if source_id.precise_git_fragment().is_none()
+                && rev.len() == 40
+                && rev.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) =>
+        {
+            source_id.with_git_precise(Some(rev.clone()))
+        }
+        _ => source_id,
     }
 }
 
