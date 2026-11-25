@@ -320,11 +320,19 @@ pub(crate) fn resolve_ws_deterministically_with_original_sources<'gctx>(
             None,
         );
 
+        // Sources that were not preloaded, and that the registry loaded on its
+        // own when the resolver queried them, did not go through
+        // `DeterministicSource`. Sources that were never loaded had no effect
+        // on the resolve; for example, a dev-dependency of a package that is
+        // not a workspace member is never resolved.
         let new_sources = {
+            let package_set = registry.get(&[])?;
+            let loaded_sources = package_set.sources();
             let discovered_sources = discovered_sources.borrow();
             discovered_sources
                 .difference(&source_ids)
                 .copied()
+                .filter(|&source_id| loaded_sources.get(source_id).is_some())
                 .collect::<Vec<_>>()
         };
         if !new_sources.is_empty() {
