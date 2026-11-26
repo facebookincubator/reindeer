@@ -132,13 +132,60 @@ impl<'a> PackageLocation<'a> {
             PackageLocation::Local { dir } | PackageLocation::Vendored { dir } => {
                 SubtargetOrPath::Path(BuckPath(dir.join(relative_to_manifest_dir)))
             }
-            // FIXME: a git_fetch is rooted at the repository, not the package.
-            PackageLocation::Crate { .. } | PackageLocation::Git { .. } => {
-                SubtargetOrPath::Subtarget(Subtarget {
-                    target: self.archive_target().unwrap(),
-                    relative: BuckPath(relative_to_manifest_dir.to_owned()),
-                })
-            }
+            PackageLocation::Crate { .. } => SubtargetOrPath::Subtarget(Subtarget {
+                target: self.archive_target().unwrap(),
+                relative: BuckPath(relative_to_manifest_dir.to_owned()),
+            }),
+            // A git_fetch is of the whole repository.
+            PackageLocation::Git { subdir, .. } => SubtargetOrPath::Subtarget(Subtarget {
+                target: self.archive_target().unwrap(),
+                relative: BuckPath(subdir.join(relative_to_manifest_dir)),
+            }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file(location: &PackageLocation, path: &str) -> String {
+        let file = location.file(Path::new(path));
+        serde_json::to_value(file)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    fn git(subdir: &str) -> PackageLocation<'static> {
+        PackageLocation::Git {
+            repo: "https://github.com/serde-rs/serde",
+            commit_hash: "49d098debdf8b5c38bfb6868f455c6ce542c422c",
+            short_name: "serde-643d78919f35d883".to_owned(),
+            subdir: PathBuf::from(subdir),
+        }
+    }
+
+    #[test]
+    fn git_files_are_relative_to_the_repository() {
+        // serde's crate is in serde/ of its repository.
+        assert_eq!(
+            file(&git("serde"), "build.rs"),
+            ":serde-643d78919f35d883.git[serde/build.rs]",
+        );
+        assert_eq!(
+            git("serde").mapped_manifest_dir(),
+            Path::new("serde-643d78919f35d883/serde"),
+        );
+        // A crate at the root of its repository.
+        assert_eq!(
+            file(&git(""), "src/lib.rs"),
+            ":serde-643d78919f35d883.git[src/lib.rs]",
+        );
+        assert_eq!(
+            git("").mapped_manifest_dir(),
+            Path::new("serde-643d78919f35d883"),
+        );
     }
 }
