@@ -36,6 +36,7 @@ use serde::de::value::MapAccessDeserializer;
 
 use crate::Args;
 use crate::buck::Visibility;
+use crate::buckfile_imports::BuckfileImports;
 use crate::fixups::CargoEnvs;
 use crate::glob::TrackedGlobSet;
 use crate::platform::PlatformConfig;
@@ -192,6 +193,10 @@ pub struct BuckConfig {
     /// Front matter for the generated BUCK file
     #[serde(default)]
     pub buckfile_imports: StringWithDefault<MustBe!("")>,
+    /// In split mode, `buckfile_imports` parsed so that each BUCK file can
+    /// receive only the statements its rules depend on.
+    #[serde(skip)]
+    pub buckfile_imports_parsed: Option<BuckfileImports>,
 
     /// Rule name for alias
     #[serde(default)]
@@ -458,6 +463,16 @@ pub fn read_config(reindeer_toml: &Path, args: &Args) -> anyhow::Result<Config> 
         }
 
         config.buck.buckfile_imports = buckfile_imports.into();
+    }
+
+    if config.buck.split {
+        let parsed = BuckfileImports::parse(&config.buck.buckfile_imports).with_context(|| {
+            format!(
+                "failed to parse `buck.buckfile_imports` in {}",
+                reindeer_toml.display(),
+            )
+        })?;
+        config.buck.buckfile_imports_parsed = Some(parsed);
     }
 
     // Compute execution platforms.

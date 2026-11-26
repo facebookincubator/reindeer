@@ -1362,51 +1362,56 @@ impl Ord for Rule {
 }
 
 impl Rule {
+    fn function_name<'a>(&self, config: &'a BuckConfig) -> &'a str {
+        match self {
+            Rule::Alias(alias) => match alias.platforms {
+                None => &config.alias,
+                Some(_) => &config.alias_with_platforms,
+            },
+            Rule::Sources(_) => &config.rust_filegroup,
+            Rule::Filegroup(_) => &config.filegroup,
+            Rule::ExtractArchive(_) => &config.extract_archive,
+            Rule::HttpArchive(_) => &config.http_archive,
+            Rule::GitFetch(_) => &config.git_fetch,
+            Rule::Binary(_) => &config.rust_binary,
+            Rule::Library(_) | Rule::RootPackage(_) => &config.rust_library,
+            Rule::BuildscriptBinary(_) => config
+                .buildscript_binary
+                .as_deref()
+                .unwrap_or(&config.rust_binary),
+            Rule::BuildscriptGenrule(_) => &config.buildscript_genrule,
+            Rule::CxxLibrary(_) => &config.cxx_library,
+            Rule::PrebuiltCxxLibrary(_) => &config.prebuilt_cxx_library,
+        }
+    }
+
     pub fn render(&self, config: &BuckConfig, out: &mut impl Write) -> anyhow::Result<()> {
         use serde_starlark::Serializer;
+        let function = self.function_name(config);
         let serialized = match self {
-            Rule::Alias(alias) => {
-                let function = match alias.platforms {
-                    None => &config.alias,
-                    Some(_) => &config.alias_with_platforms,
-                };
-                FunctionCall::new(function, alias).serialize(Serializer)
-            }
-            Rule::Sources(sources) => {
-                FunctionCall::new(&config.rust_filegroup, sources).serialize(Serializer)
-            }
+            Rule::Alias(alias) => FunctionCall::new(function, alias).serialize(Serializer),
+            Rule::Sources(sources) => FunctionCall::new(function, sources).serialize(Serializer),
             Rule::Filegroup(filegroup) => {
-                FunctionCall::new(&config.filegroup, filegroup).serialize(Serializer)
+                FunctionCall::new(function, filegroup).serialize(Serializer)
             }
             Rule::ExtractArchive(compressed_crate) => {
-                FunctionCall::new(&config.extract_archive, compressed_crate).serialize(Serializer)
+                FunctionCall::new(function, compressed_crate).serialize(Serializer)
             }
             Rule::HttpArchive(http_archive) => {
-                FunctionCall::new(&config.http_archive, http_archive).serialize(Serializer)
+                FunctionCall::new(function, http_archive).serialize(Serializer)
             }
             Rule::GitFetch(git_fetch) => {
-                FunctionCall::new(&config.git_fetch, git_fetch).serialize(Serializer)
+                FunctionCall::new(function, git_fetch).serialize(Serializer)
             }
-            Rule::Binary(bin) => FunctionCall::new(&config.rust_binary, bin).serialize(Serializer),
+            Rule::Binary(bin) | Rule::BuildscriptBinary(bin) => {
+                FunctionCall::new(function, bin).serialize(Serializer)
+            }
             Rule::Library(lib) | Rule::RootPackage(lib) => {
-                FunctionCall::new(&config.rust_library, lib).serialize(Serializer)
+                FunctionCall::new(function, lib).serialize(Serializer)
             }
-            Rule::BuildscriptBinary(bin) => {
-                let buildscript_binary = config
-                    .buildscript_binary
-                    .as_ref()
-                    .unwrap_or(&config.rust_binary);
-                FunctionCall::new(buildscript_binary, bin).serialize(Serializer)
-            }
-            Rule::BuildscriptGenrule(lib) => {
-                FunctionCall::new(&config.buildscript_genrule, lib).serialize(Serializer)
-            }
-            Rule::CxxLibrary(lib) => {
-                FunctionCall::new(&config.cxx_library, lib).serialize(Serializer)
-            }
-            Rule::PrebuiltCxxLibrary(lib) => {
-                FunctionCall::new(&config.prebuilt_cxx_library, lib).serialize(Serializer)
-            }
+            Rule::BuildscriptGenrule(lib) => FunctionCall::new(function, lib).serialize(Serializer),
+            Rule::CxxLibrary(lib) => FunctionCall::new(function, lib).serialize(Serializer),
+            Rule::PrebuiltCxxLibrary(lib) => FunctionCall::new(function, lib).serialize(Serializer),
         }?;
         out.write_all(serialized.as_bytes())?;
         Ok(())
@@ -1444,18 +1449,31 @@ pub fn write_buckfile<'a>(
         out.write_all(b"\n")?;
     }
 
-    out.write_all(config.buckfile_imports.as_bytes())?;
-    if !config.buckfile_imports.is_empty() {
+    let mut body = Vec::new();
+    let mut used_names = BTreeSet::new();
+    for (i, rule) in rules.enumerate() {
+        if i > 0 {
+            body.push(b'\n');
+        }
+        let function = rule.function_name(config);
+        used_names.insert(function.split('.').next().unwrap_or(function));
+        rule.render(config, &mut body)?;
+    }
+
+    let pruned_imports;
+    let imports = match &config.buckfile_imports_parsed {
+        Some(parsed) => {
+            pruned_imports = parsed.render(used_names);
+            &pruned_imports
+        }
+        None => &config.buckfile_imports.value,
+    };
+    out.write_all(imports.as_bytes())?;
+    if !imports.is_empty() {
         out.write_all(b"\n")?;
     }
 
-    for (i, rule) in rules.enumerate() {
-        if i > 0 {
-            out.write_all(b"\n")?;
-        }
-        rule.render(config, out)?;
-    }
-
+    out.write_all(&body)?;
     Ok(())
 }
 

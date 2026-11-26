@@ -36,6 +36,7 @@ use crate::path::ensure_third_party_dir_exists;
 #[cfg(fbcode_build)]
 mod audit_sec;
 mod buck;
+mod buckfile_imports;
 mod buckify;
 mod cargo;
 mod cfg;
