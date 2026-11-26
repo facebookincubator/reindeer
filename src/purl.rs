@@ -86,7 +86,7 @@ impl Purl {
             Source::Local => return None,
             Source::CratesIo => CargoOrigin::CratesIo,
             Source::Git { repo, commit_hash } => CargoOrigin::Git {
-                repo: strip_credentials(repo)?,
+                repo: sanitize_url(repo)?,
                 commit: commit_hash,
             },
             Source::Unrecognized(source) => {
@@ -100,7 +100,7 @@ impl Purl {
                     CargoOrigin::CratesIo
                 } else {
                     CargoOrigin::Registry {
-                        index: strip_credentials(index)?,
+                        index: sanitize_url(index)?,
                     }
                 }
             }
@@ -117,16 +117,19 @@ impl Purl {
     }
 }
 
+/// Normalize a URL for supply chain metadata, or `None` if it does not parse
+/// as an absolute URL.
+///
 /// Annex B.3.5: user names and passwords in a vcs_url are not supported, and
 /// a credential in any URL must not end up in an SBOM. Cargo commonly sees
 /// `ssh://git@github.com/...`, which identifies the same repository without
 /// the username, so that one is removed quietly.
-fn strip_credentials(url: &str) -> Option<String> {
+pub fn sanitize_url(url: &str) -> Option<String> {
     let mut url = url::Url::parse(url).ok()?;
     let conventional_ssh_user = url.scheme() == "ssh" && url.username() == "git";
     if url.password().is_some() || !(url.username().is_empty() || conventional_ssh_user) {
         log::warn!(
-            "removing credentials from {}://{} in package URL",
+            "removing credentials from {}://{} in supply chain metadata",
             url.scheme(),
             url.host_str().unwrap_or_default(),
         );

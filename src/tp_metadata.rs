@@ -18,6 +18,7 @@ use serde::ser::SerializeSeq as _;
 use crate::buck::Metadata;
 use crate::cargo::Manifest;
 use crate::cargo::Source;
+use crate::purl;
 use crate::purl::Purl;
 
 #[derive(Clone)]
@@ -94,6 +95,11 @@ impl TpMetadata {
 ///   whose text is in the target's `licenses`.
 /// - `supply_chain.license_unparsed`: the declared license, verbatim, when it
 ///   is not a valid SPDX expression.
+/// - `supply_chain.source_repository`, `supply_chain.homepage`: the URLs from
+///   Cargo.toml's `repository` and `homepage`. These are declared by the
+///   package and not verified by anyone, and the source repository is not
+///   pinned to this version. Not to be confused with the PURL's
+///   `repository_url`, which is the registry the package was fetched from.
 pub fn insert_supply_chain_metadata(
     pkg: &Manifest,
     metadata: &mut BTreeMap<String, Box<dyn Metadata>>,
@@ -109,6 +115,26 @@ pub fn insert_supply_chain_metadata(
             pkg.version,
             pkg.source,
         ),
+    }
+    for (key, field, value) in [
+        (
+            "supply_chain.source_repository",
+            "repository",
+            &pkg.repository,
+        ),
+        ("supply_chain.homepage", "homepage", &pkg.homepage),
+    ] {
+        let Some(value) = value else { continue };
+        match purl::sanitize_url(value) {
+            Some(url) => {
+                metadata.insert(key.to_owned(), Box::new(url));
+            }
+            None => log::warn!(
+                "{} {}: `{field}` is not a URL, omitting it: {value:?}",
+                pkg.name,
+                pkg.version,
+            ),
+        }
     }
     let license = match (&pkg.license, &pkg.license_file) {
         (Some(license), _) => match parse_spdx_license(license) {

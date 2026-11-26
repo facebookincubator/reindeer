@@ -136,6 +136,10 @@ pub struct Config {
     /// PURL. A package with only a `license-file` gets a `LicenseRef-` whose
     /// text is in `licenses`. A license which is not valid SPDX is emitted
     /// verbatim under `supply_chain.license_unparsed` instead.
+    ///
+    /// Cargo.toml's `repository` and `homepage` URLs, as declared by the
+    /// package and unverified, are `supply_chain.source_repository` and
+    /// `supply_chain.homepage`.
     #[serde(default)]
     pub supply_chain_metadata: bool,
 
