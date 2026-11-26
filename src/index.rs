@@ -166,70 +166,100 @@ impl<'meta> Index<'meta> {
         // produces the same result as resolving them all into one map. The
         // per-platform resolutions overlap where they reach a platform's
         // execution platforms.
-        let per_platform = thread::scope(|scope| {
-            let handles = config
-                .platform
-                .iter()
-                .map(|(platform_name, platform_config)| {
-                    let index = &index;
-                    let manifest_deps = &manifest_deps;
-                    scope.spawn(move || -> anyhow::Result<_> {
-                        let mut pkgid_platform_features = HashMap::default();
-                        let mut resolve = FeatureResolver {
-                            pkgid_platform_features: &mut pkgid_platform_features,
-                            pkgid_to_pkg: &index.pkgid_to_pkg,
-                            manifest_deps,
-                            config,
-                            fixups: ResolverFixups {
-                                cache: fixups,
-                                by_pkg: HashMap::default(),
-                            },
-                        };
-                        // Feature selection for the current workspace.
-                        for pkg in &index.workspace_members {
-                            resolve.enable_crate_for_platform(pkg.id, platform_name)?;
-                            if let Some(features) = &platform_config.features {
-                                for feature in features {
+        //
+        // A package whose build script runs on any platform gets a build script
+        // target that is compatible with every platform the package supports,
+        // so its build-dependencies are needed on all of those platforms.
+        // Whether the build script runs depends on which platforms the package
+        // is enabled for, so iterate to a fixed point.
+        let mut buildscript_pkgs = HashSet::default();
+        loop {
+            let per_platform = thread::scope(|scope| {
+                let handles = config
+                    .platform
+                    .iter()
+                    .map(|(platform_name, platform_config)| {
+                        let index = &index;
+                        let manifest_deps = &manifest_deps;
+                        let buildscript_pkgs = &buildscript_pkgs;
+                        scope.spawn(move || -> anyhow::Result<_> {
+                            let mut pkgid_platform_features = HashMap::default();
+                            let mut resolve = FeatureResolver {
+                                pkgid_platform_features: &mut pkgid_platform_features,
+                                pkgid_to_pkg: &index.pkgid_to_pkg,
+                                manifest_deps,
+                                config,
+                                buildscript_pkgs,
+                                fixups: ResolverFixups {
+                                    cache: fixups,
+                                    by_pkg: HashMap::default(),
+                                },
+                            };
+                            // Feature selection for the current workspace.
+                            for pkg in &index.workspace_members {
+                                resolve.enable_crate_for_platform(pkg.id, platform_name)?;
+                                if let Some(features) = &platform_config.features {
+                                    for feature in features {
+                                        resolve.enable_feature_for_platform(
+                                            pkg.id,
+                                            platform_name,
+                                            feature,
+                                        )?;
+                                    }
+                                } else if pkg.features.contains_key("default") {
                                     resolve.enable_feature_for_platform(
                                         pkg.id,
                                         platform_name,
-                                        feature,
+                                        "default",
                                     )?;
                                 }
-                            } else if pkg.features.contains_key("default") {
-                                resolve.enable_feature_for_platform(
-                                    pkg.id,
-                                    platform_name,
-                                    "default",
-                                )?;
                             }
-                        }
-                        Ok(pkgid_platform_features)
+                            Ok(pkgid_platform_features)
+                        })
                     })
-                })
-                .collect::<Vec<_>>();
-            handles
-                .into_iter()
-                .map(|handle| {
-                    handle
-                        .join()
-                        .unwrap_or_else(|err| panic::resume_unwind(err))
-                })
-                .collect::<Vec<_>>()
-        });
-        for pkgid_platform_features in per_platform {
-            for (key, resolved) in pkgid_platform_features? {
-                match index.pkgid_platform_features.entry(key) {
-                    hash_map::Entry::Vacant(entry) => {
-                        entry.insert(resolved);
-                    }
-                    hash_map::Entry::Occupied(mut entry) => {
-                        let entry = entry.get_mut();
-                        entry.enabled |= resolved.enabled;
-                        entry.features.extend(resolved.features);
-                        entry.deps.extend(resolved.deps);
+                    .collect::<Vec<_>>();
+                handles
+                    .into_iter()
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .unwrap_or_else(|err| panic::resume_unwind(err))
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let mut pkgid_platform_features = HashMap::default();
+            for platform_features in per_platform {
+                for (key, resolved) in platform_features? {
+                    match pkgid_platform_features.entry(key) {
+                        hash_map::Entry::Vacant(entry) => {
+                            entry.insert(resolved);
+                        }
+                        hash_map::Entry::Occupied(mut entry) => {
+                            let entry = entry.get_mut();
+                            entry.enabled |= resolved.enabled;
+                            entry.features.extend(resolved.features);
+                            entry.deps.extend(resolved.deps);
+                        }
                     }
                 }
+            }
+
+            let mut changed = false;
+            for (&(pkgid, platform_name), resolved) in &pkgid_platform_features {
+                if resolved.enabled
+                    && !buildscript_pkgs.contains(&pkgid)
+                    && fixups
+                        .get(index.pkgid_to_pkg[&pkgid])?
+                        .has_buildscript_for_platform(platform_name)
+                {
+                    buildscript_pkgs.insert(pkgid);
+                    changed = true;
+                }
+            }
+
+            index.pkgid_platform_features = pkgid_platform_features;
+            if !changed {
+                break;
             }
         }
 
@@ -409,6 +439,8 @@ struct FeatureResolver<'a, 'meta> {
         Vec<(&'meta NodeDep, &'meta NodeDepKind, &'meta Manifest)>,
     >,
     config: &'meta Config,
+    /// Packages whose build script runs on at least one platform.
+    buildscript_pkgs: &'a HashSet<PackageId>,
     fixups: ResolverFixups<'a, 'meta>,
 }
 
@@ -454,7 +486,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         // Go through the manifest dependencies and enable all that are non-optional.
         for manifest_dep in &pkg.dependencies {
             if !manifest_dep.optional
-                && is_dep_kind_enabled(manifest_dep.kind, platform_name, &fixups)
+                && self.is_dep_kind_enabled(pkgid, manifest_dep.kind, platform_name, &fixups)
                 && self.evaluate_target_cfg(&manifest_dep.target, platform_name, &fixups)
                 && !fixups.omit_dep(
                     platform_name,
@@ -543,7 +575,12 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
                         // Find which dependency this feature refers to.
                         for manifest_dep in &self.pkgid_to_pkg[&pkgid].dependencies {
                             if dep == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
-                                && is_dep_kind_enabled(manifest_dep.kind, platform_name, &fixups)
+                                && self.is_dep_kind_enabled(
+                                    pkgid,
+                                    manifest_dep.kind,
+                                    platform_name,
+                                    &fixups,
+                                )
                                 && self.evaluate_target_cfg(
                                     &manifest_dep.target,
                                     platform_name,
@@ -620,7 +657,7 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         for manifest_dep in &pkg.dependencies {
             if enable_dependency == manifest_dep.rename.as_ref().unwrap_or(&manifest_dep.name)
                 && manifest_dep.optional
-                && is_dep_kind_enabled(manifest_dep.kind, platform_name, &fixups)
+                && self.is_dep_kind_enabled(pkgid, manifest_dep.kind, platform_name, &fixups)
                 && self.evaluate_target_cfg(&manifest_dep.target, platform_name, &fixups)
                 && !fixups.omit_dep(platform_name, enable_dependency, manifest_dep.kind)
             {
@@ -846,6 +883,27 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         Ok(unique_match)
     }
 
+    /// Build-dependencies are only needed if fixups enable running the build
+    /// script. Otherwise no Buck target is generated for the build script. If
+    /// the build script runs on any platform, the build script target is
+    /// generated for all platforms supported by the package.
+    fn is_dep_kind_enabled(
+        &self,
+        pkgid: PackageId,
+        kind: DepKind,
+        platform_name: &PlatformName,
+        fixups: &Fixups,
+    ) -> bool {
+        match kind {
+            DepKind::Normal => true,
+            DepKind::Build => {
+                self.buildscript_pkgs.contains(&pkgid)
+                    || fixups.has_buildscript_for_platform(platform_name)
+            }
+            DepKind::Dev => false,
+        }
+    }
+
     fn evaluate_target_cfg(
         &self,
         target: &Option<PlatformExpr>,
@@ -862,16 +920,6 @@ impl<'a, 'meta> FeatureResolver<'a, 'meta> {
         }
 
         platform_expr.eval(&self.config.platform[platform_name], None, &extra_cfgs)
-    }
-}
-
-/// Build-dependencies are only needed if fixups enable running the build
-/// script. Otherwise no Buck target is generated for the build script.
-fn is_dep_kind_enabled(kind: DepKind, platform_name: &PlatformName, fixups: &Fixups) -> bool {
-    match kind {
-        DepKind::Normal => true,
-        DepKind::Build => fixups.has_buildscript_for_platform(platform_name),
-        DepKind::Dev => false,
     }
 }
 
@@ -1053,5 +1101,145 @@ mod tests {
                 .resolved_features(shared, &host)
                 .contains("build-feature")
         );
+    }
+
+    #[test]
+    fn build_dependencies_where_build_script_does_not_run() {
+        // The build script target is generated for every platform the package
+        // supports, so it needs its build-dependencies on linux too.
+        let sys_fixups = "buildscript.run = false\n\
+                          ['cfg(target_os = \"macos\")']\n\
+                          buildscript.run = true\n";
+        assert!(sys_build_script_depends_on_gen(sys_fixups, "linux"));
+        assert!(sys_build_script_depends_on_gen(sys_fixups, "macos"));
+    }
+
+    #[test]
+    fn no_build_dependencies_if_build_script_never_runs() {
+        let sys_fixups = "buildscript.run = false\n";
+        assert!(!sys_build_script_depends_on_gen(sys_fixups, "linux"));
+        assert!(!sys_build_script_depends_on_gen(sys_fixups, "macos"));
+    }
+
+    fn sys_build_script_depends_on_gen(sys_fixups: &str, platform: &str) -> bool {
+        let host: PlatformName = serde_json::from_value(json!("host")).unwrap();
+        let platform_config = |target_os: &str, is_execution_platform: bool| PlatformConfig {
+            target: None,
+            is_execution_platform: Some(is_execution_platform),
+            features: None,
+            execution_platforms: BTreeSet::from([host.clone()]),
+            cfg: HashMap::from_iter([(
+                "target_os".to_owned(),
+                HashSet::from_iter([target_os.to_owned()]),
+            )]),
+        };
+        let mut config = Config::default_for_test();
+        config.platform = [
+            ("host", platform_config("linux", true)),
+            ("linux", platform_config("linux", false)),
+            ("macos", platform_config("macos", false)),
+        ]
+        .into_iter()
+        .map(|(name, platform_config)| {
+            (
+                serde_json::from_value(json!(name)).unwrap(),
+                platform_config,
+            )
+        })
+        .collect();
+
+        let package = |name: &str| {
+            json!({
+                "name": name,
+                "version": "1.0.0",
+                "id": format!("path+file:///{name}#{name}@1.0.0"),
+                "source": null,
+                "dependencies": [],
+                "targets": [{
+                    "name": name,
+                    "kind": ["lib"],
+                    "crate_types": ["lib"],
+                    "src_path": "src/lib.rs",
+                    "doctest": false,
+                }],
+                "features": {},
+                "manifest_path": format!("{name}/Cargo.toml"),
+                "authors": [],
+                "edition": "2021",
+            })
+        };
+        let mut app = package("app");
+        app["dependencies"] = json!([{
+            "name": "sys", "req": "1", "kind": null,
+            "optional": false, "uses_default_features": true, "features": [],
+        }]);
+        let mut sys = package("sys");
+        sys["targets"].as_array_mut().unwrap().push(json!({
+            "name": "build-script-build",
+            "kind": ["custom-build"],
+            "crate_types": ["bin"],
+            "src_path": "build.rs",
+            "doctest": false,
+        }));
+        sys["dependencies"] = json!([{
+            "name": "gen", "req": "1", "kind": "build",
+            "optional": false, "uses_default_features": true, "features": [],
+        }]);
+        let metadata: Metadata = serde_json::from_value(json!({
+            "packages": [app, sys, package("gen")],
+            "workspace_members": ["path+file:///app#app@1.0.0"],
+            "resolve": {
+                "root": null,
+                "nodes": [
+                    {
+                        "id": "path+file:///app#app@1.0.0",
+                        "deps": [{
+                            "name": "sys",
+                            "pkg": "path+file:///sys#sys@1.0.0",
+                            "dep_kinds": [{"kind": null, "target": null}],
+                        }],
+                    },
+                    {
+                        "id": "path+file:///sys#sys@1.0.0",
+                        "deps": [{
+                            "name": "gen",
+                            "pkg": "path+file:///gen#gen@1.0.0",
+                            "dep_kinds": [{"kind": "build", "target": null}],
+                        }],
+                    },
+                    {"id": "path+file:///gen#gen@1.0.0", "deps": []},
+                ],
+            },
+        }))
+        .unwrap();
+
+        let directory = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            buck_package: BuckPath(PathBuf::new()),
+            third_party_dir: directory.path().to_owned(),
+            manifest_path: directory.path().join("Cargo.toml"),
+            lockfile_path: directory.path().join("Cargo.lock"),
+            cargo_home: directory.path().join(".cargo"),
+        };
+        let sys_fixups_dir = config
+            .resolved_fixups_dir(&paths.third_party_dir)
+            .join("sys");
+        fs::create_dir_all(&sys_fixups_dir).unwrap();
+        fs::write(sys_fixups_dir.join("fixups.toml"), sys_fixups).unwrap();
+        let gitignore = Gitignore::empty();
+        let fixups = FixupsCache::new(&config, &paths, &gitignore);
+        let index = Index::new(&config, &metadata, &fixups).unwrap();
+
+        let sys = &metadata.packages[1];
+        let platform: PlatformName = serde_json::from_value(json!(platform)).unwrap();
+        assert!(index.compatible_platforms(sys).contains(&platform));
+        let build_script = sys
+            .targets
+            .iter()
+            .find(|tgt| tgt.kind_custom_build())
+            .unwrap();
+        index
+            .resolved_deps_for_target(sys, build_script, &platform)
+            .any(|dep| dep.package.name == "gen")
     }
 }
