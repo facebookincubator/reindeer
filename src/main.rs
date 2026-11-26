@@ -49,6 +49,7 @@ mod gitignore;
 mod glob;
 mod index;
 mod lockfile;
+mod package_location;
 mod path;
 mod platform;
 mod remap;

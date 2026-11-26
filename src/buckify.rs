@@ -95,13 +95,13 @@ use crate::glob::NO_EXCLUDE;
 use crate::index::Index;
 use crate::lockfile::Lockfile;
 use crate::lockfile::LockfilePackage;
+use crate::package_location::PackageLocation;
 use crate::path::normalize_path;
 use crate::path::normalized_extend_path;
 use crate::path::relative_path;
 use crate::platform::PlatformName;
 use crate::srcfiles::crate_srcfiles;
 use crate::subtarget::CollectSubtargets;
-use crate::subtarget::Subtarget;
 use crate::tp_metadata::TpMetadata;
 use crate::unused::UnusedFixups;
 use crate::version_naming::CollisionInfo;
@@ -359,41 +359,36 @@ fn generate_nonvendored_sources_archive(
         }
     };
 
-    match &lockfile_package.source {
-        Source::Local => Ok(None),
-        Source::CratesIo => match context.config.vendor {
-            VendorConfig::Off => generate_http_archive(context, pkg, lockfile_package).map(Some),
-            VendorConfig::LocalRegistry => Ok(Some(generate_extract_archive(pkg))),
+    match PackageLocation::new(context.config, context.paths, pkg)? {
+        PackageLocation::Local { .. } => Ok(None),
+        PackageLocation::Vendored { .. } => unreachable!(),
+        PackageLocation::Crate { name } => match context.config.vendor {
+            VendorConfig::Off => {
+                generate_http_archive(context, pkg, lockfile_package, name).map(Some)
+            }
+            VendorConfig::LocalRegistry => Ok(Some(generate_extract_archive(pkg, name))),
             VendorConfig::Source(_) => unreachable!(),
         },
-        Source::Git {
+        location @ PackageLocation::Git {
             repo, commit_hash, ..
-        } => match context.config.vendor {
-            VendorConfig::Off => generate_git_fetch(repo, commit_hash).map(Some),
-            VendorConfig::LocalRegistry => Ok(Some(generate_extract_archive(pkg))),
-            VendorConfig::Source(_) => unreachable!(),
-        },
-        Source::Unrecognized(_) => {
-            bail!(
-                "`vendor = false` mode is supported only with exclusively crates.io and https git dependencies. \"{}\" {} is coming from some other source",
-                pkg.name,
-                pkg.version,
-            );
-        }
+        } => Ok(Some(Rule::GitFetch(GitFetch {
+            name: location.archive_target().unwrap(),
+            repo: repo.to_owned(),
+            rev: commit_hash.to_owned(),
+            sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
+            visibility: Visibility::Private,
+        }))),
     }
 }
 
-fn generate_extract_archive(pkg: &Manifest) -> Rule {
+fn generate_extract_archive(pkg: &Manifest, name: String) -> Rule {
     Rule::ExtractArchive(ExtractArchive {
         owner: PackageVersion {
             name: pkg.name.clone(),
             version: pkg.version.clone(),
         },
-        name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
-        src: BuckPath(PathBuf::from(format!(
-            "vendor/{}-{}.crate",
-            pkg.name, pkg.version,
-        ))),
+        src: BuckPath(Path::new("vendor").join(&name)),
+        name: Name(name),
         strip_prefix: format!("{}-{}", pkg.name, pkg.version),
         sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
         visibility: Visibility::Private,
@@ -405,6 +400,7 @@ fn generate_http_archive(
     context: &RuleContext,
     pkg: &Manifest,
     lockfile_package: &LockfilePackage,
+    name: String,
 ) -> anyhow::Result<Rule> {
     let sha256 = match &lockfile_package.checksum {
         Some(checksum) => checksum.clone(),
@@ -438,7 +434,7 @@ fn generate_http_archive(
             name: pkg.name.clone(),
             version: pkg.version.clone(),
         },
-        name: Name(format!("{}-{}.crate", pkg.name, pkg.version)),
+        name: Name(name),
         sha256,
         size_bytes,
         strip_prefix: format!("{}-{}", pkg.name, pkg.version),
@@ -446,18 +442,6 @@ fn generate_http_archive(
         urls: vec![url],
         visibility: Visibility::Private,
         sort_key: Name(format!("{}-{}", pkg.name, pkg.version)),
-    }))
-}
-
-fn generate_git_fetch(repo: &str, commit_hash: &str) -> anyhow::Result<Rule> {
-    let short_name = short_name_for_git_repo(repo, commit_hash)?;
-
-    Ok(Rule::GitFetch(GitFetch {
-        name: Name(format!("{}.git", short_name)),
-        repo: repo.to_owned(),
-        rev: commit_hash.to_owned(),
-        sub_targets: BTreeSet::new(), // populated later after all fixups are constructed
-        visibility: Visibility::Private,
     }))
 }
 
@@ -860,10 +844,11 @@ fn generate_target_rules<'a>(
     log::debug!("pkg {} target {} fixups {:#?}", pkg, tgt.name, fixups);
 
     let manifest_dir = pkg.manifest_dir();
-    let mut manifest_dir_subtarget = None;
+    let location = PackageLocation::new(config, paths, pkg)?;
+    let manifest_dir_subtarget = location.manifest_dir_subtarget();
     let mapped_manifest_dir;
     let mut crate_root;
-    if matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local) {
+    if let PackageLocation::Local { .. } | PackageLocation::Vendored { .. } = location {
         let relative_manifest_dir = match manifest_dir
             .strip_prefix(&paths.third_party_dir)
 			.with_context(|| format!(
@@ -875,38 +860,11 @@ fn generate_target_rules<'a>(
             Err(_) if !will_use_rules => Path::new("__unused__"),
             res => res?,
         };
-        if !matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local)
-        {
-            manifest_dir_subtarget = Some(SubtargetOrPath::Path(BuckPath(
-                relative_manifest_dir.to_owned(),
-            )));
-        }
         mapped_manifest_dir = relative_manifest_dir.to_owned();
         crate_root = relative_manifest_dir.to_owned();
         normalized_extend_path(&mut crate_root, relative_path(manifest_dir, &tgt.src_path));
     } else {
-        mapped_manifest_dir = if let VendorConfig::LocalRegistry = config.vendor {
-            PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
-        } else if let Source::Git {
-            repo, commit_hash, ..
-        } = &pkg.source
-        {
-            let short_name = short_name_for_git_repo(repo, commit_hash)?;
-            let repository_root = find_repository_root(manifest_dir)?;
-            let path_within_repo = relative_path(repository_root, manifest_dir);
-            manifest_dir_subtarget = Some(SubtargetOrPath::Subtarget(Subtarget {
-                target: Name(format!("{}.git", short_name)),
-                relative: BuckPath(path_within_repo.clone()),
-            }));
-            let mut res = PathBuf::from(short_name);
-            if path_within_repo.components().next().is_some() {
-                // only do this if we have an actual path to avoid the trailing slash
-                res.push(path_within_repo)
-            }
-            res
-        } else {
-            PathBuf::from(format!("{}-{}.crate", pkg.name, pkg.version))
-        };
+        mapped_manifest_dir = location.mapped_manifest_dir();
         crate_root = mapped_manifest_dir.join(relative_path(manifest_dir, &tgt.src_path));
     }
 
@@ -956,7 +914,7 @@ fn generate_target_rules<'a>(
         }
     }
 
-    if matches!(config.vendor, VendorConfig::Source(_)) || matches!(pkg.source, Source::Local) {
+    if let PackageLocation::Local { .. } | PackageLocation::Vendored { .. } = location {
         // Get a list of the most obvious sources for the crate. This is either
         // a list of filename, or a list of globs.
         let mut srcs = Vec::new();
@@ -1001,22 +959,9 @@ fn generate_target_rules<'a>(
             // unmatched globs are accurately reported.
             fixups.validate_srcs_fixups(tgt, platform)?;
         }
-        if let VendorConfig::LocalRegistry = config.vendor {
-            let extract_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
-            base.srcs
-                .insert(BuckPath(PathBuf::from(extract_archive_target)));
-        } else if let Source::Git {
-            repo, commit_hash, ..
-        } = &pkg.source
-        {
-            let short_name = short_name_for_git_repo(repo, commit_hash)?;
-            let git_fetch_target = format!(":{}.git", short_name);
-            base.srcs.insert(BuckPath(PathBuf::from(git_fetch_target)));
-        } else {
-            let http_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
-            base.srcs
-                .insert(BuckPath(PathBuf::from(http_archive_target)));
-        }
+        let archive_target = location.archive_target().unwrap();
+        base.srcs
+            .insert(BuckPath(PathBuf::from(format!(":{archive_target}"))));
     }
 
     evaluate_for_platforms(
@@ -1580,60 +1525,39 @@ fn generate_target_rules<'a>(
         // For non-disk sources (i.e. non-vendor mode git_fetch and
         // http_archive), `srcs` and `exclude` are ignored because
         // we can't look at the files to match globs.
-        let srcs = if matches!(config.vendor, VendorConfig::Source(_))
-            || matches!(pkg.source, Source::Local)
-        {
-            if config.buck.split {
-                // e.g. ["src/lib.rs"]
-                FilegroupSources::Set(BTreeSet::from_iter(
-                    export_globs
-                        .walk(manifest_dir, gitignore)?
-                        .into_iter()
-                        .map(BuckPath),
-                ))
+        let srcs =
+            if let PackageLocation::Local { .. } | PackageLocation::Vendored { .. } = location {
+                if config.buck.split {
+                    // e.g. ["src/lib.rs"]
+                    FilegroupSources::Set(BTreeSet::from_iter(
+                        export_globs
+                            .walk(manifest_dir, gitignore)?
+                            .into_iter()
+                            .map(BuckPath),
+                    ))
+                } else {
+                    // e.g. {"src/lib.rs": "vendor/foo-1.0.0/src/lib.rs"}
+                    FilegroupSources::Map(BTreeMap::from_iter(
+                        export_globs
+                            .walk(manifest_dir, gitignore)?
+                            .into_iter()
+                            .map(|path| {
+                                let source = mapped_manifest_dir.join(&path);
+                                (BuckPath(path), SubtargetOrPath::Path(BuckPath(source)))
+                            }),
+                    ))
+                }
             } else {
-                // e.g. {"src/lib.rs": "vendor/foo-1.0.0/src/lib.rs"}
-                FilegroupSources::Map(BTreeMap::from_iter(
-                    export_globs
-                        .walk(manifest_dir, gitignore)?
-                        .into_iter()
-                        .map(|path| {
-                            let source = mapped_manifest_dir.join(&path);
-                            (BuckPath(path), SubtargetOrPath::Path(BuckPath(source)))
-                        }),
-                ))
-            }
-        } else {
-            // Validate the globs anyway
-            export_globs.walk(manifest_dir, gitignore)?;
+                // Validate the globs anyway
+                export_globs.walk(manifest_dir, gitignore)?;
 
-            if let VendorConfig::LocalRegistry = config.vendor {
-                // e.g. {":foo-1.0.0.git": "foo-1.0.0"}
-                let extract_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
+                // e.g. {"foo-1.0.0.crate": ":foo-1.0.0.crate"}
+                let archive_target = location.archive_target().unwrap();
                 FilegroupSources::Map(BTreeMap::from([(
                     BuckPath(mapped_manifest_dir.clone()),
-                    SubtargetOrPath::Path(BuckPath(PathBuf::from(extract_archive_target))),
+                    SubtargetOrPath::Path(BuckPath(PathBuf::from(format!(":{archive_target}")))),
                 )]))
-            } else if let Source::Git {
-                repo, commit_hash, ..
-            } = &pkg.source
-            {
-                // e.g. {":foo-123.git": "foo-123"}
-                let short_name = short_name_for_git_repo(repo, commit_hash)?;
-                let git_fetch_target = format!(":{}.git", short_name);
-                FilegroupSources::Map(BTreeMap::from([(
-                    BuckPath(mapped_manifest_dir.clone()),
-                    SubtargetOrPath::Path(BuckPath(PathBuf::from(git_fetch_target))),
-                )]))
-            } else {
-                // e.g. {":foo-1.0.0.git": "foo-1.0.0"}
-                let http_archive_target = format!(":{}-{}.crate", pkg.name, pkg.version);
-                FilegroupSources::Map(BTreeMap::from([(
-                    BuckPath(mapped_manifest_dir.clone()),
-                    SubtargetOrPath::Path(BuckPath(PathBuf::from(http_archive_target))),
-                )]))
-            }
-        };
+            };
         if config.buck.split {
             rules.push(Rule::Filegroup(Filegroup {
                 owner: PackageVersion {
