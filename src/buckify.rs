@@ -40,7 +40,6 @@ use fnv::FnvHasher;
 use foldhash::HashMap;
 use foldhash::HashSet;
 use indoc::writedoc;
-use itertools::Itertools;
 use serde::Deserialize;
 use url::Url;
 
@@ -102,6 +101,7 @@ use crate::path::relative_path;
 use crate::platform::PlatformName;
 use crate::srcfiles::crate_srcfiles;
 use crate::subtarget::CollectSubtargets;
+use crate::tp_metadata;
 use crate::tp_metadata::TpMetadata;
 use crate::unused::UnusedFixups;
 use crate::version_naming::CollisionInfo;
@@ -874,30 +874,23 @@ fn generate_target_rules<'a>(
     let license_globs = Globs::new(&config.license_patterns, NO_EXCLUDE);
     if config.buck.split {
         // The `licenses` attribute is not currently implemented for split mode.
-    } else if !matches!(config.vendor, VendorConfig::Source(_)) {
-        // The `licenses` attribute takes `attrs.source()` which is the file
-        // containing the custom license text. For `vendor = false` mode, we
-        // don't have such a file on disk, and we don't have a Buck label either
-        // that could refer to the right generated location following download
-        // because `http_archive` does not expose subtargets for each of the
-        // individual contained files.
-        //
         // But we validate globs anyway.
         license_globs.walk(manifest_dir, gitignore)?;
     } else {
-        let rel_manifest = relative_path(&paths.third_party_dir, manifest_dir);
-        for path in license_globs.walk(manifest_dir, gitignore)? {
-            licenses.insert(BuckPath(rel_manifest.join(path)));
-        }
-        if let Some(license_file) = &pkg.license_file {
-            // Buck rejects `..` in a source path: "Error when treated as a
-            // path: expected a normalized path but got an un-normalized path
-            // instead: `vendor/libcst_derive-0.1.0/../../LICENSE`"
-            if !license_file.components().contains(&Component::ParentDir) {
-                // But still normalize to get rid of `.`
-                // (e.g. `vendor/polars-arrow-0.34.2/./LICENSE`).
-                let license_path = normalize_path(&rel_manifest.join(license_file));
-                licenses.insert(BuckPath(license_path));
+        // In `vendor = false` mode these are subtargets of the package's
+        // `http_archive` or `git_fetch`, e.g. ":foo-1.0.0.crate[LICENSE-MIT]".
+        let found = license_globs.walk(manifest_dir, gitignore)?;
+        for path in found.iter().chain(&pkg.license_file) {
+            match location.file(path) {
+                Ok(license) => {
+                    licenses.insert(license);
+                }
+                Err(reason) => log::warn!(
+                    "{} {}: license file {} {reason}, omitting it from `licenses`",
+                    pkg.name,
+                    pkg.version,
+                    path.display(),
+                ),
             }
         }
     };
@@ -1046,6 +1039,9 @@ fn generate_target_rules<'a>(
             Box::new(TpMetadata::new(pkg)) as Box<dyn buck::Metadata>,
         );
     }
+    if config.supply_chain_metadata {
+        tp_metadata::insert_supply_chain_metadata(pkg, &mut metadata);
+    }
 
     // If this is a build script, we only apply fixups pertaining to srcs
     // (extra_srcs), mapped_srcs (overlay), and features. Return early before
@@ -1066,7 +1062,7 @@ fn generate_target_rules<'a>(
                         format!("{}-{}", tgt_disp, tgt.name)
                     }),
                     visibility: Visibility::Private,
-                    licenses: Default::default(),
+                    licenses: licenses.clone(),
                     metadata: metadata.clone(),
                     compatible_with: vec![],
                     target_compatible_with: Select {
@@ -1648,19 +1644,21 @@ fn do_buckify<'a>(context: &'a RuleContext<'a>) -> anyhow::Result<BTreeSet<Rule>
     };
 
     // Fill in all http_archive rules with all the sub_targets which got
-    // mentioned by fixups.
+    // mentioned by fixups or license files.
     if !matches!(context.config.vendor, VendorConfig::Source(_)) {
         let mut subtargets = CollectSubtargets::new();
 
         for rule in &rules {
             match rule {
                 Rule::Binary(rule) | Rule::BuildscriptBinary(rule) => {
+                    subtargets.insert_all(&rule.common.common.licenses);
                     subtargets.insert_all(rule.common.base.mapped_srcs.keys());
                     for plat in rule.common.platform.values() {
                         subtargets.insert_all(plat.mapped_srcs.keys());
                     }
                 }
                 Rule::Library(rule) => {
+                    subtargets.insert_all(&rule.common.common.licenses);
                     subtargets.insert_all(rule.common.base.mapped_srcs.keys());
                     for plat in rule.common.platform.values() {
                         subtargets.insert_all(plat.mapped_srcs.keys());

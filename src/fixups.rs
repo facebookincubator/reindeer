@@ -21,6 +21,7 @@ use std::sync::MutexGuard;
 use std::sync::PoisonError;
 use std::sync::atomic::Ordering;
 
+use anyhow::anyhow;
 use anyhow::bail;
 use foldhash::HashSet;
 
@@ -243,8 +244,15 @@ impl<'meta> Fixups<'meta> {
         &self,
         relative_to_manifest_dir: &Path,
     ) -> anyhow::Result<SubtargetOrPath> {
-        Ok(PackageLocation::new(self.config, self.paths, self.package)?
-            .file(relative_to_manifest_dir))
+        PackageLocation::new(self.config, self.paths, self.package)?
+            .file(relative_to_manifest_dir)
+            .map_err(|reason| {
+                anyhow!(
+                    "{}: fixup path {} {reason}",
+                    self.package,
+                    relative_to_manifest_dir.display(),
+                )
+            })
     }
 
     pub fn visibility(&self, index: &Index) -> Visibility {

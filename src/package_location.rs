@@ -7,6 +7,9 @@
 
 //! Where the generated BUCK file finds a package's files.
 
+use std::fmt;
+use std::fmt::Display;
+use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -22,6 +25,7 @@ use crate::cargo::Manifest;
 use crate::cargo::Source;
 use crate::config::Config;
 use crate::config::VendorConfig;
+use crate::path::normalize_path;
 use crate::path::relative_path;
 use crate::subtarget::Subtarget;
 
@@ -126,22 +130,73 @@ impl<'a> PackageLocation<'a> {
     }
 
     /// A file of the package, e.g. "vendor/foo-1.0.0/src/lib.rs" or
-    /// ":foo-1.0.0.crate[src/lib.rs]".
-    pub fn file(&self, relative_to_manifest_dir: &Path) -> SubtargetOrPath {
-        match self {
-            PackageLocation::Local { dir } | PackageLocation::Vendored { dir } => {
-                SubtargetOrPath::Path(BuckPath(dir.join(relative_to_manifest_dir)))
-            }
-            PackageLocation::Crate { .. } => SubtargetOrPath::Subtarget(Subtarget {
-                target: self.archive_target().unwrap(),
-                relative: BuckPath(relative_to_manifest_dir.to_owned()),
-            }),
-            // A git_fetch is of the whole repository.
-            PackageLocation::Git { subdir, .. } => SubtargetOrPath::Subtarget(Subtarget {
-                target: self.archive_target().unwrap(),
-                relative: BuckPath(subdir.join(relative_to_manifest_dir)),
-            }),
+    /// ":foo-1.0.0.crate[src/lib.rs]", given its path relative to the manifest
+    /// directory as it appears in Cargo.toml, a fixup, or a glob match.
+    pub fn file(
+        &self,
+        relative_to_manifest_dir: &Path,
+    ) -> Result<SubtargetOrPath, UnreachableFile> {
+        if let Some(Component::RootDir | Component::Prefix(_)) =
+            relative_to_manifest_dir.components().next()
+        {
+            return Err(UnreachableFile::Absolute);
         }
+        // Normalized within the root that the path must not escape.
+        let within_root = |root: &Path| {
+            let path = normalize_path(&root.join(relative_to_manifest_dir));
+            match path.components().next() {
+                Some(Component::ParentDir) => Err(UnreachableFile::OutsideRoot),
+                _ => Ok(path),
+            }
+        };
+        let subtarget = |relative: PathBuf| {
+            let valid = relative.to_str().is_some_and(|name| {
+                name.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_\\/.=,+-".contains(&b))
+            });
+            if !valid {
+                return Err(UnreachableFile::InvalidSubtargetName);
+            }
+            Ok(SubtargetOrPath::Subtarget(Subtarget {
+                target: self.archive_target().unwrap(),
+                relative: BuckPath(relative),
+            }))
+        };
+        match self {
+            // Path dependencies may use files elsewhere in the workspace, such
+            // as `license-file = "../LICENSE"`.
+            PackageLocation::Local { dir } => {
+                Ok(SubtargetOrPath::Path(BuckPath(within_root(dir)?)))
+            }
+            PackageLocation::Vendored { dir } => Ok(SubtargetOrPath::Path(BuckPath(
+                dir.join(within_root(Path::new(""))?),
+            ))),
+            PackageLocation::Crate { .. } => subtarget(within_root(Path::new(""))?),
+            // A git_fetch is of the whole repository.
+            PackageLocation::Git { subdir, .. } => subtarget(within_root(subdir)?),
+        }
+    }
+}
+
+/// Why a package's file can't be referred to from the BUCK file.
+#[derive(Debug, PartialEq, Eq)]
+pub enum UnreachableFile {
+    /// An absolute path in Cargo.toml only means something on one machine.
+    Absolute,
+    /// Buck rejects `..` in source paths, and there is nothing outside an
+    /// archive to refer to.
+    OutsideRoot,
+    /// Buck provider names allow only `[A-Za-z0-9_\\/.=,+-]`.
+    InvalidSubtargetName,
+}
+
+impl Display for UnreachableFile {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(match self {
+            UnreachableFile::Absolute => "is an absolute path",
+            UnreachableFile::OutsideRoot => "is outside the package",
+            UnreachableFile::InvalidSubtargetName => "is not a valid Buck subtarget name",
+        })
     }
 }
 
@@ -149,13 +204,13 @@ impl<'a> PackageLocation<'a> {
 mod tests {
     use super::*;
 
-    fn file(location: &PackageLocation, path: &str) -> String {
-        let file = location.file(Path::new(path));
-        serde_json::to_value(file)
+    fn file(location: &PackageLocation, path: &str) -> Result<String, UnreachableFile> {
+        let file = location.file(Path::new(path))?;
+        Ok(serde_json::to_value(file)
             .unwrap()
             .as_str()
             .unwrap()
-            .to_owned()
+            .to_owned())
     }
 
     fn git(subdir: &str) -> PackageLocation<'static> {
@@ -171,8 +226,8 @@ mod tests {
     fn git_files_are_relative_to_the_repository() {
         // serde's crate is in serde/ of its repository.
         assert_eq!(
-            file(&git("serde"), "build.rs"),
-            ":serde-643d78919f35d883.git[serde/build.rs]",
+            file(&git("serde"), "build.rs").as_deref(),
+            Ok(":serde-643d78919f35d883.git[serde/build.rs]"),
         );
         assert_eq!(
             git("serde").mapped_manifest_dir(),
@@ -180,12 +235,69 @@ mod tests {
         );
         // A crate at the root of its repository.
         assert_eq!(
-            file(&git(""), "src/lib.rs"),
-            ":serde-643d78919f35d883.git[src/lib.rs]",
+            file(&git(""), "src/lib.rs").as_deref(),
+            Ok(":serde-643d78919f35d883.git[src/lib.rs]"),
         );
         assert_eq!(
             git("").mapped_manifest_dir(),
             Path::new("serde-643d78919f35d883"),
+        );
+    }
+
+    #[test]
+    fn unreachable_files() {
+        let local = PackageLocation::Local {
+            dir: PathBuf::from("crates/foo"),
+        };
+        let vendored = PackageLocation::Vendored {
+            dir: PathBuf::from("vendor/foo-1.0.0"),
+        };
+        let krate = PackageLocation::Crate {
+            name: "foo-1.0.0.crate".to_owned(),
+        };
+        let ok = |s: &str| Ok(s.to_owned());
+
+        // A git workspace member can use the workspace's files, but nothing
+        // outside the repository.
+        assert_eq!(
+            file(&git("serde"), "../LICENSE"),
+            ok(":serde-643d78919f35d883.git[LICENSE]"),
+        );
+        assert_eq!(
+            file(&git("serde"), "../../LICENSE"),
+            Err(UnreachableFile::OutsideRoot),
+        );
+        // A crate archive or vendored crate holds only the crate.
+        assert_eq!(
+            file(&krate, "../LICENSE"),
+            Err(UnreachableFile::OutsideRoot)
+        );
+        assert_eq!(
+            file(&vendored, "../LICENSE"),
+            Err(UnreachableFile::OutsideRoot)
+        );
+        assert_eq!(file(&vendored, "./LICENSE"), ok("vendor/foo-1.0.0/LICENSE"));
+        // Path dependencies are confined to the third-party directory.
+        assert_eq!(file(&local, "../../LICENSE"), ok("LICENSE"));
+        assert_eq!(
+            file(&local, "../../../LICENSE"),
+            Err(UnreachableFile::OutsideRoot)
+        );
+
+        // Subtargets are Buck provider names, which can't contain spaces.
+        assert_eq!(
+            file(&krate, "License Text"),
+            Err(UnreachableFile::InvalidSubtargetName),
+        );
+        assert_eq!(file(&local, "License Text"), ok("crates/foo/License Text"));
+
+        assert_eq!(
+            file(&local, "/repo/LICENSE"),
+            Err(UnreachableFile::Absolute)
+        );
+        assert_eq!(
+            file(&krate, "/repo/LICENSE"),
+            Err(UnreachableFile::Absolute)
         );
     }
 }

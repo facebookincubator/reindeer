@@ -112,12 +112,32 @@ pub struct Config {
     ///     "third-party.metadata": {
     ///         "name": "anyhow",
     ///         "version": "1.0.100",
-    ///         "licenses": ["MIT", "Apache-2.0"],
+    ///         "licenses": ["MIT OR Apache-2.0"],
     ///     },
     /// }
     /// ```
     #[serde(default)]
     pub third_party_metadata: bool,
+
+    /// Generate `supply_chain.*` metadata on every `rust_library` and
+    /// `rust_binary` target, for building an SBOM from the Buck graph: a
+    /// Package URL (https://github.com/package-url/purl-spec) and the declared
+    /// license as a normalized SPDX expression.
+    ///
+    /// ```starlark
+    /// metadata = {
+    ///     "supply_chain.license": "MIT OR Apache-2.0",
+    ///     "supply_chain.purl": "pkg:cargo/anyhow@1.0.100",
+    /// }
+    /// ```
+    ///
+    /// Git dependencies get a `vcs_url` qualifier pinned to the commit, and
+    /// alternate registries a `repository_url`. Path dependencies get no
+    /// PURL. A package with only a `license-file` gets a `LicenseRef-` whose
+    /// text is in `licenses`. A license which is not valid SPDX is emitted
+    /// verbatim under `supply_chain.license_unparsed` instead.
+    #[serde(default)]
+    pub supply_chain_metadata: bool,
 
     /// List of Cargo environment variables (like CARGO_PKG_AUTHORS) to provide
     /// to crates by default, when not otherwise specified by a crate-specific

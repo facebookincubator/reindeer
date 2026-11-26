@@ -52,6 +52,7 @@ mod lockfile;
 mod package_location;
 mod path;
 mod platform;
+mod purl;
 mod remap;
 #[cfg(unix)]
 mod rlimit;
