@@ -21,6 +21,7 @@ use std::sync::MutexGuard;
 use std::sync::PoisonError;
 use std::sync::atomic::Ordering;
 
+use anyhow::anyhow;
 use anyhow::bail;
 use foldhash::HashSet;
 
@@ -46,8 +47,6 @@ use crate::buck::StringOrPath;
 use crate::buck::SubtargetOrPath;
 use crate::buck::Visibility;
 use crate::buckify::evaluate_for_platforms;
-use crate::buckify::find_repository_root;
-use crate::buckify::short_name_for_git_repo;
 use crate::buckify::split_srcs;
 use crate::buckify::vendor_crate_visibility;
 use crate::cargo::DepKind;
@@ -77,11 +76,11 @@ use crate::glob::NO_EXCLUDE;
 use crate::glob::TrackedGlobSet;
 use crate::index::Index;
 use crate::index::ResolvedDep;
+use crate::package_location::PackageLocation;
 use crate::path::normalize_path;
 use crate::path::normalized_extend_path;
 use crate::path::relative_path;
 use crate::platform::PlatformName;
-use crate::subtarget::Subtarget;
 use crate::version_naming::CollisionInfo;
 
 mod buildscript;
@@ -245,33 +244,15 @@ impl<'meta> Fixups<'meta> {
         &self,
         relative_to_manifest_dir: &Path,
     ) -> anyhow::Result<SubtargetOrPath> {
-        if matches!(self.config.vendor, VendorConfig::Source(_))
-            || matches!(self.package.source, Source::Local)
-        {
-            // Path to vendored file looks like "vendor/foo-1.0.0/src/lib.rs"
-            let manifest_dir = relative_path(self.third_party_dir, self.manifest_dir);
-            let path = manifest_dir.join(relative_to_manifest_dir);
-            Ok(SubtargetOrPath::Path(BuckPath(path)))
-        } else if let Source::Git {
-            repo, commit_hash, ..
-        } = &self.package.source
-        {
-            // Subtarget inside a git_fetch: ":serde-643d78919f35d883.git[src/lib.rs]"
-            let short_name = short_name_for_git_repo(repo, commit_hash)?;
-            Ok(SubtargetOrPath::Subtarget(Subtarget {
-                target: Name(format!("{short_name}.git")),
-                relative: BuckPath(relative_to_manifest_dir.to_owned()),
-            }))
-        } else {
-            // Subtarget inside an http_archive: ":foo-1.0.0.crate[src/lib.rs]"
-            Ok(SubtargetOrPath::Subtarget(Subtarget {
-                target: Name(format!(
-                    "{}-{}.crate",
-                    self.package.name, self.package.version
-                )),
-                relative: BuckPath(relative_to_manifest_dir.to_owned()),
-            }))
-        }
+        PackageLocation::new(self.config, self.paths, self.package)?
+            .file(relative_to_manifest_dir)
+            .map_err(|reason| {
+                anyhow!(
+                    "{}: fixup path {} {reason}",
+                    self.package,
+                    relative_to_manifest_dir.display(),
+                )
+            })
     }
 
     pub fn visibility(&self, index: &Index) -> Visibility {
@@ -1474,41 +1455,26 @@ impl<'meta> Fixups<'meta> {
             CargoEnv::CARGO_BIN_NAME => StringOrPath::String(target.name.clone()),
             CargoEnv::CARGO_CRATE_NAME => StringOrPath::String(target.name.replace('-', "_")),
             CargoEnv::CARGO_MANIFEST_DIR => {
-                if matches!(self.config.vendor, VendorConfig::Source(_))
-                    || matches!(self.package.source, Source::Local)
-                {
-                    if self.config.buck.split {
+                match PackageLocation::new(self.config, self.paths, self.package)? {
+                    PackageLocation::Local { .. } | PackageLocation::Vendored { .. }
+                        if self.config.buck.split =>
+                    {
                         StringOrPath::String(".".to_owned())
-                    } else {
-                        StringOrPath::Path(BuckPath(relative_path(
-                            self.third_party_dir,
-                            self.manifest_dir,
-                        )))
                     }
-                } else if let VendorConfig::LocalRegistry = self.config.vendor {
-                    StringOrPath::String(format!(
-                        "{}-{}.crate",
-                        self.package.name, self.package.version,
-                    ))
-                } else if let Source::Git {
-                    repo, commit_hash, ..
-                } = &self.package.source
-                {
+                    PackageLocation::Local { dir } | PackageLocation::Vendored { dir } => {
+                        StringOrPath::Path(BuckPath(dir))
+                    }
                     // The whole repo is fetched under <short_name>/; a crate in
                     // a subdirectory needs its real dir (proc-macro-crate reads
                     // $CARGO_MANIFEST_DIR/Cargo.toml), as crate_root does.
-                    let mut dir = PathBuf::from(short_name_for_git_repo(repo, commit_hash)?);
-                    let subdir =
-                        relative_path(find_repository_root(self.manifest_dir)?, self.manifest_dir);
-                    if subdir.components().next().is_some() {
-                        dir.push(subdir); // push("") would add a trailing slash
+                    location @ (PackageLocation::Crate { .. } | PackageLocation::Git { .. }) => {
+                        StringOrPath::String(
+                            location
+                                .mapped_manifest_dir()
+                                .to_string_lossy()
+                                .into_owned(),
+                        )
                     }
-                    StringOrPath::String(dir.to_string_lossy().into_owned())
-                } else {
-                    StringOrPath::String(format!(
-                        "{}-{}.crate",
-                        self.package.name, self.package.version,
-                    ))
                 }
             }
             CargoEnv::CARGO_MANIFEST_LINKS => {

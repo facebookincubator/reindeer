@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fmt::Display;
 
@@ -14,8 +15,11 @@ use serde::Serializer;
 use serde::ser::SerializeMap as _;
 use serde::ser::SerializeSeq as _;
 
+use crate::buck::Metadata;
 use crate::cargo::Manifest;
 use crate::cargo::Source;
+use crate::purl;
+use crate::purl::Purl;
 
 #[derive(Clone)]
 pub struct TpMetadata {
@@ -82,6 +86,86 @@ impl TpMetadata {
     }
 }
 
+/// Insert `supply_chain.*` metadata describing `pkg`, for SBOM generation:
+///
+/// - `supply_chain.purl`: Package URL, absent for packages with no location
+///   outside this checkout (path dependencies).
+/// - `supply_chain.license`: normalized SPDX license expression. A package
+///   declaring only a `license-file` gets a `LicenseRef-` identifier for it,
+///   whose text is in the target's `licenses`.
+/// - `supply_chain.license_unparsed`: the declared license, verbatim, when it
+///   is not a valid SPDX expression.
+/// - `supply_chain.source_repository`, `supply_chain.homepage`: the URLs from
+///   Cargo.toml's `repository` and `homepage`. These are declared by the
+///   package and not verified by anyone, and the source repository is not
+///   pinned to this version. Not to be confused with the PURL's
+///   `repository_url`, which is the registry the package was fetched from.
+pub fn insert_supply_chain_metadata(
+    pkg: &Manifest,
+    metadata: &mut BTreeMap<String, Box<dyn Metadata>>,
+) {
+    match Purl::for_cargo_package(&pkg.name, &pkg.version, &pkg.source) {
+        Some(purl) => {
+            metadata.insert("supply_chain.purl".to_owned(), Box::new(purl));
+        }
+        None if matches!(pkg.source, Source::Local) => {}
+        None => log::warn!(
+            "no package URL for {} {}: unsupported source {:?}",
+            pkg.name,
+            pkg.version,
+            pkg.source,
+        ),
+    }
+    for (key, field, value) in [
+        (
+            "supply_chain.source_repository",
+            "repository",
+            &pkg.repository,
+        ),
+        ("supply_chain.homepage", "homepage", &pkg.homepage),
+    ] {
+        let Some(value) = value else { continue };
+        match purl::sanitize_url(value) {
+            Some(url) => {
+                metadata.insert(key.to_owned(), Box::new(url));
+            }
+            None => log::warn!(
+                "{} {}: `{field}` is not a URL, omitting it: {value:?}",
+                pkg.name,
+                pkg.version,
+            ),
+        }
+    }
+    let license = match (&pkg.license, &pkg.license_file) {
+        (Some(license), _) => match parse_spdx_license(license) {
+            Some(license) => license.to_string(),
+            None => {
+                metadata.insert(
+                    "supply_chain.license_unparsed".to_owned(),
+                    Box::new(license.clone()),
+                );
+                return;
+            }
+        },
+        (None, Some(_)) => license_ref(&pkg.name, &pkg.version),
+        (None, None) => return,
+    };
+    metadata.insert("supply_chain.license".to_owned(), Box::new(license));
+}
+
+/// SPDX identifier for a package's custom license. Unique per package version,
+/// since the license text may change between versions.
+///
+/// An idstring may contain only ASCII letters, digits, `.` and `-`. Crate
+/// names never contain `.`, so `_` becomes `.` to keep `foo_bar` and `foo-bar`
+/// distinct. The `+` before semver build metadata becomes `-`, which can only
+/// collide with a prerelease version of the same crate.
+fn license_ref(name: &str, version: &semver::Version) -> String {
+    let name = name.replace('_', ".");
+    let version = version.to_string().replace('+', "-");
+    format!("LicenseRef-{name}-{version}")
+}
+
 #[derive(Clone)]
 pub enum License {
     Single(spdx::LicenseReq),
@@ -134,11 +218,13 @@ impl Serialize for License {
 
 // https://spdx.github.io/spdx-spec/appendix-IV-SPDX-license-expressions/
 fn format_spdx_license(spdx: &str) -> License {
+    parse_spdx_license(spdx).unwrap_or_else(|| License::Verbatim(spdx.to_owned()))
+}
+
+/// Normalize a license expression, or `None` if it isn't SPDX.
+fn parse_spdx_license(spdx: &str) -> Option<License> {
     let mode = spdx::ParseMode::LAX; // designed for crates.io compatibility
-    let expr = match spdx::Expression::parse_mode(spdx, mode) {
-        Ok(expr) => expr,
-        Err(_) => return License::Verbatim(spdx.to_owned()),
-    };
+    let expr = spdx::Expression::parse_mode(spdx, mode).ok()?;
 
     // Postorder traversal of license expression.
     let mut stack = Vec::new();
@@ -196,7 +282,7 @@ fn format_spdx_license(spdx: &str) -> License {
 
     let license = stack.pop().unwrap();
     assert!(stack.is_empty());
-    license
+    Some(license)
 }
 
 struct OneLineList<'a, T: Serialize>(&'a [T]);
@@ -208,5 +294,29 @@ impl<T: Serialize> Serialize for OneLineList<'_, T> {
             seq.serialize_element(element)?;
         }
         seq.end()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn license_ref_is_a_valid_spdx_expression() {
+        for (name, version, expected) in [
+            ("ring", "0.17.8", "LicenseRef-ring-0.17.8"),
+            (
+                "foo_bar",
+                "1.0.0+build.5",
+                "LicenseRef-foo.bar-1.0.0-build.5",
+            ),
+            ("foo-bar", "1.0.0", "LicenseRef-foo-bar-1.0.0"),
+        ] {
+            let version = semver::Version::parse(version).unwrap();
+            let license_ref = license_ref(name, &version);
+            assert_eq!(license_ref, expected);
+            let roundtrip = parse_spdx_license(&license_ref).map(|l| l.to_string());
+            assert_eq!(roundtrip.as_deref(), Some(expected));
+        }
     }
 }

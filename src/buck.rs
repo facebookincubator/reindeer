@@ -485,7 +485,7 @@ impl Serialize for GitFetch {
 pub struct Common {
     pub name: Name,
     pub visibility: Visibility,
-    pub licenses: BTreeSet<BuckPath>,
+    pub licenses: BTreeSet<SubtargetOrPath>,
     pub metadata: BTreeMap<String, Box<dyn Metadata>>,
     pub compatible_with: Vec<RuleRef>,
     pub target_compatible_with: Select<Vec<RuleRef>>,
