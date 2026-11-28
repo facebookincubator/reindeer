@@ -61,6 +61,7 @@ rustls-native-certs = { git = "https://github.com/rustls/rustls-native-certs", r
 
 [workspace]
 members = ["."]
+resolver = "3"
 
 [workspace.package]
 license = "MIT"
